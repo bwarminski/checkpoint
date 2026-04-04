@@ -17,6 +17,7 @@ import { DBSpecialistExecutor } from "./executor.ts";
 type ServerOptions = {
   baseUrl?: string;
   executor?: DBSpecialistExecutor;
+  host?: string;
   port?: number;
 };
 
@@ -54,10 +55,11 @@ export function createServer(options: ServerOptions = {}): {
 }
 
 export function startServer(options: ServerOptions = {}) {
+  const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 3001;
   const server = createServer({ ...options, port });
 
-  return server.app.listen(port);
+  return server.app.listen(port, host);
 }
 
 function buildAgentCard(baseUrl: string): AgentCard {
@@ -74,6 +76,12 @@ function buildAgentCard(baseUrl: string): AgentCard {
         description: "Inspect database findings and report the result.",
         tags: ["database", "analysis"],
       },
+      {
+        id: "analyze_table",
+        name: "Analyze Table",
+        description: "Inspect database findings scoped to a table and report the result.",
+        tags: ["database", "analysis", "table"],
+      },
     ],
     capabilities: {
       pushNotifications: false,
@@ -89,5 +97,8 @@ function buildAgentCard(baseUrl: string): AgentCard {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startServer({ port: Number(process.env.PORT ?? "3001") });
+  startServer({
+    host: process.env.HOST ?? "127.0.0.1",
+    port: Number(process.env.PORT ?? "3001"),
+  });
 }

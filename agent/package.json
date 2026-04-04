@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "start": "tsx src/server.ts",
+    "start": "node --import tsx src/server.ts",
     "start:code-search-server": "tsx src/mcp-servers/code-search/main.ts",
-    "test": "node --import tsx --test test/*.test.ts test/e2e/*.test.ts",
+    "test": "node --import tsx --test test/*.test.ts test/integration/*.test.ts",
     "generate:code-search": "bun ./node_modules/mcporter/dist/cli.js emit-ts code-search --config .mcporter.json --mode client --out src/tools/generated/code-search-client.ts && bun scripts/fix-generated-code-search-client.mjs",
     "pretypecheck": "npm run generate:code-search",
     "typecheck": "tsc --noEmit",

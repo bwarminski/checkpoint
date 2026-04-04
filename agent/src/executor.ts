@@ -72,6 +72,7 @@ export class DBSpecialistExecutor {
     eventSink: EventSink,
   ): Promise<void> {
     const scope = readUserText(requestContext);
+    this.publishSubmittedTask(requestContext, eventSink);
     this.publishWorking(requestContext, eventSink);
     const findings = await this.analyzeTopOffenders(scope);
     this.publishCompleted(requestContext, eventSink, findings);
@@ -99,6 +100,23 @@ export class DBSpecialistExecutor {
     });
   }
 
+  private publishSubmittedTask(
+    requestContext: QueueRequestContext,
+    eventSink: EventSink,
+  ): void {
+    if ("enqueueEvent" in eventSink || requestContext.task) {
+      return;
+    }
+
+    eventSink.publish({
+      kind: "task",
+      id: requestContext.taskId ?? "gate-a-task",
+      contextId: requestContext.contextId ?? "gate-a-context",
+      status: { state: "submitted", timestamp: new Date().toISOString() },
+      history: toTaskHistory(requestContext.userMessage),
+    });
+  }
+
   private publishCompleted(
     requestContext: Partial<RequestContext>,
     eventSink: EventSink,
@@ -113,7 +131,11 @@ export class DBSpecialistExecutor {
       kind: "status-update",
       taskId: requestContext.taskId ?? "gate-a-task",
       contextId: requestContext.contextId ?? "gate-a-context",
-      status: { state: "completed", timestamp: new Date().toISOString() },
+      status: {
+        state: "completed",
+        timestamp: new Date().toISOString(),
+        message: buildCompletedMessage(requestContext, findings),
+      },
       final: true,
     });
     eventSink.finished();
@@ -225,4 +247,41 @@ function readUserText(requestContext: QueueRequestContext): string | undefined {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function toTaskHistory(userMessage: unknown): Array<RequestContext["userMessage"]> {
+  if (!isObject(userMessage)) {
+    return [];
+  }
+
+  return [userMessage as unknown as RequestContext["userMessage"]];
+}
+
+function buildCompletedMessage(
+  requestContext: Partial<RequestContext>,
+  findings: Array<unknown>,
+): {
+  contextId: string;
+  kind: "message";
+  messageId: string;
+  parts: Array<{ data: { findings: Array<unknown> }; kind: "data" }>;
+  role: "agent";
+  taskId: string;
+} {
+  const taskId = requestContext.taskId ?? "gate-a-task";
+  const contextId = requestContext.contextId ?? "gate-a-context";
+
+  return {
+    contextId,
+    kind: "message",
+    messageId: `${taskId}-completed`,
+    parts: [
+      {
+        kind: "data",
+        data: { findings },
+      },
+    ],
+    role: "agent",
+    taskId,
+  };
 }
