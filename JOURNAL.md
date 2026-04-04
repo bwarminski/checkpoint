@@ -35,3 +35,9 @@
 - 2026-04-04: Pinned `agent`'s `@a2a-js/sdk` dependency to the exact version `0.3.13` and verified the install with `npm ls @a2a-js/sdk`.
 - 2026-04-04: Added the Gate A agent scaffold: `DBSpecialistExecutor`, the ExplainTool SELECT-only guard, and an Express A2A server wired through `DefaultRequestHandler`, JSON-RPC, REST, and a health endpoint.
 - 2026-04-04: Left `CodeSearchTool` transport-neutral and effectively stubbed because `pi-agent-core` external MCP client support is unverified and no local package or repo reference confirms it.
+- 2026-04-04: Built the Step 6b demo MCP server in `agent/src/mcp-servers/code-search/` with stdio transport, `read_file`, and `search_code`, backed by `CODE_SEARCH_ROOT`.
+- 2026-04-04: Wired Step 6c mcporter generation through `agent/.mcporter.json` and `npm run generate:code-search`, and kept generated artifacts out of git via `agent/.gitignore`.
+- 2026-04-04: Ran mcporter through `bun ./node_modules/mcporter/dist/cli.js` instead of the package bin because `mcporter@0.8.1` now expects Node >=20.11 while this workspace is on Node 18.19; the direct Bun invocation generated the client successfully.
+- 2026-04-04: Implemented `CodeSearchTool` to strip the `/app/` container prefix, pass repo-relative `file:line` references to the generated client, and return the captured file context.
+- 2026-04-04: Implemented Step 7 memory schema with `findings`, `suggestions`, and `pattern_log`, and made `MemoryTool` block `pending`, `accepted`, and `rejected` suggestions while allowing stale `invalid` suggestions to retry after a caller-provided cooldown.
+- 2026-04-04: Excluded the generated mcporter client from `tsc`'s static program and loaded it through a non-literal dynamic import because the current emitted file is not NodeNext-clean under this TypeScript setup, even though runtime generation works.

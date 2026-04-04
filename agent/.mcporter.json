@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "code-search": {
+      "command": "./node_modules/.bin/tsx",
+      "args": ["src/mcp-servers/code-search/main.ts"],
+      "env": {
+        "CODE_SEARCH_ROOT": "../demo"
+      }
+    }
+  },
+  "imports": []
+}

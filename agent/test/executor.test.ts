@@ -10,7 +10,7 @@ test("DBSpecialistExecutor emits working and completed events", async () => {
   const executor = new DBSpecialistExecutor();
 
   await executor.execute(
-    { userMessage: { text: "analyze_db" } },
+    { userMessage: { text: "analyze_db" } } as any,
     {
       enqueueEvent(event: unknown) {
         events.push(event);
