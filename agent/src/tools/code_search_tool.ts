@@ -10,7 +10,7 @@ type ReadFileResult =
 
 type CodeSearchClient = {
   close?: () => Promise<void>;
-  read_file(input: { path: string; lines?: number }): Promise<ReadFileResult>;
+  read_file(path: string, lines?: number): Promise<ReadFileResult>;
 };
 
 type CodeSearchInput = {
@@ -42,10 +42,10 @@ export class CodeSearchTool {
   async locate(input: CodeSearchInput): Promise<CodeSearchResult> {
     const sourceFile = toRelativeSourceFile(input.source_file);
     const client = await this.getClient();
-    const content = await client.read_file({
-      lines: this.options.contextLines ?? 3,
-      path: sourceFile,
-    });
+    const content = await client.read_file(
+      sourceFile,
+      this.options.contextLines ?? 3,
+    );
 
     return {
       content: toText(content),
@@ -76,10 +76,20 @@ export class CodeSearchTool {
     }
 
     if (!this.clientPromise) {
-      this.clientPromise = this.clientFactory().then((client) => {
-        this.managedClient = client;
-        return client;
-      });
+      const clientPromise = this.clientFactory()
+        .then((client) => {
+          this.managedClient = client;
+          return client;
+        })
+        .catch((error) => {
+          if (this.clientPromise === clientPromise) {
+            this.clientPromise = undefined;
+          }
+
+          throw error;
+        });
+
+      this.clientPromise = clientPromise;
     }
 
     return this.clientPromise;

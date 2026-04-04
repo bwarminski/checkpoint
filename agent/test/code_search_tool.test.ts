@@ -8,8 +8,8 @@ import { CodeSearchTool } from "../src/tools/code_search_tool.ts";
 test("CodeSearchTool preserves the app path and loads surrounding file context", async () => {
   const calls: Array<{ lines?: number; path: string }> = [];
   const tool = new CodeSearchTool({
-    read_file: async (params: { lines?: number; path: string }) => {
-      calls.push(params);
+    read_file: async (path: string, lines?: number) => {
+      calls.push({ lines, path });
       return "41:   before\n42:   render json: Todo.all\n43: end";
     },
   });
@@ -49,8 +49,8 @@ test("CodeSearchTool starts the generated client lazily and closes it after use"
         async close() {
           closed += 1;
         },
-        async read_file(params: { lines?: number; path: string }) {
-          calls.push(params);
+        async read_file(path: string, lines?: number) {
+          calls.push({ lines, path });
           return "ok";
         },
       };
@@ -70,4 +70,32 @@ test("CodeSearchTool starts the generated client lazily and closes it after use"
 
   await tool.close();
   assert.equal(closed, 1);
+});
+
+test("CodeSearchTool retries client creation after an initialization failure", async () => {
+  let attempts = 0;
+  const tool = new CodeSearchTool(undefined, {
+    clientFactory: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("boot failed");
+      }
+
+      return {
+        async read_file() {
+          return "recovered";
+        },
+      };
+    },
+  });
+
+  await assert.rejects(
+    () => tool.locate({ source_file: "/app/models/todo.rb:5" }),
+    /boot failed/,
+  );
+
+  const result = await tool.locate({ source_file: "/app/models/todo.rb:5" });
+
+  assert.equal(attempts, 2);
+  assert.equal(result.content, "recovered");
 });

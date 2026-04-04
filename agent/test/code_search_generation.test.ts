@@ -51,3 +51,15 @@ test("generated code-search client keeps path and pattern as the leading paramet
   assert.match(declarations, /read_file\(path: string, lines\?: number\): Promise<CallResult>;/);
   assert.match(declarations, /search_code\(pattern: string, glob\?: string\): Promise<CallResult>;/);
 });
+
+test("generated code-search runtime wrapper forwards both positional arguments", async () => {
+  const runtimeWrapper = await readFile(
+    new URL("./src/tools/generated/code-search-client.ts", agentRoot),
+    "utf8",
+  );
+
+  assert.match(runtimeWrapper, /async read_file\(path: .*lines\?: .*?\)/);
+  assert.match(runtimeWrapper, /await tool\(\{ path, lines \}\)/);
+  assert.match(runtimeWrapper, /async search_code\(pattern: .*glob\?: .*?\)/);
+  assert.match(runtimeWrapper, /await tool\(\{ pattern, glob \}\)/);
+});
