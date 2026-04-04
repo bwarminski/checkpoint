@@ -9,4 +9,7 @@ def test_compose_and_postgres_scaffold_exist():
     assert (root / "postgres" / "Dockerfile").exists()
     assert (root / "postgres" / "init" / "01-extensions.sql").exists()
     assert (root / "JOURNAL.md").exists()
-    assert "docker-entrypoint-initdb.d" in (root / "docker-compose.yml").read_text()
+    assert (
+        "      - ./postgres/init:/docker-entrypoint-initdb.d:ro"
+        in (root / "docker-compose.yml").read_text()
+    )

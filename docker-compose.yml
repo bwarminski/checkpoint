@@ -4,6 +4,7 @@ services:
   postgres:
     build:
       context: ./postgres
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: checkpoint_demo
