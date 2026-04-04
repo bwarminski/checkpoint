@@ -1,5 +1,17 @@
 {
   "name": "checkpoint-agent",
   "private": true,
-  "version": "0.0.0"
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "0.3.13",
+    "express": "5.2.1"
+  },
+  "devDependencies": {
+    "tsx": "4.21.0"
+  }
 }

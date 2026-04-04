@@ -31,3 +31,7 @@
 - 2026-04-04: Added a blocking-correction smoke test that requires compose to define `demo` and `collector`, and requires the runnable demo path to use Postgres.
 - 2026-04-04: Wired the demo and collector into compose with minimal Dockerfiles, kept the test suite on SQLite, and added `pg` where the real runtime path needs it.
 - 2026-04-04: The first compose verification exposed two more missing runtime prerequisites: the Rails image needed `puma` plus `config.ru`, and ClickHouse needed a user config that permits requests from sibling containers.
+- 2026-04-04: Task 6 uses `tsx` from `agent/package.json` for `start` and `test` because the local Node runtime is `v18.19.1` and cannot run TypeScript files directly.
+- 2026-04-04: Pinned `agent`'s `@a2a-js/sdk` dependency to the exact version `0.3.13` and verified the install with `npm ls @a2a-js/sdk`.
+- 2026-04-04: Added the Gate A agent scaffold: `DBSpecialistExecutor`, the ExplainTool SELECT-only guard, and an Express A2A server wired through `DefaultRequestHandler`, JSON-RPC, REST, and a health endpoint.
+- 2026-04-04: Left `CodeSearchTool` transport-neutral and effectively stubbed because `pi-agent-core` external MCP client support is unverified and no local package or repo reference confirms it.
