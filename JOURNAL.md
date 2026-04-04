@@ -21,3 +21,7 @@
 - 2026-04-04: Made the Task 3 SQL test resolve files from `__dir__` so it works outside `collector/`.
 - 2026-04-04: Replaced the three independent `anyState` fields with a single `argMaxState` tuple keyed by `collected_at` so the representative row stays coherent.
 - 2026-04-04: Validated the updated ClickHouse schema by recreating the destination objects in the running ClickHouse container.
+- 2026-04-04: Built the Task 4 Ruby collector scaffold with `QueryCommentParser`, `SampleQueryLookup`, a minimal `Collector#run_once`, and the `collector/bin/collector` entrypoint.
+- 2026-04-04: Kept the collector runtime wiring out of scope for Task 4; the executable only loads the collector and runs a no-op pass until later tasks provide real connections.
+- 2026-04-04: Used the sampled `pg_stat_activity` query text, not the normalized `pg_stat_statements` text, as the source for Rails comment parsing so collector rows can capture `source_tag` and `source_file`.
+- 2026-04-04: No extra collector gems or support files were needed for Task 4 beyond the planned Ruby files and tests.

@@ -1,0 +1,6 @@
+#!/usr/bin/env ruby
+# ABOUTME: Provides the executable entry point for the Postgres stats collector.
+# ABOUTME: Loads the collector class so later tasks can supply runtime wiring.
+require_relative "../lib/collector"
+
+Collector.new.run_once
