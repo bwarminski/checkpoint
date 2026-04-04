@@ -1,5 +1,5 @@
-# ABOUTME: Defines the SQLite schema used by the demo Rails application.
-# ABOUTME: Creates the minimal users and todos tables needed for Task 2 endpoints.
+# ABOUTME: Defines the demo database schema used by the Rails application.
+# ABOUTME: Creates the minimal users and todos tables needed for the demo endpoints.
 ActiveRecord::Schema[7.1].define(version: 0) do
   create_table "users", force: :cascade do |t|
     t.string "name", null: false

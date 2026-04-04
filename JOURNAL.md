@@ -28,3 +28,6 @@
 - 2026-04-04: Tightened collector comment extraction to scan single `/* ... */` blocks and pick the Rails metadata block explicitly so trailing or leading block comments do not corrupt `source_file`.
 - 2026-04-04: Built the Task 5 load harness with a fixed round-robin endpoint list and a simple `run` loop that sleeps at the requested rate between requests.
 - 2026-04-04: Verified the harness request order against a temporary local TCP server because the repo stack does not include a runnable demo HTTP server or collector pipeline in this environment.
+- 2026-04-04: Added a blocking-correction smoke test that requires compose to define `demo` and `collector`, and requires the runnable demo path to use Postgres.
+- 2026-04-04: Wired the demo and collector into compose with minimal Dockerfiles, kept the test suite on SQLite, and added `pg` where the real runtime path needs it.
+- 2026-04-04: The first compose verification exposed two more missing runtime prerequisites: the Rails image needed `puma` plus `config.ru`, and ClickHouse needed a user config that permits requests from sibling containers.

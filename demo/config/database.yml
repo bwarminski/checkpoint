@@ -1,14 +1,15 @@
 # ABOUTME: Configures the demo app database connections for development and test.
-# ABOUTME: Uses local SQLite databases so Task 2 can run without extra services.
+# ABOUTME: Uses Postgres for the runnable demo path and SQLite for the test suite.
 default: &default
-  adapter: sqlite3
   pool: 5
-  timeout: 5000
 
 development:
   <<: *default
-  database: db/development.sqlite3
+  adapter: postgresql
+  url: <%= ENV.fetch("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/checkpoint_demo") %>
 
 test:
   <<: *default
+  adapter: sqlite3
+  timeout: 5000
   database: db/test.sqlite3
