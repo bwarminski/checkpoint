@@ -1,4 +1,4 @@
-CREATE TABLE findings (
+CREATE TABLE IF NOT EXISTS findings (
   id BIGSERIAL PRIMARY KEY,
   fingerprint TEXT NOT NULL,
   source_tag TEXT,
@@ -9,7 +9,7 @@ CREATE TABLE findings (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE suggestions (
+CREATE TABLE IF NOT EXISTS suggestions (
   id BIGSERIAL PRIMARY KEY,
   finding_id BIGINT REFERENCES findings(id),
   fingerprint TEXT NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE suggestions (
   resolved_at TIMESTAMPTZ
 );
 
-CREATE TABLE pattern_log (
+CREATE TABLE IF NOT EXISTS pattern_log (
   id BIGSERIAL PRIMARY KEY,
   fingerprint TEXT NOT NULL,
   event TEXT NOT NULL,
@@ -31,4 +31,4 @@ CREATE TABLE pattern_log (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX suggestions_fingerprint_fix_type_status_idx ON suggestions (fingerprint, fix_type, status);
+CREATE INDEX IF NOT EXISTS suggestions_fingerprint_fix_type_status_idx ON suggestions (fingerprint, fix_type, status);

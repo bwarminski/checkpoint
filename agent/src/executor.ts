@@ -35,7 +35,10 @@ type ExecutorDependencies = {
     topOffenders(scope?: unknown): Promise<Array<TopOffender>>;
   };
   codeSearchTool?: {
-    locate(input: { source_file: string }): Promise<LocatedSource>;
+    locate(input: {
+      source_file?: string | null;
+      source_tag?: string | null;
+    }): Promise<LocatedSource>;
   };
   explainTool?: {
     analyze(input: { sql: string }): Promise<unknown>;
@@ -190,14 +193,20 @@ export class DBSpecialistExecutor {
   }
 
   private async locateSource(finding: TopOffender): Promise<LocatedSource> {
-    if (!this.deps.codeSearchTool || typeof finding.source_file !== "string") {
+    if (
+      !this.deps.codeSearchTool ||
+      (typeof finding.source_file !== "string" && typeof finding.source_tag !== "string")
+    ) {
       return {
         content: "",
         source_file: typeof finding.source_file === "string" ? finding.source_file : "",
       };
     }
 
-    return this.deps.codeSearchTool.locate({ source_file: finding.source_file });
+    return this.deps.codeSearchTool.locate({
+      source_file: typeof finding.source_file === "string" ? finding.source_file : undefined,
+      source_tag: typeof finding.source_tag === "string" ? finding.source_tag : undefined,
+    });
   }
 
   private async validateFinding(finding: TopOffender): Promise<ValidationResult> {

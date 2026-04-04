@@ -15,7 +15,13 @@ class ClickhouseSchemaTest < Minitest::Test
   def test_fingerprint_table_uses_a_single_representative_row_state
     sql = read_sql("002_query_fingerprints.sql")
 
-    assert_includes sql, "representative_state AggregateFunction(argMax, Tuple(Nullable(String), Nullable(String), Nullable(String)), DateTime)"
+    assert_includes sql, "representative_state AggregateFunction(argMax, Tuple(Nullable(String), Nullable(String), Nullable(String)), DateTime64(3))"
+  end
+
+  def test_query_events_store_subsecond_collection_times
+    sql = read_sql("001_query_events.sql")
+
+    assert_includes sql, "collected_at DateTime64(3)"
   end
 
   private

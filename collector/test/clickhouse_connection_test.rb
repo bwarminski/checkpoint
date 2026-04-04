@@ -34,10 +34,10 @@ class ClickhouseConnectionTest < Minitest::Test
       end
     )
 
-    connection.insert("query_events", [{ collected_at: Time.utc(2026, 4, 4, 14, 45, 0) }])
+    connection.insert("query_events", [{ collected_at: Time.utc(2026, 4, 4, 14, 45, 0, 123_000) }])
 
     captured = requests.fetch(0)
 
-    assert_equal "{\"collected_at\":\"2026-04-04 14:45:00\"}\n", captured[:request].body
+    assert_equal "{\"collected_at\":\"2026-04-04 14:45:00.123\"}\n", captured[:request].body
   end
 end

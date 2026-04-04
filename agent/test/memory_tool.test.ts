@@ -62,9 +62,9 @@ test("MemoryTool allows retry only after an invalid suggestion ages out", async 
 test("memory schema declares findings, suggestions, and pattern_log", async () => {
   const sql = await readFile(new URL("../db/001_memory_schema.sql", import.meta.url), "utf8");
 
-  assert.match(sql, /CREATE TABLE findings/i);
-  assert.match(sql, /CREATE TABLE suggestions/i);
-  assert.match(sql, /CREATE TABLE pattern_log/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS findings/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS suggestions/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS pattern_log/i);
   assert.match(sql, /status\s+TEXT\s+NOT NULL DEFAULT 'pending'/i);
-  assert.match(sql, /CREATE INDEX .*suggestions .*fingerprint, fix_type, status/i);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS .*suggestions .*fingerprint, fix_type, status/i);
 });

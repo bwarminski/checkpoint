@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "code-search": {
-      "command": "./node_modules/.bin/tsx",
-      "args": ["src/mcp-servers/code-search/main.ts"],
+      "command": "node",
+      "args": ["--import", "tsx", "src/mcp-servers/code-search/main.ts"],
       "env": {
         "CODE_SEARCH_ROOT": "../demo"
       }

@@ -13,6 +13,7 @@ import {
 } from "@a2a-js/sdk/server/express";
 
 import { DBSpecialistExecutor } from "./executor.ts";
+import { createRuntimeExecutor } from "./runtime_dependencies.ts";
 
 type ServerOptions = {
   baseUrl?: string;
@@ -29,7 +30,7 @@ export function createServer(options: ServerOptions = {}): {
 } {
   const port = options.port ?? 3001;
   const baseUrl = options.baseUrl ?? `http://localhost:${port}`;
-  const executor = options.executor ?? new DBSpecialistExecutor();
+  const executor = options.executor ?? createRuntimeExecutor();
   const requestHandler = new DefaultRequestHandler(
     buildAgentCard(baseUrl),
     new InMemoryTaskStore(),

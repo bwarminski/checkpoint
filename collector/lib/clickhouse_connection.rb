@@ -40,7 +40,7 @@ class ClickhouseConnection
   end
 
   def serialize_value(value)
-    return value.utc.strftime("%Y-%m-%d %H:%M:%S") if value.is_a?(Time)
+    return value.utc.strftime("%Y-%m-%d %H:%M:%S.%L") if value.is_a?(Time)
 
     value
   end

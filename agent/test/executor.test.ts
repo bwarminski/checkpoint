@@ -7,7 +7,11 @@ import { DBSpecialistExecutor } from "../src/executor.ts";
 
 test("DBSpecialistExecutor emits working and completed events", async () => {
   const events: Array<unknown> = [];
-  const executor = new DBSpecialistExecutor();
+  const executor = new DBSpecialistExecutor({
+    clickhouseTool: {
+      topOffenders: async () => [],
+    },
+  } as any);
 
   await executor.execute(
     { userMessage: { text: "analyze_db" } } as any,
@@ -144,4 +148,54 @@ test("DBSpecialistExecutor publishes findings on the A2A event bus", async () =>
       final: true,
     },
   ]);
+});
+
+test("DBSpecialistExecutor passes source_tag to code search when source_file is missing", async () => {
+  const locateCalls: Array<{ source_file?: string | null; source_tag?: string | null }> = [];
+  const executor = new DBSpecialistExecutor({
+    clickhouseTool: {
+      topOffenders: async () => [
+        {
+          fingerprint: "fp-tagged",
+          sample_query: "SELECT * FROM todos WHERE status = 'open'",
+          severity: "high",
+          source_tag: "todos#status",
+        },
+      ],
+    },
+    codeSearchTool: {
+      locate: async (input: { source_file?: string | null; source_tag?: string | null }) => {
+        locateCalls.push(input);
+        return {
+          content: "1: class TodosController < ApplicationController",
+          source_file: "app/controllers/todos_controller.rb:1",
+        };
+      },
+    },
+    explainTool: {
+      analyze: async () => ({ validated: true }),
+    },
+    memoryTool: {
+      shouldSuggest: async () => true,
+    },
+    githubTool: {
+      openPullRequest: async () => ({ url: "https://example.test/pr/2" }),
+    },
+  } as any);
+
+  const events: Array<any> = [];
+  await executor.execute(
+    { userMessage: { text: "analyze_db" } } as any,
+    {
+      enqueueEvent(event: unknown) {
+        events.push(event);
+      },
+    },
+  );
+
+  assert.deepEqual(locateCalls, [{ source_file: undefined, source_tag: "todos#status" }]);
+  assert.equal(
+    events[1]?.result?.findings?.[0]?.source?.source_file,
+    "app/controllers/todos_controller.rb:1",
+  );
 });

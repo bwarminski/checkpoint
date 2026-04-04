@@ -5,7 +5,14 @@ require_relative "query_comment_parser"
 class Collector
   STATS_SQL = "SELECT queryid, calls, mean_exec_time FROM pg_stat_statements".freeze
   COMMENT_BLOCK_PATTERN = %r{/\*.*?\*/}m
-  COMMENT_METADATA_MARKERS = ["controller:", "action:", "source_location:"].freeze
+  COMMENT_METADATA_MARKERS = [
+    "controller:",
+    "controller=",
+    "action:",
+    "action=",
+    "source_location:",
+    "source_location="
+  ].freeze
 
   def initialize(stats_connection: nil, clickhouse_connection: nil, sample_query_lookup: nil, clock: -> { Time.now.utc })
     @stats_connection = stats_connection

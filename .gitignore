@@ -3,3 +3,5 @@ interview_text.md
 .codex
 __pycache__/
 .pytest_cache/
+collector/.bundle/
+collector/vendor/

@@ -14,7 +14,8 @@ type CodeSearchClient = {
 };
 
 type CodeSearchInput = {
-  source_file: string;
+  source_file?: string | null;
+  source_tag?: string | null;
 };
 
 type CodeSearchResult = {
@@ -40,7 +41,7 @@ export class CodeSearchTool {
   }
 
   async locate(input: CodeSearchInput): Promise<CodeSearchResult> {
-    const sourceFile = toRelativeSourceFile(input.source_file);
+    const sourceFile = toRelativeSourceFile(input);
     const client = await this.getClient();
     const content = await client.read_file(
       sourceFile,
@@ -107,11 +108,19 @@ async function createGeneratedClient(): Promise<CodeSearchClient> {
   });
 }
 
-function toRelativeSourceFile(sourceFile: string): string {
-  if (!sourceFile) {
-    throw new Error("source_file is required");
+function toRelativeSourceFile(input: CodeSearchInput): string {
+  if (input.source_file) {
+    return normalizeSourceFile(input.source_file);
   }
 
+  if (input.source_tag) {
+    return deriveSourceFileFromTag(input.source_tag);
+  }
+
+  throw new Error("source_file is required");
+}
+
+function normalizeSourceFile(sourceFile: string): string {
   if (sourceFile.startsWith("/")) {
     if (!sourceFile.startsWith("/app/")) {
       throw new Error("Absolute source_file paths must stay under /app/.");
@@ -121,6 +130,16 @@ function toRelativeSourceFile(sourceFile: string): string {
   }
 
   return sourceFile.replace(/^\.?\//, "");
+}
+
+function deriveSourceFileFromTag(sourceTag: string): string {
+  const controller = sourceTag.split("#", 1)[0]?.trim();
+
+  if (!controller) {
+    throw new Error("source_tag could not be resolved to a controller file.");
+  }
+
+  return `app/controllers/${controller}_controller.rb:1`;
 }
 
 function toText(result: ReadFileResult): string {

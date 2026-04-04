@@ -81,6 +81,30 @@ class CollectorTest < Minitest::Test
     assert_equal "/app/controllers/todos_controller.rb:12", row[:source_file]
   end
 
+  def test_extracts_source_tag_from_live_rails_equals_style_comments
+    stats_connection = StatsConnection.new([
+      {
+        "queryid" => "42",
+        "calls" => "7",
+        "mean_exec_time" => "12.5"
+      }
+    ])
+    clickhouse_connection = ClickhouseConnection.new
+    sample_query = "SELECT * FROM todos /*action=\\'index\\',application=\\'Demo\\',controller=\\'todos\\'*/"
+    sample_query_lookup = SampleQueryLookupStub.new("42" => sample_query)
+    collector = Collector.new(
+      stats_connection: stats_connection,
+      clickhouse_connection: clickhouse_connection,
+      sample_query_lookup: sample_query_lookup,
+      clock: -> { Time.utc(2026, 4, 4, 12, 0, 0) }
+    )
+
+    row = collector.run_once.fetch(0)
+
+    assert_equal "todos#index", row[:source_tag]
+    assert_nil row[:source_file]
+  end
+
   class StatsConnection
     attr_reader :sql
 

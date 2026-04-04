@@ -1,7 +1,7 @@
 -- ABOUTME: Creates the raw query events table for collector inserts.
 -- ABOUTME: Stores per-query timing and source metadata for later fingerprinting.
 CREATE TABLE query_events (
-  collected_at DateTime,
+  collected_at DateTime64(3),
   fingerprint String,
   source_tag Nullable(String),
   source_file Nullable(String),
