@@ -26,3 +26,5 @@
 - 2026-04-04: Used the sampled `pg_stat_activity` query text, not the normalized `pg_stat_statements` text, as the source for Rails comment parsing so collector rows can capture `source_tag` and `source_file`.
 - 2026-04-04: No extra collector gems or support files were needed for Task 4 beyond the planned Ruby files and tests.
 - 2026-04-04: Tightened collector comment extraction to scan single `/* ... */` blocks and pick the Rails metadata block explicitly so trailing or leading block comments do not corrupt `source_file`.
+- 2026-04-04: Built the Task 5 load harness with a fixed round-robin endpoint list and a simple `run` loop that sleeps at the requested rate between requests.
+- 2026-04-04: Verified the harness request order against a temporary local TCP server because the repo stack does not include a runnable demo HTTP server or collector pipeline in this environment.
