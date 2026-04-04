@@ -15,3 +15,6 @@
 - 2026-04-04: Pinned `minitest` to `~> 5.25` because Rails 7.1.6 resolved against Minitest 6 in this environment and the Rails test runner failed with an argument mismatch.
 - 2026-04-04: Changed `/todos/stats` to key its JSON response by stringified user IDs so the payload shape is stable across renders.
 - 2026-04-04: Strengthened the Task 2 controller test to parse JSON and assert row counts, filtered results, `/todos/status`, and `/todos/stats` response shape directly.
+- 2026-04-04: Added the Task 3 ClickHouse schema files and the Ruby schema test under `collector/test/sql`.
+- 2026-04-04: Pinned `collector`'s `minitest` dependency to `5.16.3` because that version is available locally through Bundler in this environment.
+- 2026-04-04: Validated the ClickHouse DDLs by streaming the local SQL files into `clickhouse-client` because this compose setup does not mount the repository at `/workdir/collector`.
