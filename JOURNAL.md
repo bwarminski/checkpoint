@@ -18,3 +18,6 @@
 - 2026-04-04: Added the Task 3 ClickHouse schema files and the Ruby schema test under `collector/test/sql`.
 - 2026-04-04: Pinned `collector`'s `minitest` dependency to `5.16.3` because that version is available locally through Bundler in this environment.
 - 2026-04-04: Validated the ClickHouse DDLs by streaming the local SQL files into `clickhouse-client` because this compose setup does not mount the repository at `/workdir/collector`.
+- 2026-04-04: Made the Task 3 SQL test resolve files from `__dir__` so it works outside `collector/`.
+- 2026-04-04: Replaced the three independent `anyState` fields with a single `argMaxState` tuple keyed by `collected_at` so the representative row stays coherent.
+- 2026-04-04: Validated the updated ClickHouse schema by recreating the destination objects in the running ClickHouse container.
