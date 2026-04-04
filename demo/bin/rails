@@ -1,0 +1,6 @@
+# ABOUTME: Starts Rails commands within the demo application directory.
+# ABOUTME: Defines the app path so `bundle exec rails` runs Task 2 commands against this app.
+APP_PATH = File.expand_path("../config/application", __dir__)
+
+require_relative "../config/boot"
+require "rails/commands"

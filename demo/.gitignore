@@ -1,0 +1,5 @@
+.bundle/
+vendor/
+db/*.sqlite3
+log/
+tmp/

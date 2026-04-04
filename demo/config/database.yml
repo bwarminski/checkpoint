@@ -1,0 +1,14 @@
+# ABOUTME: Configures the demo app database connections for development and test.
+# ABOUTME: Uses local SQLite databases so Task 2 can run without extra services.
+default: &default
+  adapter: sqlite3
+  pool: 5
+  timeout: 5000
+
+development:
+  <<: *default
+  database: db/development.sqlite3
+
+test:
+  <<: *default
+  database: db/test.sqlite3
