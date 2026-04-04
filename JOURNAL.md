@@ -25,3 +25,4 @@
 - 2026-04-04: Kept the collector runtime wiring out of scope for Task 4; the executable only loads the collector and runs a no-op pass until later tasks provide real connections.
 - 2026-04-04: Used the sampled `pg_stat_activity` query text, not the normalized `pg_stat_statements` text, as the source for Rails comment parsing so collector rows can capture `source_tag` and `source_file`.
 - 2026-04-04: No extra collector gems or support files were needed for Task 4 beyond the planned Ruby files and tests.
+- 2026-04-04: Tightened collector comment extraction to scan single `/* ... */` blocks and pick the Rails metadata block explicitly so trailing or leading block comments do not corrupt `source_file`.

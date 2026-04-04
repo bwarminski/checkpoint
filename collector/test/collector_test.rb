@@ -57,6 +57,30 @@ class CollectorTest < Minitest::Test
     assert_equal expected_rows, clickhouse_connection.rows
   end
 
+  def test_uses_only_the_rails_metadata_block_when_query_has_multiple_comments
+    stats_connection = StatsConnection.new([
+      {
+        "queryid" => "42",
+        "calls" => "7",
+        "mean_exec_time" => "12.5"
+      }
+    ])
+    clickhouse_connection = ClickhouseConnection.new
+    sample_query = "SELECT * FROM todos /*hint:seqscan_off*/ /*application:demo,controller:todos,action:index,source_location:/app/controllers/todos_controller.rb:12*/ /*note:trailing*/"
+    sample_query_lookup = SampleQueryLookupStub.new("42" => sample_query)
+    collector = Collector.new(
+      stats_connection: stats_connection,
+      clickhouse_connection: clickhouse_connection,
+      sample_query_lookup: sample_query_lookup,
+      clock: -> { Time.utc(2026, 4, 4, 12, 0, 0) }
+    )
+
+    row = collector.run_once.fetch(0)
+
+    assert_equal "todos#index", row[:source_tag]
+    assert_equal "/app/controllers/todos_controller.rb:12", row[:source_file]
+  end
+
   class StatsConnection
     attr_reader :sql
 
