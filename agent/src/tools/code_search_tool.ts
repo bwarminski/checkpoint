@@ -9,6 +9,7 @@ type ReadFileResult =
     };
 
 type CodeSearchClient = {
+  close?: () => Promise<void>;
   read_file(input: { path: string; lines?: number }): Promise<ReadFileResult>;
 };
 
@@ -22,19 +23,20 @@ type CodeSearchResult = {
 };
 
 type CodeSearchToolOptions = {
+  clientFactory?: () => Promise<CodeSearchClient>;
   contextLines?: number;
 };
 
 export class CodeSearchTool {
-  private readonly clientPromise?: Promise<CodeSearchClient>;
+  private clientPromise?: Promise<CodeSearchClient>;
+  private managedClient?: CodeSearchClient;
+  private readonly clientFactory?: () => Promise<CodeSearchClient>;
 
   constructor(
     private readonly client?: CodeSearchClient,
     private readonly options: CodeSearchToolOptions = {},
   ) {
-    if (!client) {
-      this.clientPromise = createGeneratedClient();
-    }
+    this.clientFactory = client ? undefined : (options.clientFactory ?? createGeneratedClient);
   }
 
   async locate(input: CodeSearchInput): Promise<CodeSearchResult> {
@@ -51,13 +53,33 @@ export class CodeSearchTool {
     };
   }
 
+  async close(): Promise<void> {
+    const client = this.managedClient ?? (await this.clientPromise?.catch(() => undefined));
+
+    this.managedClient = undefined;
+    this.clientPromise = undefined;
+
+    await client?.close?.();
+  }
+
   private async getClient(): Promise<CodeSearchClient> {
     if (this.client) {
       return this.client;
     }
 
-    if (!this.clientPromise) {
+    if (this.managedClient) {
+      return this.managedClient;
+    }
+
+    if (!this.clientFactory) {
       throw new Error("Code search client is unavailable.");
+    }
+
+    if (!this.clientPromise) {
+      this.clientPromise = this.clientFactory().then((client) => {
+        this.managedClient = client;
+        return client;
+      });
     }
 
     return this.clientPromise;
@@ -80,8 +102,12 @@ function toRelativeSourceFile(sourceFile: string): string {
     throw new Error("source_file is required");
   }
 
-  if (sourceFile.startsWith("/app/")) {
-    return sourceFile.slice("/app/".length);
+  if (sourceFile.startsWith("/")) {
+    if (!sourceFile.startsWith("/app/")) {
+      throw new Error("Absolute source_file paths must stay under /app/.");
+    }
+
+    return sourceFile.slice(1);
   }
 
   return sourceFile.replace(/^\.?\//, "");

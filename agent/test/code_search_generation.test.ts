@@ -41,3 +41,13 @@ test("agent mcporter config and gitignore include the code-search client paths",
   assert.ok(configJson.mcpServers?.["code-search"]);
   assert.match(gitignore, /^src\/tools\/generated\/$/m);
 });
+
+test("generated code-search client keeps path and pattern as the leading parameters", async () => {
+  const declarations = await readFile(
+    new URL("./src/tools/generated/code-search-client.d.ts", agentRoot),
+    "utf8",
+  );
+
+  assert.match(declarations, /read_file\(path: string, lines\?: number\): Promise<CallResult>;/);
+  assert.match(declarations, /search_code\(pattern: string, glob\?: string\): Promise<CallResult>;/);
+});

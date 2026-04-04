@@ -17,8 +17,8 @@ server.registerTool(
   {
     description: "Read a source file from the mounted Rails app, with optional line context.",
     inputSchema: {
-      lines: z.number().int().nonnegative().optional(),
       path: z.string().describe("Relative path inside the mounted app, optionally with :line."),
+      lines: z.number().int().nonnegative().optional(),
     },
   },
   async ({ lines, path }) => {
@@ -38,8 +38,8 @@ server.registerTool(
   {
     description: "Search source files under the mounted Rails app for a literal string.",
     inputSchema: {
-      glob: z.string().optional(),
       pattern: z.string(),
+      glob: z.string().optional(),
     },
   },
   async ({ glob, pattern }) => {

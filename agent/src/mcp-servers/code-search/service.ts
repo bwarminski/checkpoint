@@ -93,8 +93,13 @@ function parsePathReference(pathReference: string): PathReference {
     throw new Error(`Invalid file reference: ${pathReference}`);
   }
 
+  const line = match[2] ? Number(match[2]) : undefined;
+  if (line === 0) {
+    throw new Error(`Line numbers must be >= 1: ${pathReference}`);
+  }
+
   return {
-    line: match[2] ? Number(match[2]) : undefined,
+    line,
     relativePath: normalizeRelativePath(match[1]),
   };
 }

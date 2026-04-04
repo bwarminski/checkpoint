@@ -91,3 +91,21 @@ test("getCodeSearchRoot reads CODE_SEARCH_ROOT", () => {
     "/tmp/demo-app",
   );
 });
+
+test("read_file rejects line zero explicitly", async () => {
+  const root = await mkdtemp(join(tmpdir(), "code-search-root-"));
+
+  try {
+    await mkdir(join(root, "app"), { recursive: true });
+    await writeFile(join(root, "app", "sample.rb"), "puts 'hello'\n");
+
+    const service = createCodeSearchService(root);
+
+    await assert.rejects(
+      () => service.readFile({ path: "app/sample.rb:0" }),
+      /line/i,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
