@@ -1,0 +1,3 @@
+# ABOUTME: Declares the Ruby dependencies for the collector service.
+# ABOUTME: Keeps the collector scaffold ready for later polling logic.
+source "https://rubygems.org"

@@ -1,0 +1,3 @@
+# ABOUTME: Declares the Ruby dependencies for the demo Rails application.
+# ABOUTME: Keeps the demo scaffold ready for later app code.
+source "https://rubygems.org"

@@ -1,0 +1,13 @@
+# ABOUTME: Defines the local database specialist stack for the demo environment.
+# ABOUTME: Keeps the initial service layout limited to Postgres and ClickHouse.
+services:
+  postgres:
+    build:
+      context: ./postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: checkpoint_demo
+    ports: ["5432:5432"]
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    ports: ["8123:8123", "9000:9000"]
