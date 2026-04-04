@@ -49,7 +49,7 @@ services:
     ports: ["9092:9092"]
   demo:
     build:
-      context: ./demo
+      context: ${DEMO_APP_ROOT:?DEMO_APP_ROOT is required}
     depends_on:
       postgres:
         condition: service_healthy

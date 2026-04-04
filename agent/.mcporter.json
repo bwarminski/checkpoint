@@ -1,11 +1,11 @@
 {
   "mcpServers": {
     "code-search": {
-      "command": "node",
-      "args": ["--import", "tsx", "src/mcp-servers/code-search/main.ts"],
-      "env": {
-        "CODE_SEARCH_ROOT": "../demo"
-      }
+      "command": "bash",
+      "args": [
+        "-lc",
+        "CODE_SEARCH_ROOT=\"${DEMO_APP_ROOT:?DEMO_APP_ROOT is required}\" node --import tsx src/mcp-servers/code-search/main.ts"
+      ]
     }
   },
   "imports": []

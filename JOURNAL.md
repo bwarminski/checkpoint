@@ -55,3 +55,4 @@
 - 2026-04-04: Added repo ignores for `collector/.bundle/` and `collector/vendor/` because the local Bundler install path is generated runtime state and should not be committed.
 - 2026-04-04: Step 9 adds a minimal blog skeleton under `docs/blog/` that explicitly calls out the A2A flow, EXPLAIN plan diff, and HypoPG so the public write-up starts from the Phase 1 proof instead of a blank page.
 - 2026-04-04: Step 10 starts the Phase 2 transport work with a minimal `RedpandaConsumer` payload normalizer, adds a Redpanda service to compose, and extends the collector image with `librdkafka-dev` while leaving the ClickHouse read model unchanged.
+- 2026-04-04: Started the demo-repo split by defining `DEMO_APP_ROOT` and related GitHub env vars in `.env.example`, rewiring compose and mcporter to the sibling demo path, and planning to make `/home/bjw/db-specialist-demo` the single source of truth for the Rails app.
