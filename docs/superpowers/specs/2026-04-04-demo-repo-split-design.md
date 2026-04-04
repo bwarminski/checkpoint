@@ -65,6 +65,34 @@ stale local paths.
 
 The in-repo `demo/` directory will be removed after the wiring is updated.
 
+### Credentials and configuration
+
+The implementation should keep secrets out of code, docs, and committed config.
+Configuration should be injected through env vars only.
+
+Required or supported vars:
+
+- `DEMO_APP_ROOT`
+  - local filesystem path for the sibling Rails repo
+- `DEMO_REPO`
+  - GitHub repo slug such as `username/db-specialist-demo`
+- `DEMO_BASE_REF`
+  - optional GitHub PR base branch, default `main`
+- `DEMO_HEAD_REF`
+  - required for real PR creation when `GITHUB_TOKEN` is set
+- `GITHUB_TOKEN`
+  - secret token for GitHub REST API access
+
+Behavior contract:
+
+- if `GITHUB_TOKEN` is unset, `GitHubTool` must use the `local://` fallback
+- if `GITHUB_TOKEN` is set but `DEMO_REPO` or `DEMO_HEAD_REF` is missing,
+  `GitHubTool` must fail with a clear configuration error
+- the token must never be logged, written to repo files, or recorded in
+  `JOURNAL.md`
+- the repo should provide a checked-in `.env.example` with variable names only,
+  while real secret-bearing env files remain untracked
+
 ### GitHub PR boundary
 
 `GitHubTool` must keep the current `local://` fallback when `GITHUB_TOKEN` is
