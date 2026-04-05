@@ -19,6 +19,10 @@ if the agent is ever pointed at a shared or production replica.
 **Where:** `agent/src/tools/explain_tool.ts` — `analyze()` method. Add test asserting
 ROLLBACK fires even on query error.
 
+**Follow-on:** Honest post-fix validation also depends on this work. The current
+PR body can only show `EXPLAIN (sample query)` because it does not rerun the app
+to capture ORM-generated SQL after a code change.
+
 ---
 
 ## IndexValidationTool: HypoPG implementation
@@ -121,6 +125,19 @@ swap the implementation.
 
 **Where:** `agent/src/executor.ts` — `buildFixProposal()`. Wire through pi-mono's
 `pi-agent-core` LLM loop (currently the executor doesn't use LLM reasoning at all).
+
+---
+
+## pi-agent-core loop (Phase 2 agent capability)
+
+**What:** Wire `DBSpecialistExecutor` through pi-agent-core's LLM reasoning loop.
+Currently the executor uses deterministic pattern matching with no LLM calls.
+
+**Why:** Phase 1 proves the vertical slice with direct tool orchestration.
+Phase 2 adds LLM-based fix classification — at that point, wiring pi-agent-core
+makes sense.
+
+**Where:** `agent/src/executor.ts`, `agent/package.json`.
 
 ---
 
