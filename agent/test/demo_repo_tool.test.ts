@@ -1,5 +1,5 @@
 // ABOUTME: Verifies the demo repo mutation path creates a real branch diff before PR creation.
-// ABOUTME: Covers the smallest file edits and git commands needed for the live GitHub proof.
+// ABOUTME: Covers branching, drift detection, and the git command sequence needed for the live GitHub proof.
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,66 +8,195 @@ import test from "node:test";
 
 import { DemoRepoTool } from "../src/tools/demo_repo_tool.ts";
 
-test("DemoRepoTool rewrites the stats action and stages a branch push", async () => {
+test("DemoRepoTool creates a branch per finding fingerprint", async () => {
   const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
   const commands: Array<string> = [];
 
   try {
-    await mkdir(join(root, "app", "controllers"), { recursive: true });
-    await writeFile(
-      join(root, "app", "controllers", "todos_controller.rb"),
-      [
-        "class TodosController < ApplicationController",
-        "  def stats",
-        "    render json: User.all.index_with { |user| user.todos.count }.transform_keys { |user| user.id.to_s }",
-        "  end",
-        "end",
-      ].join("\n"),
-    );
+    await writeControllerFile(root);
 
-    const tool = new DemoRepoTool(
-      {
-        exec: async (args, cwd) => {
-          commands.push(`${cwd}: ${args.join(" ")}`);
-          return "";
-        },
-      },
-      {
-        env: {
-          DEMO_APP_ROOT: root,
-          DEMO_HEAD_REF: "agent/demo-fix",
-        },
-        now: () => new Date("2026-04-05T01:20:00Z"),
-      },
-    );
+    const tool = createTool(root, commands);
 
-    await tool.applyFix({
-      fix: {
-        fix_type: "rewrite_count",
-        summary: "Move the count query out of the loop and precompute the totals.",
-      },
+    const first = await tool.applyFix({
+      finding: { fingerprint: "1234567890abcdef" },
+      fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
-        content: "14: render json: User.all.index_with { |user| user.todos.count }.transform_keys { |user| user.id.to_s }",
-        source_file: "app/controllers/todos_controller.rb:13",
+        content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
+        source_file: "app/controllers/todos_controller.rb:3",
+      },
+    });
+
+    await writeControllerFile(root);
+
+    const second = await tool.applyFix({
+      finding: { fingerprint: "fedcba0987654321" },
+      fix: { fix_type: "rewrite_like", summary: "summary" },
+      source: {
+        content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
+        source_file: "app/controllers/todos_controller.rb:3",
+      },
+    });
+
+    assert.equal(first.branchName, "agent/demo-fix-1234567890ab");
+    assert.equal(second.branchName, "agent/demo-fix-fedcba098765");
+    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-1234567890ab main/);
+    assert.match(commands.join("\n"), /git push origin agent\/demo-fix-1234567890ab/);
+    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-fedcba098765 main/);
+    assert.match(commands.join("\n"), /git push origin agent\/demo-fix-fedcba098765/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("DemoRepoTool rewrite_like updates the file and pushes the branch", async () => {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+  const commands: Array<string> = [];
+
+  try {
+    await writeControllerFile(root);
+
+    const tool = createTool(root, commands);
+
+    const result = await tool.applyFix({
+      finding: { fingerprint: "rewrite-like-1" },
+      fix: { fix_type: "rewrite_like", summary: "Remove the leading wildcard." },
+      source: {
+        content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
+        source_file: "app/controllers/todos_controller.rb:3",
       },
     });
 
     const content = await readFile(join(root, "app", "controllers", "todos_controller.rb"), "utf8");
 
-    assert.match(content, /counts = Todo\.group\(:user_id\)\.count/);
-    assert.match(content, /counts\.fetch\(user\.id, 0\)/);
+    assert.equal(result.branchName, "agent/demo-fix-rewrite-like");
+    assert.match(content, /"\#\{params\[:q\]\}%"/);
+    assert.doesNotMatch(content, /"%\#\{params\[:q\]\}%"/);
     assert.deepEqual(commands, [
-      `${root}: git checkout agent/demo-fix`,
+      `${root}: git ls-remote origin`,
+      `${root}: git checkout -b agent/demo-fix-rewrite-like main`,
       `${root}: git add app/controllers/todos_controller.rb`,
-      `${root}: git commit -m chore: apply rewrite_count fix`,
-      `${root}: git push origin agent/demo-fix`,
+      `${root}: git commit -m chore: apply rewrite_like fix`,
+      `${root}: git diff HEAD~1 HEAD -- app/controllers/todos_controller.rb`,
+      `${root}: git push origin agent/demo-fix-rewrite-like`,
     ]);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
 });
 
-test("DemoRepoTool creates the migration directory before adding an index fix", async () => {
+test("DemoRepoTool add_includes updates the file and pushes the branch", async () => {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+  const commands: Array<string> = [];
+
+  try {
+    await writeControllerFile(root, [
+      "class TodosController < ApplicationController",
+      "  def index",
+      '    todos = params[:q].present? ? Todo.where("title LIKE ?", "#{params[:q]}%") : Todo.all',
+      "  end",
+      "end",
+    ]);
+
+    const tool = createTool(root, commands);
+
+    const result = await tool.applyFix({
+      finding: { fingerprint: "add-includes-1" },
+      fix: { fix_type: "add_includes", summary: "Eager load the user association." },
+      source: {
+        content: [
+          '3: todos = params[:q].present? ? Todo.where("title LIKE ?", "#{params[:q]}%") : Todo.all',
+          "4: todos.each { |t| t.user.name }",
+        ].join("\n"),
+        source_file: "app/controllers/todos_controller.rb:3",
+      },
+    });
+
+    const content = await readFile(join(root, "app", "controllers", "todos_controller.rb"), "utf8");
+
+    assert.equal(result.branchName, "agent/demo-fix-add-includes");
+    assert.match(content, /Todo\.includes\(:user\)\.all/);
+    assert.deepEqual(commands, [
+      `${root}: git ls-remote origin`,
+      `${root}: git checkout -b agent/demo-fix-add-includes main`,
+      `${root}: git add app/controllers/todos_controller.rb`,
+      `${root}: git commit -m chore: apply add_includes fix`,
+      `${root}: git diff HEAD~1 HEAD -- app/controllers/todos_controller.rb`,
+      `${root}: git push origin agent/demo-fix-add-includes`,
+    ]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("DemoRepoTool raises a drift error when rewrite_count replacement does not match", async () => {
+  await assert.rejects(
+    () => runDriftCase("rewrite_count", "class TodosController < ApplicationController\nend\n"),
+    /DemoRepoTool: expected string not found in app\/controllers\/todos_controller\.rb — demo app content may have drifted/,
+  );
+});
+
+test("DemoRepoTool raises a drift error when rewrite_like replacement does not match", async () => {
+  await assert.rejects(
+    () => runDriftCase("rewrite_like", 'class TodosController < ApplicationController\n  def index\n    Todo.all\n  end\nend\n'),
+    /DemoRepoTool: expected string not found in app\/controllers\/todos_controller\.rb — demo app content may have drifted/,
+  );
+});
+
+test("DemoRepoTool raises a drift error when add_includes replacement does not match", async () => {
+  await assert.rejects(
+    () => runDriftCase("add_includes", "class TodosController < ApplicationController\n  def index\n    todos = Todo.none\n  end\nend\n"),
+    /DemoRepoTool: expected string not found in app\/controllers\/todos_controller\.rb — demo app content may have drifted/,
+  );
+});
+
+test("DemoRepoTool fails before file edits when the git remote is unreachable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+  try {
+    await writeControllerFile(root);
+
+    const tool = new DemoRepoTool(
+      {
+        exec: async (args) => {
+          if (args[0] === "git" && args[1] === "ls-remote") {
+            throw new Error("auth failed");
+          }
+
+          throw new Error(`unexpected command: ${args.join(" ")}`);
+        },
+      },
+      {
+        env: { DEMO_APP_ROOT: root, DEMO_BASE_REF: "main" },
+      },
+    );
+
+    await assert.rejects(
+      () =>
+        tool.applyFix({
+          finding: { fingerprint: "remote-failure" },
+          fix: { fix_type: "rewrite_like", summary: "summary" },
+          source: {
+            content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
+            source_file: "app/controllers/todos_controller.rb:3",
+          },
+        }),
+      /DemoRepoTool: cannot reach git remote — check credentials for/,
+    );
+    assert.equal(
+      await readFile(join(root, "app", "controllers", "todos_controller.rb"), "utf8"),
+      [
+        "class TodosController < ApplicationController",
+        "  def index",
+        '    todos = params[:q].present? ? Todo.where("title LIKE ?", "%#{params[:q]}%") : Todo.all',
+        "  end",
+        "end",
+      ].join("\n"),
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("DemoRepoTool keeps add_index working and creates db/migrate", async () => {
   const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
   const commands: Array<string> = [];
 
@@ -82,27 +211,11 @@ test("DemoRepoTool creates the migration directory before adding an index fix", 
       ].join("\n"),
     );
 
-    const tool = new DemoRepoTool(
-      {
-        exec: async (args, cwd) => {
-          commands.push(`${cwd}: ${args.join(" ")}`);
-          return "";
-        },
-      },
-      {
-        env: {
-          DEMO_APP_ROOT: root,
-          DEMO_HEAD_REF: "agent/demo-fix",
-        },
-        now: () => new Date("2026-04-05T01:21:00Z"),
-      },
-    );
+    const tool = createTool(root, commands, new Date("2026-04-05T01:21:00Z"));
 
-    await tool.applyFix({
-      fix: {
-        fix_type: "add_index",
-        summary: "Add an index for the status filter used at /app/models/todo.rb:2.",
-      },
+    const result = await tool.applyFix({
+      finding: { fingerprint: "add-index-1" },
+      fix: { fix_type: "add_index", summary: "Add an index for the status filter used at /app/models/todo.rb:2." },
       source: {
         content: "2: scope :open, -> { where(status: 'open') }",
         source_file: "app/models/todo.rb:2",
@@ -114,14 +227,75 @@ test("DemoRepoTool creates the migration directory before adding an index fix", 
       "utf8",
     );
 
+    assert.equal(result.branchName, "agent/demo-fix-add-index-1");
     assert.match(migration, /add_index :todos, :status/);
     assert.deepEqual(commands, [
-      `${root}: git checkout agent/demo-fix`,
+      `${root}: git ls-remote origin`,
+      `${root}: git checkout -b agent/demo-fix-add-index-1 main`,
       `${root}: git add db/migrate/20260405012100_add_index_to_todos_status.rb`,
       `${root}: git commit -m chore: apply add_index fix`,
-      `${root}: git push origin agent/demo-fix`,
+      `${root}: git diff HEAD~1 HEAD -- db/migrate/20260405012100_add_index_to_todos_status.rb`,
+      `${root}: git push origin agent/demo-fix-add-index-1`,
     ]);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
 });
+
+function createTool(root: string, commands: Array<string>, now?: Date): DemoRepoTool {
+  return new DemoRepoTool(
+    {
+      exec: async (args, cwd) => {
+        commands.push(`${cwd}: ${args.join(" ")}`);
+        if (args[0] === "git" && args[1] === "diff") {
+          const path = args[args.length - 1] ?? "";
+          return `diff --git a/${path} b/${path}`;
+        }
+        return "";
+      },
+    },
+    {
+      env: {
+        DEMO_APP_ROOT: root,
+        DEMO_BASE_REF: "main",
+      },
+      now: now ? () => now : undefined,
+    },
+  );
+}
+
+async function writeControllerFile(root: string, lines?: Array<string>): Promise<void> {
+  await mkdir(join(root, "app", "controllers"), { recursive: true });
+  await writeFile(
+    join(root, "app", "controllers", "todos_controller.rb"),
+    lines ?? [
+      "class TodosController < ApplicationController",
+      "  def index",
+      '    todos = params[:q].present? ? Todo.where("title LIKE ?", "%#{params[:q]}%") : Todo.all',
+      "  end",
+      "end",
+    ].join("\n"),
+  );
+}
+
+async function runDriftCase(fixType: string, fileContent: string): Promise<never> {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+
+  try {
+    await writeControllerFile(root, fileContent.split("\n"));
+
+    const tool = createTool(root, []);
+    await tool.applyFix({
+      finding: { fingerprint: `${fixType}-drift` },
+      fix: { fix_type: fixType, summary: "summary" },
+      source: {
+        content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
+        source_file: "app/controllers/todos_controller.rb:3",
+      },
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+
+  throw new Error("expected drift error");
+}

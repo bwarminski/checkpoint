@@ -17,7 +17,7 @@ type LocatedSource = {
 
 type DemoRepoEnv = {
   DEMO_APP_ROOT?: string;
-  DEMO_HEAD_REF?: string;
+  DEMO_BASE_REF?: string;
 };
 
 type CommandRunner = {
@@ -30,8 +30,16 @@ type DemoRepoToolOptions = {
 };
 
 type ApplyFixInput = {
+  finding: {
+    fingerprint: string;
+  };
   fix: FixProposal;
   source: LocatedSource;
+};
+
+type ApplyFixResult = {
+  branchName: string;
+  diff: string;
 };
 
 const execFileAsync = promisify(execFile);
@@ -48,14 +56,16 @@ export class DemoRepoTool {
     this.now = options.now ?? (() => new Date());
   }
 
-  async applyFix(input: ApplyFixInput): Promise<void> {
+  async applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
     const root = this.env.DEMO_APP_ROOT;
-    const headRef = this.env.DEMO_HEAD_REF;
-    if (!root || !headRef) {
-      throw new Error("DemoRepoTool requires DEMO_APP_ROOT and DEMO_HEAD_REF.");
+    if (!root) {
+      throw new Error("DemoRepoTool requires DEMO_APP_ROOT.");
     }
 
-    await this.runner.exec(["git", "checkout", headRef], root);
+    const baseRef = this.env.DEMO_BASE_REF ?? "main";
+    await ensureRemoteReachable(this.runner, root);
+    const branchName = buildBranchName(input.finding.fingerprint);
+    await this.runner.exec(["git", "checkout", "-b", branchName, baseRef], root);
     const touchedPaths = await this.applyChange(root, input);
 
     for (const path of touchedPaths) {
@@ -63,7 +73,9 @@ export class DemoRepoTool {
     }
 
     await this.runner.exec(["git", "commit", "-m", `chore: apply ${input.fix.fix_type} fix`], root);
-    await this.runner.exec(["git", "push", "origin", headRef], root);
+    const diff = await this.runner.exec(["git", "diff", "HEAD~1", "HEAD", "--", ...touchedPaths], root);
+    await this.runner.exec(["git", "push", "origin", branchName], root);
+    return { branchName, diff };
   }
 
   private async applyChange(root: string, input: ApplyFixInput): Promise<string[]> {
@@ -92,6 +104,7 @@ async function rewriteCount(root: string, source: LocatedSource): Promise<string
       "    render json: User.all.index_with { |user| counts.fetch(user.id, 0) }.transform_keys { |user| user.id.to_s }",
     ].join("\n"),
   );
+  ensureReplacementChanged(path, content, updated);
   await writeFile(absolutePath, updated);
   return path;
 }
@@ -101,6 +114,7 @@ async function rewriteLike(root: string, source: LocatedSource): Promise<string>
   const absolutePath = resolve(root, path);
   const content = await readFile(absolutePath, "utf8");
   const updated = content.replace('"%#{params[:q]}%"', '"#{params[:q]}%"');
+  ensureReplacementChanged(path, content, updated);
   await writeFile(absolutePath, updated);
   return path;
 }
@@ -111,7 +125,11 @@ async function addIncludes(root: string, source: LocatedSource): Promise<string>
   const content = await readFile(absolutePath, "utf8");
   const updated = content
     .replace(" : Todo.all", " : Todo.includes(:user).all")
-    .replace('Todo.where("title LIKE ?", "#{params[:q]}%")', 'Todo.includes(:user).where("title LIKE ?", "#{params[:q]}%")');
+    .replace(
+      'Todo.where("title LIKE ?", "#{params[:q]}%")',
+      'Todo.includes(:user).where("title LIKE ?", "#{params[:q]}%")',
+    );
+  ensureReplacementChanged(path, content, updated);
   await writeFile(absolutePath, updated);
   return path;
 }
@@ -160,6 +178,26 @@ function camelize(value: string): string {
     .filter(Boolean)
     .map((part) => part[0]?.toUpperCase() + part.slice(1))
     .join("");
+}
+
+function buildBranchName(fingerprint: string): string {
+  return `agent/demo-fix-${fingerprint.slice(0, 12)}`;
+}
+
+function ensureReplacementChanged(path: string, original: string, updated: string): void {
+  if (updated === original) {
+    throw new Error(
+      `DemoRepoTool: expected string not found in ${path} — demo app content may have drifted`,
+    );
+  }
+}
+
+async function ensureRemoteReachable(runner: CommandRunner, root: string): Promise<void> {
+  try {
+    await runner.exec(["git", "ls-remote", "origin"], root);
+  } catch {
+    throw new Error(`DemoRepoTool: cannot reach git remote — check credentials for ${root}`);
+  }
 }
 
 async function execGitCommand(args: string[], cwd: string): Promise<string> {
