@@ -80,6 +80,26 @@ test("ClickHouseTool orders offenders by total execution time and marks high sev
   );
 });
 
+test("ClickHouseTool keeps windowed rows split by source tag for one fingerprint", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool(undefined, {
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
+      },
+    },
+  });
+
+  await tool.topOffenders("analyze_db");
+
+  assert.match(queries[0] ?? "", /source_tag,/);
+  assert.match(queries[0] ?? "", /argMax\(source_file, collected_at\) AS source_file/);
+  assert.match(queries[0] ?? "", /argMax\(sample_query, collected_at\) AS sample_query/);
+  assert.match(queries[0] ?? "", /GROUP BY fingerprint, source_tag/);
+  assert.doesNotMatch(queries[0] ?? "", /GROUP BY fingerprint\n/);
+});
+
 test("ClickHouseTool uses total execution time ordering for all-time requests", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool(undefined, {
@@ -233,13 +253,15 @@ return [
   "FROM (",
   "  SELECT",
   "    fingerprint,",
-  "    argMax((source_tag, source_file, sample_query), collected_at) AS representative,",
+  "    source_tag,",
+  "    argMax(source_file, collected_at) AS source_file,",
+  "    argMax(sample_query, collected_at) AS sample_query,",
   "    sum(total_exec_count) AS total_exec_count,",
   "    round(sum(total_exec_count * mean_exec_time_ms), 2) AS total_exec_time_ms,",
   "    round(quantile(0.95)(mean_exec_time_ms), 2) AS p95_exec_time_ms",
   "  FROM query_events",
   `  WHERE ${conditions.join(" AND ")}`,
-  "  GROUP BY fingerprint",
+  "  GROUP BY fingerprint, source_tag",
   ")",
   "ORDER BY total_exec_time_ms DESC",
   "LIMIT 5",

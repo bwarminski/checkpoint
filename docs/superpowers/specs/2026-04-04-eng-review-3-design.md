@@ -64,6 +64,9 @@ execution count.
 For the time-windowed `query_events` path:
 
 - keep the current direct query against `query_events`
+- group by the same stable identity as the all-time path: `fingerprint + source_tag`
+- keep `source_file` and `sample_query` as representative values rather than
+  grouping keys
 - compute `total_exec_time_ms` as `sum(total_exec_count * mean_exec_time_ms)`
 - order by `total_exec_time_ms DESC`
 
@@ -80,11 +83,10 @@ For the all-time `query_fingerprints` path:
 Normalized results will expose `total_exec_time_ms`, and severity will switch
 from count-based logic to `p95_exec_time_ms >= 100 ? "high" : "medium"`.
 
-This adds one schema requirement beyond the original review text: the all-time
-table-scoped path cannot filter against a single merged representative tag per
-fingerprint. The read model must preserve enough source-tag-specific state for
-`analyze_table ... all` to filter before or during aggregation instead of after
-a lossy merge. The stable grouping key should be `fingerprint + source_tag`;
+This adds one grouping requirement beyond the original review text: both the
+windowed and all-time paths must preserve enough source-tag-specific identity
+for table-scoped analysis to remain accurate when one fingerprint appears under
+multiple tags. The stable grouping key should be `fingerprint + source_tag`;
 `source_file` and `sample_query` remain representative values rather than part
 of the aggregate identity, because `sample_query` is sampled raw SQL and would
 fragment one logical offender if used as a grouping key.
