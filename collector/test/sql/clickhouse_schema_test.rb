@@ -10,12 +10,14 @@ class ClickhouseSchemaTest < Minitest::Test
     assert_includes sql, "CREATE MATERIALIZED VIEW"
     refute_match(/\banyState\b/i, sql)
     assert_includes sql, "argMaxState((source_tag, source_file, sample_query), collected_at) AS representative_state"
+    assert_includes sql, "sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state"
   end
 
   def test_fingerprint_table_uses_a_single_representative_row_state
     sql = read_sql("002_query_fingerprints.sql")
 
     assert_includes sql, "representative_state AggregateFunction(argMax, Tuple(Nullable(String), Nullable(String), Nullable(String)), DateTime64(3))"
+    assert_includes sql, "total_exec_time_ms_state AggregateFunction(sum, Float64)"
   end
 
   def test_query_events_store_subsecond_collection_times

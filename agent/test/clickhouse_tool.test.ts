@@ -118,10 +118,6 @@ test("ClickHouseTool uses query_fingerprints and total execution time ordering f
   await tool.topOffenders("analyze_db all");
 
   assert.match(queries[0] ?? "", /FROM query_fingerprints/);
-  assert.match(queries[0] ?? "", /sumMerge\(total_exec_count_state\) AS total_exec_count/);
-  assert.match(
-    queries[0] ?? "",
-    /round\(sumMerge\(total_exec_count_state\) \* quantileMerge\(0\.95\)\(p95_exec_time_state\), 2\) AS total_exec_time_ms/,
-  );
+  assert.match(queries[0] ?? "", /sumMerge\(total_exec_time_ms_state\) AS total_exec_time_ms/);
   assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
 });

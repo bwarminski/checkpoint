@@ -64,7 +64,7 @@ function buildTopOffendersQuery(scope?: unknown): string {
     `  ${sourceFile} AS source_file,`,
     `  ${sampleQuery} AS sample_query,`,
     "  sumMerge(total_exec_count_state) AS total_exec_count,",
-    "  round(sumMerge(total_exec_count_state) * quantileMerge(0.95)(p95_exec_time_state), 2) AS total_exec_time_ms,",
+    "  sumMerge(total_exec_time_ms_state) AS total_exec_time_ms,",
     "  round(quantileMerge(0.95)(p95_exec_time_state), 2) AS p95_exec_time_ms",
     "FROM query_fingerprints",
     "GROUP BY fingerprint",
