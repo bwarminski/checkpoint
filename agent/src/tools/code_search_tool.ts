@@ -11,6 +11,7 @@ type ReadFileResult =
 type CodeSearchClient = {
   close?: () => Promise<void>;
   read_file(path: string, lines?: number): Promise<ReadFileResult>;
+  search_code?(pattern: string, glob?: string): Promise<ReadFileResult>;
 };
 
 type CodeSearchInput = {
@@ -41,8 +42,8 @@ export class CodeSearchTool {
   }
 
   async locate(input: CodeSearchInput): Promise<CodeSearchResult> {
-    const sourceFile = toRelativeSourceFile(input);
     const client = await this.getClient();
+    const sourceFile = await toRelativeSourceFile(input, client);
     const content = await client.read_file(
       sourceFile,
       this.options.contextLines ?? 3,
@@ -108,13 +109,21 @@ async function createGeneratedClient(): Promise<CodeSearchClient> {
   });
 }
 
-function toRelativeSourceFile(input: CodeSearchInput): string {
+type SearchMatch = {
+  line?: number;
+  path?: string;
+};
+
+async function toRelativeSourceFile(
+  input: CodeSearchInput,
+  client: CodeSearchClient,
+): Promise<string> {
   if (input.source_file) {
     return normalizeSourceFile(input.source_file);
   }
 
   if (input.source_tag) {
-    return deriveSourceFileFromTag(input.source_tag);
+    return deriveSourceFileFromTag(input.source_tag, client);
   }
 
   throw new Error("source_file is required");
@@ -132,11 +141,28 @@ function normalizeSourceFile(sourceFile: string): string {
   return sourceFile.replace(/^\.?\//, "");
 }
 
-function deriveSourceFileFromTag(sourceTag: string): string {
-  const controller = sourceTag.split("#", 1)[0]?.trim();
+async function deriveSourceFileFromTag(
+  sourceTag: string,
+  client: CodeSearchClient,
+): Promise<string> {
+  const [controller, action] = sourceTag.split("#", 2).map((part) => part?.trim());
 
   if (!controller) {
     throw new Error("source_tag could not be resolved to a controller file.");
+  }
+
+  if (action && client.search_code) {
+    const result = await client.search_code(
+      `def ${action}`,
+      "app/controllers/**/*_controller.rb",
+    );
+    const matches = toSearchMatches(result);
+    const matchingPath = `app/controllers/${controller}_controller.rb`;
+    const match = matches.find((entry) => entry.path === matchingPath && typeof entry.line === "number");
+
+    if (match?.line) {
+      return `${matchingPath}:${match.line}`;
+    }
   }
 
   return `app/controllers/${controller}_controller.rb:1`;
@@ -152,4 +178,10 @@ function toText(result: ReadFileResult): string {
   }
 
   throw new Error("Code search client returned an unreadable file response.");
+}
+
+function toSearchMatches(result: ReadFileResult): Array<SearchMatch> {
+  const text = toText(result);
+  const parsed = JSON.parse(text) as Array<SearchMatch>;
+  return Array.isArray(parsed) ? parsed : [];
 }

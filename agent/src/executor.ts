@@ -51,6 +51,12 @@ type ExecutorDependencies = {
       validation: ValidationResult;
     }): Promise<PullRequestResult>;
   };
+  demoRepoTool?: {
+    applyFix(input: {
+      fix: FixProposal;
+      source: LocatedSource;
+    }): Promise<void>;
+  };
   memoryTool?: {
     shouldSuggest(input: { fingerprint: string; fixType: string }): Promise<boolean>;
   };
@@ -160,8 +166,8 @@ export class DBSpecialistExecutor {
   }
 
   private async analyzeFinding(finding: TopOffender): Promise<unknown> {
-    const fix = buildFixProposal(finding);
     const source = await this.locateSource(finding);
+    const fix = buildFixProposal(finding, source);
     const validation = await this.validateFinding(finding);
     const allowed = await this.deps.memoryTool?.shouldSuggest({
       fingerprint: finding.fingerprint,
@@ -172,14 +178,19 @@ export class DBSpecialistExecutor {
       finding.severity === "high" &&
       validation.validated &&
       this.deps.githubTool;
-    const pr = mayOpenPr
-      ? await this.deps.githubTool!.openPullRequest({
-          finding,
-          fix,
-          source,
-          validation,
-        })
-      : null;
+    let pr: PullRequestResult = null;
+    if (mayOpenPr) {
+      await this.deps.demoRepoTool?.applyFix({
+        fix,
+        source,
+      });
+      pr = await this.deps.githubTool!.openPullRequest({
+        finding,
+        fix,
+        source,
+        validation,
+      });
+    }
 
     return {
       decision: allowed === false ? "blocked" : pr ? "opened" : "reported",
@@ -220,13 +231,45 @@ export class DBSpecialistExecutor {
   }
 }
 
-function buildFixProposal(finding: TopOffender): FixProposal {
+function buildFixProposal(finding: TopOffender, source: LocatedSource): FixProposal {
+  const content = source.content;
+  const normalized = content.toLowerCase();
+
+  if (/\bcount\b/.test(normalized) && /\b(each|index_with|map)\b/.test(normalized)) {
+    return {
+      fix_type: "rewrite_count",
+      summary: "Move the count query out of the loop and precompute the totals.",
+    };
+  }
+
+  if (/like\s*\?/.test(normalized) || /like\s+'%/.test(normalized) || /%#\{/.test(content)) {
+    return {
+      fix_type: "rewrite_like",
+      summary: "Replace the leading-wildcard LIKE search with a searchable alternative.",
+    };
+  }
+
+  if (
+    /\.\w+\.\w+/.test(content) ||
+    (/\b(each|map|index_with)\b/.test(normalized) && /\.(user|todos|posts|comments)\b/.test(content))
+  ) {
+    return {
+      fix_type: "add_includes",
+      summary: "Eager load the accessed association to avoid an N+1 query pattern.",
+    };
+  }
+
+  const rubyWhereColumn = content.match(/where\((\w+):/i)?.[1];
+  const sqlWhereColumn = content.match(/\bwhere\s+["\w.]+\.(\w+)\s*=\s*/i)?.[1];
+  const column = rubyWhereColumn ?? sqlWhereColumn;
   const sourceFile =
     typeof finding.source_file === "string" ? finding.source_file : finding.fingerprint;
 
   return {
     fix_type: "add_index",
-    summary: `Consider an index for ${sourceFile}`,
+    summary: column
+      ? `Add an index for the ${column} filter used at ${sourceFile}.`
+      : `Add an index for the equality filter used at ${sourceFile}.`,
   };
 }
 

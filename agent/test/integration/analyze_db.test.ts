@@ -82,7 +82,7 @@ test("analyze_db streams a completed finding payload over A2A", async () => {
         fingerprint: "fp-high",
         fix: {
           fix_type: "add_index",
-          summary: "Consider an index for /app/controllers/todos_controller.rb:12",
+          summary: "Add an index for the user_id filter used at /app/controllers/todos_controller.rb:12.",
         },
         pr: { url: "https://example.test/pr/1" },
         severity: "high",

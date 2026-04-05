@@ -42,15 +42,19 @@ export class ClickHouseTool {
 }
 
 function buildTopOffendersQuery(scope?: unknown): string {
+  const request = parseScope(scope);
+  if (!request.allTime) {
+    return buildWindowedQuery(request);
+  }
+
   const representativeState = "argMaxMerge(representative_state)";
   const sourceTag = `tupleElement(${representativeState}, 1)`;
   const sourceFile = `tupleElement(${representativeState}, 2)`;
   const sampleQuery = `tupleElement(${representativeState}, 3)`;
   const conditions = ["source_tag IS NOT NULL"];
 
-  const tableName = parseAnalyzeTableScope(scope);
-  if (tableName) {
-    conditions.push(`source_tag ILIKE '${escapeSqlLike(tableName)}#%'`);
+  if (request.tableName) {
+    conditions.push(`source_tag ILIKE '${escapeSqlLike(request.tableName)}#%'`);
   }
 
   return [
@@ -70,13 +74,58 @@ function buildTopOffendersQuery(scope?: unknown): string {
   ].join("\n");
 }
 
-function parseAnalyzeTableScope(scope?: unknown): string | null {
-  if (typeof scope !== "string") {
-    return null;
+function buildWindowedQuery(request: ScopeRequest): string {
+  const conditions = [
+    `collected_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
+    "source_tag IS NOT NULL",
+  ];
+  if (request.tableName) {
+    conditions.push(`source_tag ILIKE '${escapeSqlLike(request.tableName)}#%'`);
   }
 
-  const match = scope.match(/^analyze_table\s+([a-z0-9_]+)/i);
-  return match ? match[1].toLowerCase() : null;
+  return [
+    "SELECT",
+    "  fingerprint,",
+    "  tupleElement(representative, 1) AS source_tag,",
+    "  tupleElement(representative, 2) AS source_file,",
+    "  tupleElement(representative, 3) AS sample_query,",
+    "  total_exec_count,",
+    "  p95_exec_time_ms",
+    "FROM (",
+    "  SELECT",
+    "    fingerprint,",
+    "    argMax((source_tag, source_file, sample_query), collected_at) AS representative,",
+    "    sum(total_exec_count) AS total_exec_count,",
+    "    round(quantile(0.95)(mean_exec_time_ms), 2) AS p95_exec_time_ms",
+    "  FROM query_events",
+    `  WHERE ${conditions.join(" AND ")}`,
+    "  GROUP BY fingerprint",
+    ")",
+    "ORDER BY total_exec_count DESC",
+    "LIMIT 5",
+    "FORMAT TSVWithNames",
+  ].join("\n");
+}
+
+type ScopeRequest = {
+  allTime: boolean;
+  tableName: string | null;
+  timeWindowMinutes: number;
+};
+
+function parseScope(scope?: unknown): ScopeRequest {
+  if (typeof scope !== "string") {
+    return { allTime: false, tableName: null, timeWindowMinutes: 60 };
+  }
+
+  const tableMatch = scope.match(/^analyze_table\s+([a-z0-9_]+)/i);
+  const minuteMatch = scope.match(/\b(\d+)\b/);
+
+  return {
+    allTime: /\ball\b/i.test(scope),
+    tableName: tableMatch ? tableMatch[1].toLowerCase() : null,
+    timeWindowMinutes: Number(minuteMatch?.[1] ?? 60),
+  };
 }
 
 function parseRows(payload: string): Array<TopOffender> {

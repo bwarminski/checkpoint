@@ -83,7 +83,7 @@ test("analyze_table streams reported findings without opening a PR", async () =>
         fingerprint: "fp-medium",
         fix: {
           fix_type: "add_index",
-          summary: "Consider an index for /app/models/todo.rb:5",
+          summary: "Add an index for the status filter used at /app/models/todo.rb:5.",
         },
         pr: null,
         severity: "medium",

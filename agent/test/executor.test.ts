@@ -129,7 +129,8 @@ test("DBSpecialistExecutor publishes findings on the A2A event bus", async () =>
                     fingerprint: "fp-a2a",
                     fix: {
                       fix_type: "add_index",
-                      summary: "Consider an index for /app/controllers/todos_controller.rb:12",
+                      summary:
+                        "Add an index for the user_id filter used at /app/controllers/todos_controller.rb:12.",
                     },
                     pr: { url: "https://example.test/pr/1" },
                     severity: "high",
@@ -198,4 +199,110 @@ test("DBSpecialistExecutor passes source_tag to code search when source_file is 
     events[1]?.result?.findings?.[0]?.source?.source_file,
     "app/controllers/todos_controller.rb:1",
   );
+});
+
+test("DBSpecialistExecutor classifies multiple fix types from traced source content", async () => {
+  const executor = new DBSpecialistExecutor({
+    clickhouseTool: {
+      topOffenders: async () => [
+        {
+          fingerprint: "fp-like",
+          sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
+          severity: "medium",
+          source_file: "/app/controllers/todos_controller.rb:4",
+        },
+        {
+          fingerprint: "fp-count",
+          sample_query: "SELECT COUNT(*) FROM todos WHERE user_id = 1",
+          severity: "medium",
+          source_file: "/app/controllers/todos_controller.rb:12",
+        },
+      ],
+    },
+    codeSearchTool: {
+      locate: async ({ source_file }: { source_file?: string | null }) => {
+        if (source_file?.includes(":4")) {
+          return {
+            content: "4: todos = params[:q].present? ? Todo.where(\"title LIKE ?\", \"%#{params[:q]}%\") : Todo.all",
+            source_file,
+          };
+        }
+
+        return {
+          content: "12: render json: User.all.index_with { |user| user.todos.count }",
+          source_file: source_file ?? "app/controllers/todos_controller.rb:12",
+        };
+      },
+    },
+    explainTool: {
+      analyze: async () => ({ validated: true }),
+    },
+    memoryTool: {
+      shouldSuggest: async () => true,
+    },
+  } as any);
+
+  const events: Array<any> = [];
+  await executor.execute(
+    { userMessage: { text: "analyze_db" } } as any,
+    {
+      enqueueEvent(event: unknown) {
+        events.push(event);
+      },
+    },
+  );
+
+  assert.deepEqual(
+    events[1]?.result?.findings?.map((finding: any) => finding.fix.fix_type),
+    ["rewrite_like", "rewrite_count"],
+  );
+});
+
+test("DBSpecialistExecutor prepares the demo repo branch before opening a PR", async () => {
+  const callOrder: Array<string> = [];
+  const executor = new DBSpecialistExecutor({
+    clickhouseTool: {
+      topOffenders: async () => [
+        {
+          fingerprint: "fp-pr",
+          sample_query: "SELECT * FROM todos WHERE status = 'open'",
+          severity: "high",
+          source_file: "/app/controllers/todos_controller.rb:9",
+          source_tag: "todos#status",
+        },
+      ],
+    },
+    codeSearchTool: {
+      locate: async ({ source_file }: { source_file?: string | null }) => ({
+        content: "9:   def status\n10:     render json: Todo.where(status: params.fetch(:status, \"open\"))\n11:   end",
+        source_file: source_file ?? "app/controllers/todos_controller.rb:9",
+      }),
+    },
+    explainTool: {
+      analyze: async () => ({ validated: true }),
+    },
+    memoryTool: {
+      shouldSuggest: async () => true,
+    },
+    demoRepoTool: {
+      applyFix: async () => {
+        callOrder.push("prepare");
+      },
+    },
+    githubTool: {
+      openPullRequest: async () => {
+        callOrder.push("open");
+        return { url: "https://example.test/pr/99" };
+      },
+    },
+  } as any);
+
+  await executor.execute(
+    { userMessage: { text: "analyze_db" } } as any,
+    {
+      enqueueEvent() {},
+    },
+  );
+
+  assert.deepEqual(callOrder, ["prepare", "open"]);
 });

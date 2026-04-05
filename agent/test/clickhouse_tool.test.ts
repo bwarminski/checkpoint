@@ -21,7 +21,7 @@ test("ClickHouseTool loads top offenders from source-tagged rows", async () => {
 
   const results = await tool.topOffenders("analyze_db");
 
-  assert.match(queries[0] ?? "", /HAVING source_tag IS NOT NULL/);
+  assert.match(queries[0] ?? "", /source_tag IS NOT NULL/);
   assert.deepEqual(results, [
     {
       fingerprint: "3252138119218455137",
@@ -50,4 +50,22 @@ test("ClickHouseTool scopes analyze_table requests to the named table", async ()
   await tool.topOffenders("analyze_table todos");
 
   assert.match(queries[0] ?? "", /todos#/);
+});
+
+test("ClickHouseTool uses query_events for time-windowed requests", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool(undefined, {
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\tp95_exec_time_ms";
+      },
+    },
+  });
+
+  await tool.topOffenders("analyze_db");
+
+  assert.match(queries[0] ?? "", /FROM query_events/);
+  assert.match(queries[0] ?? "", /collected_at > now\(\) - INTERVAL 60 MINUTE/);
+  assert.match(queries[0] ?? "", /argMax\(\(source_tag, source_file, sample_query\), collected_at\) AS representative/);
 });

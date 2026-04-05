@@ -8,6 +8,7 @@ import { Pool } from "pg";
 import { DBSpecialistExecutor } from "./executor.ts";
 import { ClickHouseTool } from "./tools/clickhouse_tool.ts";
 import { CodeSearchTool } from "./tools/code_search_tool.ts";
+import { DemoRepoTool } from "./tools/demo_repo_tool.ts";
 import { ExplainTool } from "./tools/explain_tool.ts";
 import { GitHubTool } from "./tools/github_tool.ts";
 import { MemoryTool } from "./tools/memory_tool.ts";
@@ -42,6 +43,7 @@ export function createRuntimeExecutor(): DBSpecialistExecutor {
     },
     githubTool: new GitHubTool(),
     memoryTool,
+    demoRepoTool: new DemoRepoTool(),
   });
 }
 
