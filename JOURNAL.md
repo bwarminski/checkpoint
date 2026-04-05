@@ -72,3 +72,4 @@
 - 2026-04-05: Updated `DemoRepoTool` to require a finding fingerprint, create a per-finding `agent/demo-fix-<fingerprint>` branch after a `git ls-remote origin` credential check, verify each rewrite actually changes the file, and return the branch name plus diff output.
 - 2026-04-05: Added a deterministic hash suffix to `DemoRepoTool` branch names when sanitized fingerprints exceed 12 characters so long same-prefix findings no longer collide.
 - 2026-04-05: Added retry-safe demo branch creation by deleting the local branch before recreating it from `origin/<baseRef>`, and made unsupported `fix_type` values fail fast instead of falling through to `add_index`.
+- 2026-04-05: Switched demo branch recreation to `git checkout -B` so same-fingerprint retries stay valid in real git, and tightened `add_includes` so partial ternary rewrites fail as drift instead of committing half a change.

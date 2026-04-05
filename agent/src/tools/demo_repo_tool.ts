@@ -66,8 +66,7 @@ export class DemoRepoTool {
     const baseRef = this.env.DEMO_BASE_REF ?? "main";
     await ensureRemoteReachable(this.runner, root);
     const branchName = buildBranchName(input.finding.fingerprint);
-    await deleteLocalBranch(this.runner, root, branchName);
-    await this.runner.exec(["git", "checkout", "-b", branchName, `origin/${baseRef}`], root);
+    await this.runner.exec(["git", "checkout", "-B", branchName, `origin/${baseRef}`], root);
     const touchedPaths = await this.applyChange(root, input);
 
     for (const path of touchedPaths) {
@@ -126,12 +125,24 @@ async function addIncludes(root: string, source: LocatedSource): Promise<string>
   const path = filePathFromSource(source.source_file);
   const absolutePath = resolve(root, path);
   const content = await readFile(absolutePath, "utf8");
+  const hasWhereClause = content.includes('Todo.where("title LIKE ?", "#{params[:q]}%")');
+  const hasAllClause = content.includes(" : Todo.all");
   const updated = content
     .replace(" : Todo.all", " : Todo.includes(:user).all")
     .replace(
       'Todo.where("title LIKE ?", "#{params[:q]}%")',
       'Todo.includes(:user).where("title LIKE ?", "#{params[:q]}%")',
     );
+  if (
+    !hasWhereClause ||
+    !hasAllClause ||
+    !updated.includes('Todo.includes(:user).where("title LIKE ?", "#{params[:q]}%")') ||
+    !updated.includes(" : Todo.includes(:user).all")
+  ) {
+    throw new Error(
+      `DemoRepoTool: expected string not found in ${path} — demo app content may have drifted`,
+    );
+  }
   ensureReplacementChanged(path, content, updated);
   await writeFile(absolutePath, updated);
   return path;
@@ -207,18 +218,6 @@ async function ensureRemoteReachable(runner: CommandRunner, root: string): Promi
     await runner.exec(["git", "ls-remote", "origin"], root);
   } catch {
     throw new Error(`DemoRepoTool: cannot reach git remote — check credentials for ${root}`);
-  }
-}
-
-async function deleteLocalBranch(
-  runner: CommandRunner,
-  root: string,
-  branchName: string,
-): Promise<void> {
-  try {
-    await runner.exec(["git", "branch", "-D", branchName], root);
-  } catch {
-    // The branch is only present on retries.
   }
 }
 
