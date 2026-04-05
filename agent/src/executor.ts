@@ -49,13 +49,19 @@ type ExecutorDependencies = {
       fix: FixProposal;
       source: LocatedSource;
       validation: ValidationResult;
+      headRef?: string;
+      codeDiff?: string;
     }): Promise<PullRequestResult>;
   };
   demoRepoTool?: {
     applyFix(input: {
+      finding: TopOffender;
       fix: FixProposal;
       source: LocatedSource;
-    }): Promise<void>;
+    }): Promise<{
+      branchName: string;
+      diff: string;
+    }>;
   };
   memoryTool?: {
     shouldSuggest(input: { fingerprint: string; fixType: string }): Promise<boolean>;
@@ -180,7 +186,8 @@ export class DBSpecialistExecutor {
       this.deps.githubTool;
     let pr: PullRequestResult = null;
     if (mayOpenPr) {
-      await this.deps.demoRepoTool?.applyFix({
+      const demoRepoResult = await this.deps.demoRepoTool?.applyFix({
+        finding,
         fix,
         source,
       });
@@ -189,6 +196,8 @@ export class DBSpecialistExecutor {
         fix,
         source,
         validation,
+        headRef: demoRepoResult?.branchName,
+        codeDiff: demoRepoResult?.diff,
       });
     }
 

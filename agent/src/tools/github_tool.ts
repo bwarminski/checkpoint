@@ -9,6 +9,8 @@ type PullRequestInput = {
     fix_type?: string;
     summary?: string;
   };
+  headRef?: string;
+  codeDiff?: string;
   validation?: {
     plan_rows?: Array<Record<string, unknown>>;
     [key: string]: unknown;
@@ -38,7 +40,6 @@ type GitHubClient = {
 export class GitHubTool {
   private readonly env: GitHubEnv;
   private readonly fetchImpl: typeof fetch;
-  private existingPullRequestUrl?: string;
 
   constructor(
     private readonly client?: GitHubClient,
@@ -62,14 +63,14 @@ export class GitHubTool {
       };
     }
 
-    if (this.existingPullRequestUrl) {
-      return { url: this.existingPullRequestUrl };
+    const repo = this.env.DEMO_REPO;
+    if (!repo) {
+      throw new Error("GitHubTool requires DEMO_REPO when GITHUB_TOKEN is set.");
     }
 
-    const repo = this.env.DEMO_REPO;
-    const head = this.env.DEMO_HEAD_REF;
-    if (!repo || !head) {
-      throw new Error("GitHubTool requires DEMO_REPO and DEMO_HEAD_REF when GITHUB_TOKEN is set.");
+    const head = input.headRef ?? this.env.DEMO_HEAD_REF;
+    if (!head) {
+      throw new Error("GitHubTool requires DEMO_HEAD_REF when GITHUB_TOKEN is set.");
     }
 
     const base = this.env.DEMO_BASE_REF ?? "main";
@@ -93,10 +94,10 @@ export class GitHubTool {
       const existingUrl = await resolveExistingPullRequestUrl(
         this.fetchImpl,
         this.env,
+        head,
         response,
       );
       if (existingUrl) {
-        this.existingPullRequestUrl = existingUrl;
         return { url: existingUrl };
       }
 
@@ -108,7 +109,6 @@ export class GitHubTool {
       throw new Error("GitHub pull request response did not include html_url.");
     }
 
-    this.existingPullRequestUrl = payload.html_url;
     return {
       url: payload.html_url,
     };
@@ -118,6 +118,7 @@ export class GitHubTool {
 async function resolveExistingPullRequestUrl(
   fetchImpl: typeof fetch,
   env: GitHubEnv,
+  headRef: string,
   response: Response,
 ): Promise<string | null> {
   if (response.status !== 422) {
@@ -131,7 +132,7 @@ async function resolveExistingPullRequestUrl(
   const hasExistingPrError = errors.some((error) =>
     typeof error.message === "string" && /pull request already exists/i.test(error.message),
   );
-  if (!hasExistingPrError || !env.DEMO_REPO || !env.DEMO_HEAD_REF) {
+  if (!hasExistingPrError || !env.DEMO_REPO || !headRef) {
     return null;
   }
 
@@ -139,7 +140,7 @@ async function resolveExistingPullRequestUrl(
   const base = env.DEMO_BASE_REF ?? "main";
   const query = new URLSearchParams({
     state: "open",
-    head: `${owner}:${env.DEMO_HEAD_REF}`,
+    head: `${owner}:${headRef}`,
     base,
   });
   const existingResponse = await fetchImpl(
@@ -179,7 +180,12 @@ function buildPullRequestBody(input: PullRequestInput): string {
     `- fix_type: ${input.fix?.fix_type ?? "unknown"}`,
     `- summary: ${input.fix?.summary ?? "unknown"}`,
     "",
-    "## EXPLAIN",
+    "## Code Change",
+    "```diff",
+    input.codeDiff ?? "No code diff captured.",
+    "```",
+    "",
+    "## EXPLAIN (after fix)",
     "```",
     explainRows,
     "```",

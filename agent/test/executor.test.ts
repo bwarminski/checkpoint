@@ -217,6 +217,12 @@ test("DBSpecialistExecutor classifies multiple fix types from traced source cont
           severity: "medium",
           source_file: "/app/controllers/todos_controller.rb:12",
         },
+        {
+          fingerprint: "fp-includes",
+          sample_query: "SELECT * FROM todos JOIN users ON users.id = todos.user_id",
+          severity: "medium",
+          source_file: "/app/controllers/todos_controller.rb:3",
+        },
       ],
     },
     codeSearchTool: {
@@ -224,6 +230,14 @@ test("DBSpecialistExecutor classifies multiple fix types from traced source cont
         if (source_file?.includes(":4")) {
           return {
             content: "4: todos = params[:q].present? ? Todo.where(\"title LIKE ?\", \"%#{params[:q]}%\") : Todo.all",
+            source_file,
+          };
+        }
+
+        if (source_file?.includes(":3")) {
+          return {
+            content:
+              "3: todos = params[:q].present? ? Todo.where(...) : Todo.all\n4: todos.each { |t| t.user.name }",
             source_file,
           };
         }
@@ -254,8 +268,85 @@ test("DBSpecialistExecutor classifies multiple fix types from traced source cont
 
   assert.deepEqual(
     events[1]?.result?.findings?.map((finding: any) => finding.fix.fix_type),
-    ["rewrite_like", "rewrite_count"],
+    ["rewrite_like", "rewrite_count", "add_includes"],
   );
+});
+
+test("DBSpecialistExecutor passes demo repo branch and diff metadata to GitHubTool", async () => {
+  const openPullRequestCalls: Array<any> = [];
+  const applyFixCalls: Array<any> = [];
+  const executor = new DBSpecialistExecutor({
+    clickhouseTool: {
+      topOffenders: async () => [
+        {
+          fingerprint: "fp-pr",
+          sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
+          severity: "high",
+          source_file: "/app/controllers/todos_controller.rb:4",
+        },
+      ],
+    },
+    codeSearchTool: {
+      locate: async ({ source_file }: { source_file?: string | null }) => ({
+        content:
+          "4: todos = params[:q].present? ? Todo.where(\"title LIKE ?\", \"%#{params[:q]}%\") : Todo.all",
+        source_file: source_file ?? "app/controllers/todos_controller.rb:4",
+      }),
+    },
+    explainTool: {
+      analyze: async () => ({ validated: true }),
+    },
+    memoryTool: {
+      shouldSuggest: async () => true,
+    },
+    demoRepoTool: {
+      applyFix: async (input: any) => {
+        applyFixCalls.push(input);
+        return {
+          branchName: "agent/demo-fix-fp-pr",
+          diff: "diff --git a/app/controllers/todos_controller.rb b/app/controllers/todos_controller.rb",
+        };
+      },
+    },
+    githubTool: {
+      openPullRequest: async (input: any) => {
+        openPullRequestCalls.push(input);
+        return { url: "https://example.test/pr/3" };
+      },
+    },
+  } as any);
+
+  const events: Array<any> = [];
+  await executor.execute(
+    { userMessage: { text: "analyze_db" } } as any,
+    {
+      enqueueEvent(event: unknown) {
+        events.push(event);
+      },
+    },
+  );
+
+  assert.equal(applyFixCalls.length, 1);
+  assert.deepEqual(openPullRequestCalls[0], {
+    finding: {
+      fingerprint: "fp-pr",
+      sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
+      severity: "high",
+      source_file: "/app/controllers/todos_controller.rb:4",
+    },
+    fix: {
+      fix_type: "rewrite_like",
+      summary: "Replace the leading-wildcard LIKE search with a searchable alternative.",
+    },
+    source: {
+      content:
+        "4: todos = params[:q].present? ? Todo.where(\"title LIKE ?\", \"%#{params[:q]}%\") : Todo.all",
+      source_file: "/app/controllers/todos_controller.rb:4",
+    },
+    validation: { validated: true },
+    headRef: "agent/demo-fix-fp-pr",
+    codeDiff: "diff --git a/app/controllers/todos_controller.rb b/app/controllers/todos_controller.rb",
+  });
 });
 
 test("DBSpecialistExecutor prepares the demo repo branch before opening a PR", async () => {

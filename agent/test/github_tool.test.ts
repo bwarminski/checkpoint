@@ -58,6 +58,8 @@ test("GitHubTool posts a real pull request when token and repo config are presen
       plan_rows: [{ "QUERY PLAN": "Seq Scan on todos" }],
       validated: true,
     },
+    headRef: "agent/demo-fix/fp-real",
+    codeDiff: "diff --git a/app/controllers/todos_controller.rb b/app/controllers/todos_controller.rb",
   } as any);
 
   assert.equal(result.url, "https://github.com/brett/db-specialist-demo/pull/12");
@@ -66,7 +68,34 @@ test("GitHubTool posts a real pull request when token and repo config are presen
   assert.match(requests[0]?.body ?? "", /fp-real/);
   assert.match(requests[0]?.body ?? "", /todos#index/);
   assert.match(requests[0]?.body ?? "", /rewrite_like/);
+  assert.match(requests[0]?.body ?? "", /## Code Change/);
+  assert.match(requests[0]?.body ?? "", /```diff/);
+  assert.match(requests[0]?.body ?? "", /diff --git a\/app\/controllers\/todos_controller\.rb b\/app\/controllers\/todos_controller\.rb/);
+  assert.match(requests[0]?.body ?? "", /## EXPLAIN \(after fix\)/);
   assert.match(requests[0]?.body ?? "", /Seq Scan on todos/);
+});
+
+test("GitHubTool throws when token is set without DEMO_REPO", async () => {
+  const tool = new GitHubTool(undefined, {
+    env: {
+      DEMO_HEAD_REF: "agent/demo-fix",
+      GITHUB_TOKEN: "secret-token",
+    },
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ html_url: "https://example.test/pr/ignored" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  await assert.rejects(
+    tool.openPullRequest({
+      finding: { fingerprint: "fp-missing-repo" },
+      fix: { fix_type: "add_index", summary: "Add an index." },
+      validation: { validated: true },
+    } as any),
+    /DEMO_REPO/,
+  );
 });
 
 test("GitHubTool returns an existing pull request url when GitHub reports one already exists", async () => {
