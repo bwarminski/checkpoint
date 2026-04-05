@@ -53,7 +53,6 @@ type ExecutorDependencies = {
   };
   demoRepoTool?: {
     applyFix(input: {
-      finding: TopOffender;
       fix: FixProposal;
       source: LocatedSource;
     }): Promise<void>;
@@ -182,7 +181,6 @@ export class DBSpecialistExecutor {
     let pr: PullRequestResult = null;
     if (mayOpenPr) {
       await this.deps.demoRepoTool?.applyFix({
-        finding,
         fix,
         source,
       });

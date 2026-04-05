@@ -70,4 +70,3 @@
 - 2026-04-05: Tightened the ClickHouse read model so both query paths group by `fingerprint + source_tag` and carry a single `representative_state` tuple for `source_file` and `sample_query`, preventing mismatched representative values from separate aggregate states.
 - 2026-04-05: Updated the reset SQL to rebuild `query_fingerprints` and `top_offenders_mv` with the tuple representative state while keeping the stop-ingestion note intact.
 - 2026-04-05: Updated `DemoRepoTool` to require a finding fingerprint, create a per-finding `agent/demo-fix-<fingerprint>` branch after a `git ls-remote origin` credential check, verify each rewrite actually changes the file, and return the branch name plus diff output.
-- 2026-04-05: Passed the finding fingerprint through `DBSpecialistExecutor` so demo repo preparation and PR creation stay aligned on the same per-finding branch name.
