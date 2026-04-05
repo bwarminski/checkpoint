@@ -71,7 +71,7 @@ test("GitHubTool posts a real pull request when token and repo config are presen
   assert.match(requests[0]?.body ?? "", /## Code Change/);
   assert.match(requests[0]?.body ?? "", /```diff/);
   assert.match(requests[0]?.body ?? "", /diff --git a\/app\/controllers\/todos_controller\.rb b\/app\/controllers\/todos_controller\.rb/);
-  assert.match(requests[0]?.body ?? "", /## EXPLAIN \(after fix\)/);
+  assert.match(requests[0]?.body ?? "", /## EXPLAIN \(sample query\)/);
   assert.match(requests[0]?.body ?? "", /Seq Scan on todos/);
 });
 

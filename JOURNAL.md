@@ -73,5 +73,5 @@
 - 2026-04-05: Added a deterministic hash suffix to `DemoRepoTool` branch names when sanitized fingerprints exceed 12 characters so long same-prefix findings no longer collide.
 - 2026-04-05: Added retry-safe demo branch creation by deleting the local branch before recreating it from `origin/<baseRef>`, and made unsupported `fix_type` values fail fast instead of falling through to `add_index`.
 - 2026-04-05: Switched demo branch recreation to `git checkout -B` so same-fingerprint retries stay valid in real git, and tightened `add_includes` so partial ternary rewrites fail as drift instead of committing half a change.
-- 2026-04-05: Threaded the per-finding demo branch name and diff from `DemoRepoTool` through `DBSpecialistExecutor` into `GitHubTool`, and updated the PR body to include a fenced `## Code Change` section plus `## EXPLAIN (after fix)`.
+- 2026-04-05: Threaded the per-finding demo branch name and diff from `DemoRepoTool` through `DBSpecialistExecutor` into `GitHubTool`, and updated the PR body to include a fenced `## Code Change` section plus `## EXPLAIN (sample query)`.
 - 2026-04-05: Removed the instance-level cached PR URL from `GitHubTool`, kept the 422 existing-PR lookup behavior, and made tokened GitHub calls fail fast when `DEMO_REPO` is missing.

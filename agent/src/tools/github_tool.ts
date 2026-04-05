@@ -185,7 +185,7 @@ function buildPullRequestBody(input: PullRequestInput): string {
     input.codeDiff ?? "No code diff captured.",
     "```",
     "",
-    "## EXPLAIN (after fix)",
+    "## EXPLAIN (sample query)",
     "```",
     explainRows,
     "```",
