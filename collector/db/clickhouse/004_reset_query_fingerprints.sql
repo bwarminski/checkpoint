@@ -1,34 +1,48 @@
 -- ABOUTME: Resets the fingerprint read model after schema changes.
--- ABOUTME: Rebuilds the aggregate table and materialized view from raw query events.
-ALTER TABLE query_fingerprints ADD COLUMN IF NOT EXISTS total_exec_time_ms_state AggregateFunction(sum, Float64) AFTER total_exec_count_state;
-
+-- ABOUTME: Run this only while collector ingestion is stopped so no raw events are missed.
 DROP TABLE IF EXISTS top_offenders_mv;
+DROP TABLE IF EXISTS query_fingerprints;
 
-TRUNCATE TABLE query_fingerprints;
+CREATE TABLE query_fingerprints (
+  fingerprint String,
+  source_tag Nullable(String),
+  source_file Nullable(String),
+  sample_query Nullable(String),
+  total_exec_count_state AggregateFunction(sum, UInt64),
+  total_exec_time_ms_state AggregateFunction(sum, Float64),
+  p95_exec_time_state AggregateFunction(quantile(0.95), Float64)
+) ENGINE = AggregatingMergeTree
+ORDER BY (fingerprint, source_tag, source_file, sample_query);
 
 INSERT INTO query_fingerprints (
   fingerprint,
-  representative_state,
+  source_tag,
+  source_file,
+  sample_query,
   total_exec_count_state,
   total_exec_time_ms_state,
   p95_exec_time_state
 )
 SELECT
   fingerprint,
-  argMaxState((source_tag, source_file, sample_query), collected_at) AS representative_state,
+  source_tag,
+  source_file,
+  sample_query,
   sumState(total_exec_count) AS total_exec_count_state,
   sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state,
   quantileState(0.95)(mean_exec_time_ms) AS p95_exec_time_state
 FROM query_events
-GROUP BY fingerprint;
+GROUP BY fingerprint, source_tag, source_file, sample_query;
 
 CREATE MATERIALIZED VIEW top_offenders_mv
 TO query_fingerprints AS
 SELECT
   fingerprint,
-  argMaxState((source_tag, source_file, sample_query), collected_at) AS representative_state,
+  source_tag,
+  source_file,
+  sample_query,
   sumState(total_exec_count) AS total_exec_count_state,
   sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state,
   quantileState(0.95)(mean_exec_time_ms) AS p95_exec_time_state
 FROM query_events
-GROUP BY fingerprint;
+GROUP BY fingerprint, source_tag, source_file, sample_query;

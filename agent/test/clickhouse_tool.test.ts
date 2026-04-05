@@ -108,7 +108,7 @@ test("ClickHouseTool uses query_events for time-windowed requests", async () => 
   assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
 });
 
-test("ClickHouseTool uses query_fingerprints and total execution time ordering for all-time requests", async () => {
+test("ClickHouseTool uses source-tag-aware query_fingerprints for all-time requests", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool(undefined, {
     transport: {
@@ -122,6 +122,30 @@ test("ClickHouseTool uses query_fingerprints and total execution time ordering f
   await tool.topOffenders("analyze_db all");
 
   assert.match(queries[0] ?? "", /FROM query_fingerprints/);
+  assert.match(
+    queries[0] ?? "",
+    /SELECT\n  fingerprint,\n  source_tag,\n  source_file,\n  sample_query,\n  sumMerge\(total_exec_count_state\) AS total_exec_count,\n  sumMerge\(total_exec_time_ms_state\) AS total_exec_time_ms,\n  round\(quantileMerge\(0\.95\)\(p95_exec_time_state\), 2\) AS p95_exec_time_ms\nFROM query_fingerprints/,
+  );
   assert.match(queries[0] ?? "", /sumMerge\(total_exec_time_ms_state\) AS total_exec_time_ms/);
+  assert.match(queries[0] ?? "", /GROUP BY fingerprint, source_tag, source_file, sample_query/);
+  assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
+});
+
+test("ClickHouseTool keeps analyze_table all-time filtering source-tag aware", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool(undefined, {
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
+      },
+    },
+  });
+
+  await tool.topOffenders("analyze_table todos all");
+
+  assert.match(queries[0] ?? "", /FROM query_fingerprints/);
+  assert.match(queries[0] ?? "", /WHERE source_tag IS NOT NULL AND source_tag ILIKE 'todos#%'/);
+  assert.match(queries[0] ?? "", /GROUP BY fingerprint, source_tag, source_file, sample_query/);
   assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
 });

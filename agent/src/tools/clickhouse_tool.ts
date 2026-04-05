@@ -47,10 +47,6 @@ function buildTopOffendersQuery(scope?: unknown): string {
     return buildWindowedQuery(request);
   }
 
-  const representativeState = "argMaxMerge(representative_state)";
-  const sourceTag = `tupleElement(${representativeState}, 1)`;
-  const sourceFile = `tupleElement(${representativeState}, 2)`;
-  const sampleQuery = `tupleElement(${representativeState}, 3)`;
   const conditions = ["source_tag IS NOT NULL"];
 
   if (request.tableName) {
@@ -60,15 +56,15 @@ function buildTopOffendersQuery(scope?: unknown): string {
   return [
     "SELECT",
     "  fingerprint,",
-    `  ${sourceTag} AS source_tag,`,
-    `  ${sourceFile} AS source_file,`,
-    `  ${sampleQuery} AS sample_query,`,
+    "  source_tag,",
+    "  source_file,",
+    "  sample_query,",
     "  sumMerge(total_exec_count_state) AS total_exec_count,",
     "  sumMerge(total_exec_time_ms_state) AS total_exec_time_ms,",
     "  round(quantileMerge(0.95)(p95_exec_time_state), 2) AS p95_exec_time_ms",
     "FROM query_fingerprints",
-    "GROUP BY fingerprint",
-    `HAVING ${conditions.join(" AND ")}`,
+    `WHERE ${conditions.join(" AND ")}`,
+    "GROUP BY fingerprint, source_tag, source_file, sample_query",
     "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
     "FORMAT TSVWithNames",
