@@ -32,14 +32,15 @@ What each variable does:
 - `DEMO_BASE_REF`
   - base branch for PRs, defaults to `main`
 - `DEMO_HEAD_REF`
-  - existing head branch for PRs in the demo repo
+  - fallback branch used for PRs when DemoRepoTool is not configured;
+    DemoRepoTool derives branch names from fingerprints
 - `GITHUB_TOKEN`
   - GitHub token used by the REST API path in `GitHubTool`
 
 Behavior:
 
 - if `GITHUB_TOKEN` is unset, the agent uses `local://` PR URLs
-- if `GITHUB_TOKEN` is set but `DEMO_REPO` or `DEMO_HEAD_REF` is missing, the
+- if `GITHUB_TOKEN` is set but `DEMO_REPO` is missing, the
   GitHub path fails fast with a configuration error
 
 ## Demo setup
