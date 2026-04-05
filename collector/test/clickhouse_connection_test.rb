@@ -3,6 +3,7 @@
 require "minitest/autorun"
 require "json"
 require_relative "../lib/clickhouse_connection"
+require_relative "support/env"
 
 class ClickhouseConnectionTest < Minitest::Test
   def test_posts_json_each_row_insert_requests

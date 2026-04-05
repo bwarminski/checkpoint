@@ -21,6 +21,7 @@ export DEMO_REPO='bwarminski/db-specialist-demo'
 export DEMO_BASE_REF='main'
 export DEMO_HEAD_REF='agent/demo-fix'
 export GITHUB_TOKEN='...'
+export LLM_MODEL='openai/gpt-4o-mini'
 ```
 
 What each variable does:
@@ -36,12 +37,15 @@ What each variable does:
     DemoRepoTool derives branch names from fingerprints
 - `GITHUB_TOKEN`
   - GitHub token used by the REST API path in `GitHubTool`
+- `LLM_MODEL`
+  - provider-agnostic model name for the agent loop, in `provider/model` form
 
 Behavior:
 
 - if `GITHUB_TOKEN` is unset, the agent uses `local://` PR URLs
 - if `GITHUB_TOKEN` is set but `DEMO_REPO` is missing, the
   GitHub path fails fast with a configuration error
+- if `LLM_MODEL` is unset, the agent runtime uses its configured default model
 
 ## Demo setup
 
@@ -51,7 +55,9 @@ Behavior:
    there without prompting.
 3. Set `DEMO_REPO`, `DEMO_BASE_REF`, `DEMO_HEAD_REF`, and `GITHUB_TOKEN` in
    your shell or local `.env` before running the live PR demo.
-4. Before repeating a live proof, reset the demo repo back to `DEMO_BASE_REF`
+4. Set `LLM_MODEL` to the provider/model string for the agent loop. The
+   default example uses `openai/gpt-4o-mini`.
+5. Before repeating a live proof, reset the demo repo back to `DEMO_BASE_REF`
    and remove any prior `agent/demo-fix-*` branches created by the agent.
 
 ## Local Run

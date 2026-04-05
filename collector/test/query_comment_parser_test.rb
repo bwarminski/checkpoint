@@ -2,6 +2,7 @@
 # ABOUTME: Covers extraction of controller action tags and source file locations.
 require "minitest/autorun"
 require_relative "../lib/query_comment_parser"
+require_relative "support/env"
 
 class QueryCommentParserTest < Minitest::Test
   def test_parses_controller_action_and_source

@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
-import { DemoRepoTool } from "../src/tools/demo_repo_tool.ts";
+import { DemoRepoTool, defaultDemoAppRoot } from "../src/tools/demo_repo_tool.ts";
+
+test("DemoRepoTool falls back to the sibling db-specialist-demo path when DEMO_APP_ROOT is unset", () => {
+  assert.equal(defaultDemoAppRoot(), "/home/bjw/db-specialist-demo");
+});
 
 test("DemoRepoTool creates a branch per finding fingerprint", async () => {
   const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));

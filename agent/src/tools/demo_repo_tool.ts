@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 type FixProposal = {
   fix_type: string;
@@ -45,6 +46,10 @@ type ApplyFixResult = {
 
 const execFileAsync = promisify(execFile);
 
+export function defaultDemoAppRoot(): string {
+  return resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../../db-specialist-demo");
+}
+
 export class DemoRepoTool {
   private readonly env: DemoRepoEnv;
   private readonly now: () => Date;
@@ -58,10 +63,7 @@ export class DemoRepoTool {
   }
 
   async applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
-    const root = this.env.DEMO_APP_ROOT;
-    if (!root) {
-      throw new Error("DemoRepoTool requires DEMO_APP_ROOT.");
-    }
+    const root = this.env.DEMO_APP_ROOT ?? defaultDemoAppRoot();
 
     const baseRef = this.env.DEMO_BASE_REF ?? "main";
     await ensureRemoteReachable(this.runner, root);

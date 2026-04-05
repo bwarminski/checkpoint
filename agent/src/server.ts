@@ -1,7 +1,10 @@
 // ABOUTME: Wires the DB specialist executor into an Express-hosted A2A service.
 // ABOUTME: Exposes health, agent card, JSON-RPC, and REST endpoints for local use.
 import express, { type Express } from "express";
+import { config as loadDotenv } from "dotenv";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { AGENT_CARD_PATH, type AgentCard } from "@a2a-js/sdk";
 import { DefaultRequestHandler, InMemoryTaskStore } from "@a2a-js/sdk/server";
@@ -14,6 +17,11 @@ import {
 
 import { DBSpecialistExecutor } from "./executor.ts";
 import { createRuntimeExecutor } from "./runtime_dependencies.ts";
+
+loadDotenv({
+  path: resolve(fileURLToPath(new URL(".", import.meta.url)), "../../.env"),
+  override: false,
+});
 
 type ServerOptions = {
   baseUrl?: string;

@@ -1,9 +1,33 @@
 # ABOUTME: Verifies one-shot collection from Postgres stats into query event rows.
 # ABOUTME: Covers empty polling results and the ClickHouse payload shape for inserts.
 require "minitest/autorun"
+require "tmpdir"
 require_relative "../lib/collector"
+require_relative "support/env"
 
 class CollectorTest < Minitest::Test
+  def test_env_loader_preserves_exported_values
+    Dir.mktmpdir do |dir|
+      env_path = File.join(dir, ".env")
+      File.write(env_path, "DEMO_REPO=file/value\nDEMO_BASE_REF=main\n")
+
+      previous_demo_repo = ENV["DEMO_REPO"]
+      previous_demo_base_ref = ENV["DEMO_BASE_REF"]
+      ENV["DEMO_REPO"] = "shell/value"
+      ENV.delete("DEMO_BASE_REF")
+
+      begin
+        load_env_file(env_path)
+
+        assert_equal "shell/value", ENV["DEMO_REPO"]
+        assert_equal "main", ENV["DEMO_BASE_REF"]
+      ensure
+        restore_env("DEMO_REPO", previous_demo_repo)
+        restore_env("DEMO_BASE_REF", previous_demo_base_ref)
+      end
+    end
+  end
+
   def test_returns_empty_array_when_no_stats_rows_exist
     stats_connection = StatsConnection.new([])
     clickhouse_connection = ClickhouseConnection.new
@@ -134,6 +158,14 @@ class CollectorTest < Minitest::Test
 
     def find_for(queryid)
       @queries.fetch(queryid.to_s, nil)
+    end
+  end
+
+  def restore_env(key, value)
+    if value.nil?
+      ENV.delete(key)
+    else
+      ENV[key] = value
     end
   end
 end
