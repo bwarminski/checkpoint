@@ -14,6 +14,7 @@ This design covers:
 - ClickHouse offender ranking and severity
 - Per-finding demo repo branches and PR wiring
 - Demo repo mutation safety checks
+- Demo repo cleanup and repeatable reset
 - Missing classification and tool-path tests
 - PR body evidence formatting
 - README demo setup guidance
@@ -102,6 +103,24 @@ Mutation safety will also be tightened. The string-replacement helpers for
 content actually changed. If not, they will raise a clear drift error rather
 than silently committing a no-op.
 
+### Demo Repo Reset
+
+The demo flow needs a repeatable reset path so live PR creation can be rerun
+without manual cleanup after each proof.
+
+The design will add a small reset mechanism that restores the sibling demo repo
+to a known base state before or between proof runs. The reset behavior should:
+
+- target the sibling repo at `DEMO_APP_ROOT`
+- remove or rewind per-finding `agent/demo-fix-*` branches created by the agent
+- restore the working tree to `DEMO_BASE_REF`
+- avoid mutating unrelated branches or untracked user work
+
+The implementation should keep this explicit and local to the demo workflow,
+not a hidden side effect of normal agent execution. The likely shape is a small
+script or documented command path that operators can run before a new demo
+session to return the demo repo to a clean baseline.
+
 ### GitHubTool
 
 `GitHubTool` will become per-PR rather than globally cached.
@@ -149,6 +168,7 @@ addition required by this review is explicit test coverage for the existing
 1. clone the external demo app at `DEMO_APP_ROOT`
 2. configure push-capable git credentials in that repo
 3. set `DEMO_REPO`, `DEMO_BASE_REF`, `DEMO_HEAD_REF`, and `GITHUB_TOKEN`
+4. reset the demo repo to the base branch before repeating the live PR demo
 
 This is additive to the current session configuration guidance, not a
 replacement for it.
@@ -170,13 +190,14 @@ The implementation will use grouped TDD commits:
 1. `ClickHouseTool` ranking/severity correction
 2. `DemoRepoTool` per-finding branch model, drift checks, and missing-path tests
 3. `Executor` and `GitHubTool` wiring/tests, including PR body evidence
-4. `README.md` and `TODOS.md` documentation updates
+4. Demo repo reset path plus `README.md` and `TODOS.md` documentation updates
 
 Required verification at the end:
 
 - all pre-existing tests remain green
 - new/updated tests cover each requested review item
 - `cd agent && npm test` passes
+- the demo repo reset path is documented and verified against the sibling repo
 - report test count before and after
 - report which items were code changes versus test-only changes
 
