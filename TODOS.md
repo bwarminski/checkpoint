@@ -141,6 +141,43 @@ makes sense.
 
 ---
 
+## Security: ClickHouse bound to 0.0.0.0 with no auth
+
+**What:** ClickHouse is exposed on `0.0.0.0:8123` and `0.0.0.0:9000` with no password
+on the default user. Any host on the local network can query or write to ClickHouse.
+
+**Fix:** Bind to loopback only in `docker-compose.yml`:
+```yaml
+ports:
+  - "127.0.0.1:8123:8123"
+  - "127.0.0.1:9000:9000"
+```
+
+**Why deferred:** Local demo only, not run on untrusted networks. Becomes a real risk
+if the machine is on a shared/public network or if Docker host networking changes.
+
+**Where:** `docker-compose.yml` clickhouse service. Confirmed by `/cso` audit 2026-04-05.
+
+---
+
+## Security: A2A endpoint has no authentication
+
+**What:** The A2A HTTP endpoint has no bearer token or API key check. Any local process
+(or network caller if HOST is changed to 0.0.0.0) can trigger GITHUB_TOKEN-backed
+PR creation by POSTing to `http://127.0.0.1:3001/a2a`.
+
+**Fix:** Add static bearer token middleware in `agent/src/server.ts`. Check
+`Authorization: Bearer ${AGENT_TOKEN}` header and return 401 if missing/wrong.
+Wire `AGENT_TOKEN` from env (optional — skip if unset, for dev convenience).
+
+**Why deferred:** Localhost-only default is acceptable for a local demo. Becomes
+important before any networked deployment.
+
+**Where:** `agent/src/server.ts` — add middleware before `app.use` A2A handler.
+Confirmed by `/cso` audit 2026-04-05.
+
+---
+
 ## pg_stat_monitor upgrade path
 
 **What:** Evaluate `pg_stat_monitor` (Percona) as a drop-in replacement for
