@@ -64,11 +64,12 @@ function buildTopOffendersQuery(scope?: unknown): string {
     `  ${sourceFile} AS source_file,`,
     `  ${sampleQuery} AS sample_query,`,
     "  sumMerge(total_exec_count_state) AS total_exec_count,",
+    "  round(sumMerge(total_exec_count_state) * quantileMerge(0.95)(p95_exec_time_state), 2) AS total_exec_time_ms,",
     "  round(quantileMerge(0.95)(p95_exec_time_state), 2) AS p95_exec_time_ms",
     "FROM query_fingerprints",
     "GROUP BY fingerprint",
     `HAVING ${conditions.join(" AND ")}`,
-    "ORDER BY total_exec_count DESC",
+    "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
     "FORMAT TSVWithNames",
   ].join("\n");
@@ -96,12 +97,13 @@ function buildWindowedQuery(request: ScopeRequest): string {
     "    fingerprint,",
     "    argMax((source_tag, source_file, sample_query), collected_at) AS representative,",
     "    sum(total_exec_count) AS total_exec_count,",
+    "    round(sum(total_exec_count * mean_exec_time_ms), 2) AS total_exec_time_ms,",
     "    round(quantile(0.95)(mean_exec_time_ms), 2) AS p95_exec_time_ms",
     "  FROM query_events",
     `  WHERE ${conditions.join(" AND ")}`,
     "  GROUP BY fingerprint",
     ")",
-    "ORDER BY total_exec_count DESC",
+    "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
     "FORMAT TSVWithNames",
   ].join("\n");
@@ -142,15 +144,17 @@ function parseRows(payload: string): Array<TopOffender> {
     );
     const totalExecCount = Number(row.total_exec_count ?? 0);
     const p95ExecTimeMs = Number(row.p95_exec_time_ms ?? 0);
+    const totalExecTimeMs = Number(row.total_exec_time_ms ?? 0);
 
     return {
       fingerprint: String(row.fingerprint ?? ""),
       p95_exec_time_ms: p95ExecTimeMs,
       sample_query: row.sample_query,
-      severity: totalExecCount >= 100 ? "high" : "medium",
+      severity: p95ExecTimeMs >= 100 ? "high" : "medium",
       source_file: row.source_file,
       source_tag: row.source_tag,
       total_exec_count: totalExecCount,
+      total_exec_time_ms: totalExecTimeMs,
     };
   });
 }

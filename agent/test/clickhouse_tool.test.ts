@@ -12,8 +12,8 @@ test("ClickHouseTool loads top offenders from source-tagged rows", async () => {
       query: async (sql: string) => {
         queries.push(sql);
         return [
-          "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\tp95_exec_time_ms",
-          "3252138119218455137\ttodos#index\t\\N\tSELECT \\\"users\\\".* FROM \\\"users\\\" WHERE \\\"users\\\".\\\"id\\\" = 1 LIMIT 1 /*action=\\'index\\',application=\\'Demo\\',controller=\\'todos\\'*/\t6547\t0.02",
+          "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
+          "3252138119218455137\ttodos#index\t\\N\tSELECT \\\"users\\\".* FROM \\\"users\\\" WHERE \\\"users\\\".\\\"id\\\" = 1 LIMIT 1 /*action=\\'index\\',application=\\'Demo\\',controller=\\'todos\\'*/\t6547\t123.45\t0.02",
         ].join("\n");
       },
     },
@@ -28,12 +28,45 @@ test("ClickHouseTool loads top offenders from source-tagged rows", async () => {
       p95_exec_time_ms: 0.02,
       sample_query:
         "SELECT \"users\".* FROM \"users\" WHERE \"users\".\"id\" = 1 LIMIT 1 /*action='index',application='Demo',controller='todos'*/",
-      severity: "high",
+      severity: "medium",
       source_file: null,
       source_tag: "todos#index",
       total_exec_count: 6547,
+      total_exec_time_ms: 123.45,
     },
   ]);
+});
+
+test("ClickHouseTool orders offenders by total execution time and marks high severity from p95", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool(undefined, {
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return [
+          "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
+          "slow-low-count\ttodos#index\t\\N\tSELECT 1\t2\t400.5\t120",
+          "fast-high-count\ttodos#status\t\\N\tSELECT 2\t999\t200.0\t80",
+        ].join("\n");
+      },
+    },
+  });
+
+  const results = await tool.topOffenders("analyze_db");
+
+  assert.match(queries[0] ?? "", /round\(sum\(total_exec_count \* mean_exec_time_ms\), 2\) AS total_exec_time_ms/);
+  assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
+  assert.deepEqual(
+    results.map((row) => ({
+      fingerprint: row.fingerprint,
+      severity: row.severity,
+      total_exec_time_ms: row.total_exec_time_ms,
+    })),
+    [
+      { fingerprint: "slow-low-count", severity: "high", total_exec_time_ms: 400.5 },
+      { fingerprint: "fast-high-count", severity: "medium", total_exec_time_ms: 200 },
+    ],
+  );
 });
 
 test("ClickHouseTool scopes analyze_table requests to the named table", async () => {
@@ -42,7 +75,7 @@ test("ClickHouseTool scopes analyze_table requests to the named table", async ()
     transport: {
       query: async (sql: string) => {
         queries.push(sql);
-        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\tp95_exec_time_ms";
+        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
       },
     },
   });
@@ -58,7 +91,7 @@ test("ClickHouseTool uses query_events for time-windowed requests", async () => 
     transport: {
       query: async (sql: string) => {
         queries.push(sql);
-        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\tp95_exec_time_ms";
+        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
       },
     },
   });
@@ -68,4 +101,27 @@ test("ClickHouseTool uses query_events for time-windowed requests", async () => 
   assert.match(queries[0] ?? "", /FROM query_events/);
   assert.match(queries[0] ?? "", /collected_at > now\(\) - INTERVAL 60 MINUTE/);
   assert.match(queries[0] ?? "", /argMax\(\(source_tag, source_file, sample_query\), collected_at\) AS representative/);
+  assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
+});
+
+test("ClickHouseTool uses query_fingerprints and total execution time ordering for all-time requests", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool(undefined, {
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
+      },
+    },
+  });
+
+  await tool.topOffenders("analyze_db all");
+
+  assert.match(queries[0] ?? "", /FROM query_fingerprints/);
+  assert.match(queries[0] ?? "", /sumMerge\(total_exec_count_state\) AS total_exec_count/);
+  assert.match(
+    queries[0] ?? "",
+    /round\(sumMerge\(total_exec_count_state\) \* quantileMerge\(0\.95\)\(p95_exec_time_state\), 2\) AS total_exec_time_ms/,
+  );
+  assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
 });
