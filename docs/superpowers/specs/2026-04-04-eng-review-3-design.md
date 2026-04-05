@@ -70,12 +70,21 @@ For the time-windowed `query_events` path:
 For the all-time `query_fingerprints` path:
 
 - keep the current aggregate-table query
-- compute `total_exec_time_ms` from the merged states using the aggregate-state
-  equivalent supported by the current schema
+- correct the aggregate read model so all-time table-scoped queries remain
+  accurate when a fingerprint appears under multiple `source_tag` values over
+  time
+- compute `total_exec_time_ms` from a merged aggregate state in that corrected
+  read model
 - order by `total_exec_time_ms DESC`
 
 Normalized results will expose `total_exec_time_ms`, and severity will switch
 from count-based logic to `p95_exec_time_ms >= 100 ? "high" : "medium"`.
+
+This adds one schema requirement beyond the original review text: the all-time
+table-scoped path cannot filter against a single merged representative tag per
+fingerprint. The read model must preserve enough source-tag-specific state for
+`analyze_table ... all` to filter before or during aggregation instead of after
+a lossy merge.
 
 ### DemoRepoTool
 
@@ -120,6 +129,10 @@ The implementation should keep this explicit and local to the demo workflow,
 not a hidden side effect of normal agent execution. The likely shape is a small
 script or documented command path that operators can run before a new demo
 session to return the demo repo to a clean baseline.
+
+For ClickHouse read-model repairs, any rebuild path must also document that
+ingestion is stopped during the reset so no raw events are missed while the
+materialized view is recreated.
 
 ### GitHubTool
 

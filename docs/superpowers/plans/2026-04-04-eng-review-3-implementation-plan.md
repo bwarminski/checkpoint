@@ -40,6 +40,10 @@
 **Files:**
 - Modify: `agent/src/tools/clickhouse_tool.ts`
 - Test: `agent/test/clickhouse_tool.test.ts`
+- Modify: `collector/db/clickhouse/002_query_fingerprints.sql`
+- Modify: `collector/db/clickhouse/003_top_offenders_mv.sql`
+- Create: `collector/db/clickhouse/004_reset_query_fingerprints.sql`
+- Test: `collector/test/sql/clickhouse_schema_test.rb`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -92,12 +96,45 @@ test("ClickHouseTool uses total execution time ordering for all-time requests", 
   assert.match(queries[0] ?? "", /sumMerge\\(total_exec_time_ms_state\\) AS total_exec_time_ms/);
   assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
 });
+
+test("ClickHouseTool keeps analyze_table all-time filtering source-tag aware", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool(undefined, {
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
+      },
+    },
+  });
+
+  await tool.topOffenders("analyze_table todos all");
+
+  assert.match(queries[0] ?? "", /FROM query_fingerprints/);
+  assert.doesNotMatch(queries[0] ?? "", /HAVING source_tag ILIKE/);
+  assert.match(queries[0] ?? "", /source_tag ILIKE 'todos#%'/);
+});
+
+test("ClickHouse schema stores execution time state and documents read-model reset", async () => {
+  const fingerprintSql = await readFile("../collector/db/clickhouse/002_query_fingerprints.sql", "utf8");
+  const viewSql = await readFile("../collector/db/clickhouse/003_top_offenders_mv.sql", "utf8");
+  const resetSql = await readFile("../collector/db/clickhouse/004_reset_query_fingerprints.sql", "utf8");
+
+  assert.match(fingerprintSql, /total_exec_time_ms_state AggregateFunction\\(sum, Float64\\)/);
+  assert.match(viewSql, /sumState\\(total_exec_count \\* mean_exec_time_ms\\) AS total_exec_time_ms_state/);
+  assert.match(resetSql, /TRUNCATE TABLE query_fingerprints/);
+  assert.match(resetSql, /CREATE MATERIALIZED VIEW top_offenders_mv/);
+  assert.match(resetSql, /stop ingestion/i);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd agent && node --import tsx --test test/clickhouse_tool.test.ts`
 Expected: FAIL because the current SQL still orders by `total_exec_count`, does not expose `total_exec_time_ms`, and severity is still count-based.
+
+Run: `cd collector && ruby test/sql/clickhouse_schema_test.rb`
+Expected: FAIL once the schema-state/reset assertions are added, because the current aggregate read model does not yet store source-tag-aware execution-time state or document a reset path.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -106,19 +143,80 @@ Expected: FAIL because the current SQL still orders by `total_exec_count`, does 
 return [
   "SELECT",
   "  fingerprint,",
-  `  ${sourceTag} AS source_tag,`,
-  `  ${sourceFile} AS source_file,`,
-  `  ${sampleQuery} AS sample_query,`,
+  "  source_tag,",
+  "  source_file,",
+  "  sample_query,",
   "  sumMerge(total_exec_count_state) AS total_exec_count,",
   "  sumMerge(total_exec_time_ms_state) AS total_exec_time_ms,",
   "  round(quantileMerge(0.95)(p95_exec_time_state), 2) AS p95_exec_time_ms",
   "FROM query_fingerprints",
-  "GROUP BY fingerprint",
-  `HAVING ${conditions.join(" AND ")}`,
+  `WHERE ${conditions.join(" AND ")}`,
+  "GROUP BY fingerprint, source_tag, source_file, sample_query",
   "ORDER BY total_exec_time_ms DESC",
   "LIMIT 5",
   "FORMAT TSVWithNames",
 ].join("\\n");
+```
+
+```sql
+-- collector/db/clickhouse/002_query_fingerprints.sql
+CREATE TABLE query_fingerprints (
+  fingerprint String,
+  source_tag Nullable(String),
+  source_file Nullable(String),
+  sample_query Nullable(String),
+  total_exec_count_state AggregateFunction(sum, UInt64),
+  total_exec_time_ms_state AggregateFunction(sum, Float64),
+  p95_exec_time_state AggregateFunction(quantile(0.95), Float64)
+) ENGINE = AggregatingMergeTree
+ORDER BY (fingerprint, source_tag);
+```
+
+```sql
+-- collector/db/clickhouse/003_top_offenders_mv.sql
+CREATE MATERIALIZED VIEW top_offenders_mv
+TO query_fingerprints AS
+SELECT
+  fingerprint,
+  source_tag,
+  source_file,
+  sample_query,
+  sumState(total_exec_count) AS total_exec_count_state,
+  sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state,
+  quantileState(0.95)(mean_exec_time_ms) AS p95_exec_time_state
+FROM query_events
+GROUP BY fingerprint, source_tag, source_file, sample_query;
+```
+
+```sql
+-- collector/db/clickhouse/004_reset_query_fingerprints.sql
+-- ABOUTME: Rebuilds the fingerprint read model after execution-time schema changes.
+-- ABOUTME: Run this only while collector ingestion is stopped so no raw events are missed.
+DROP TABLE IF EXISTS top_offenders_mv;
+DROP TABLE IF EXISTS query_fingerprints;
+
+CREATE TABLE query_fingerprints (
+  fingerprint String,
+  source_tag Nullable(String),
+  source_file Nullable(String),
+  sample_query Nullable(String),
+  total_exec_count_state AggregateFunction(sum, UInt64),
+  total_exec_time_ms_state AggregateFunction(sum, Float64),
+  p95_exec_time_state AggregateFunction(quantile(0.95), Float64)
+) ENGINE = AggregatingMergeTree
+ORDER BY (fingerprint, source_tag);
+
+INSERT INTO query_fingerprints
+SELECT
+  fingerprint,
+  source_tag,
+  source_file,
+  sample_query,
+  sumState(total_exec_count),
+  sumState(total_exec_count * mean_exec_time_ms),
+  quantileState(0.95)(mean_exec_time_ms)
+FROM query_events
+GROUP BY fingerprint, source_tag, source_file, sample_query;
 ```
 
 ```ts
@@ -171,13 +269,16 @@ return {
 Run: `cd agent && node --import tsx --test test/clickhouse_tool.test.ts`
 Expected: PASS
 
+Run: `cd collector && ruby test/sql/clickhouse_schema_test.rb`
+Expected: PASS
+
 Run: `cd agent && npm test`
 Expected: PASS with the baseline suite still green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agent/src/tools/clickhouse_tool.ts agent/test/clickhouse_tool.test.ts JOURNAL.md
+git add agent/src/tools/clickhouse_tool.ts agent/test/clickhouse_tool.test.ts collector/db/clickhouse/002_query_fingerprints.sql collector/db/clickhouse/003_top_offenders_mv.sql collector/db/clickhouse/004_reset_query_fingerprints.sql collector/test/sql/clickhouse_schema_test.rb JOURNAL.md
 git commit -m "fix: rank offenders by execution time"
 ```
 
