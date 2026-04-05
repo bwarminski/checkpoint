@@ -13,10 +13,11 @@ repo at `/home/bjw/db-specialist-demo`.
 
 ## Session Configuration
 
-Set these variables before running the local stack or the live PR demo:
+Set these variables before running the local stack or the live PR demo. The
+agent auto-detects the sibling demo repo at `/home/bjw/db-specialist-demo`;
+set `DEMO_APP_ROOT` only if you need to override that path:
 
 ```bash
-export DEMO_APP_ROOT=/home/bjw/db-specialist-demo
 export DEMO_REPO='bwarminski/db-specialist-demo'
 export DEMO_BASE_REF='main'
 export DEMO_HEAD_REF='agent/demo-fix'
@@ -27,7 +28,7 @@ export LLM_MODEL='openai/gpt-4o-mini'
 What each variable does:
 
 - `DEMO_APP_ROOT`
-  - local filesystem path to the sibling Rails demo repo
+  - optional local filesystem override for the sibling Rails demo repo path
 - `DEMO_REPO`
   - GitHub repo slug used for real PR creation
 - `DEMO_BASE_REF`
@@ -49,7 +50,8 @@ Behavior:
 
 ## Demo setup
 
-1. Clone the demo app repo into `DEMO_APP_ROOT`.
+1. Clone the demo app repo into `/home/bjw/db-specialist-demo`, or set
+   `DEMO_APP_ROOT` if you want the agent to use a different path.
 2. Configure push access in that repo. SSH or HTTPS with a stored credential
    both work, but the agent must be able to run `git ls-remote` and `git push`
    there without prompting.
