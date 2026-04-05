@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the deterministic Phase 1 executor path with a `pi-agent-core` loop while keeping Phase 2 narrow: clean local config, collect `rows_examined`, expose ClickHouse discovery/query tools, preserve the existing SQL-backed memory path until a real checkpoint proves otherwise, and finish with a live smoke test.
+**Goal:** Replace the deterministic Phase 1 executor path with a `pi-agent-core` loop while keeping Phase 2 narrow: clean local config, collect `rows_examined`, expose ClickHouse discovery/query tools, add a hybrid memory system for durable discoveries and preferences, and finish with a live smoke test.
 
-**Architecture:** The A2A server remains the entrypoint, but `DBSpecialistExecutor` becomes a thin bridge around a `pi-agent-core` agent. The LLM interacts through focused agent tools built over the existing ClickHouse, code search, explain, memory, demo-repo, and GitHub boundaries. Model selection is provider-agnostic through `LLM_MODEL`, not Anthropic-specific env wiring.
+**Architecture:** The A2A server remains the entrypoint, but `DBSpecialistExecutor` becomes a thin bridge around a `pi-agent-core` agent. The LLM interacts through focused agent tools built over ClickHouse, code search, explain, memory, demo-repo, and GitHub boundaries. Memory is for long-lived context and failed-attempt learning, not routine query-loop bookkeeping. Model selection is provider-agnostic through `LLM_MODEL`, not Anthropic-specific env wiring.
 
 **Tech Stack:** TypeScript, `@a2a-js/sdk`, `@mariozechner/pi-agent-core`, `@mariozechner/pi-ai`, Ruby collector, ClickHouse, Postgres, pytest, Node test runner
 
@@ -15,17 +15,17 @@
 - `agent/src/server.ts`
   Loads repo-root `.env` and keeps the A2A transport stable while the executor changes underneath.
 - `agent/src/runtime_dependencies.ts`
-  Builds the default runtime tools and resolves the selected model/provider.
+  Builds the default runtime tools, memory roots, and selected model/provider.
 - `agent/src/executor.ts`
   Bridges A2A task lifecycle events to the `pi-agent-core` agent session.
 - `agent/src/agent_tools.ts`
-  New file. Defines the `pi-agent-core` tool wrappers over existing runtime dependencies.
+  New file. Defines the `pi-agent-core` tool wrappers over runtime dependencies.
 - `agent/src/llm_config.ts`
-  New file. Parses `LLM_MODEL`, optional fallback models, and provider-specific credential expectations.
+  New file. Parses `LLM_MODEL` and optional fallback models.
 - `agent/src/tools/clickhouse_tool.ts`
-  Moves from ranked-offender helper to discovery/query surface for the LLM.
+  Exposes schema discovery and guarded query execution to the LLM.
 - `agent/src/tools/memory_tool.ts`
-  Keeps the SQL-backed storage path, expands only where the agent loop needs richer reads/writes.
+  New hybrid memory surface over markdown knowledge and JSONL event history.
 - `agent/test/*.test.ts`
   Unit coverage for config, ClickHouse, memory, executor bridge, and tool wrappers.
 - `agent/test/integration/*.test.ts`
@@ -38,6 +38,8 @@
   New file. Loads `.env` for pytest using stdlib code.
 - `collector/test/support/env.rb`
   New file. Loads `.env` for collector tests.
+- `agent/memory/`
+  New directory containing markdown memory and JSONL event history.
 - `.env.example`
   Documents the smaller config contract, including provider-agnostic LLM config.
 - `README.md`
@@ -61,17 +63,9 @@
 
 ```typescript
 test("DemoRepoTool falls back to the sibling db-specialist-demo path when DEMO_APP_ROOT is unset", async () => {
-  const commands: Array<string> = [];
   const tool = new DemoRepoTool(
-    {
-      exec: async (args, cwd) => {
-        commands.push(`${cwd}: ${args.join(" ")}`);
-        return "";
-      },
-    },
-    {
-      env: { DEMO_BASE_REF: "main" },
-    },
+    { exec: async () => "" },
+    { env: { DEMO_BASE_REF: "main" } },
   );
 
   await assert.rejects(
@@ -105,11 +99,7 @@ function defaultDemoAppRoot(): string {
   return resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../../db-specialist-demo");
 }
 
-// inside applyFix()
 const root = this.env.DEMO_APP_ROOT ?? defaultDemoAppRoot();
-if (!(await pathExists(root))) {
-  throw new Error(`DemoRepoTool: demo app not found at ${root}. Set DEMO_APP_ROOT to override.`);
-}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -147,7 +137,6 @@ Expected: FAIL because the environment is not auto-loaded yet.
 - [ ] **Step 7: Write minimal implementation**
 
 ```typescript
-// agent/src/server.ts
 import { config as loadDotenv } from "dotenv";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -159,31 +148,29 @@ loadDotenv({
 ```
 
 ```python
-# tests/conftest.py
 # ABOUTME: Loads repo-root .env for pytest without adding a Python dependency manager.
 # ABOUTME: Preserves existing shell variables and fills only missing values from .env.
 import os
 from pathlib import Path
 
-for line in (Path(__file__).resolve().parents[1] / ".env").read_text().splitlines():
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#") or "=" not in stripped:
-        continue
-    key, value = stripped.split("=", 1)
-    os.environ.setdefault(key, value)
+env_path = Path(__file__).resolve().parents[1] / ".env"
+if env_path.exists():
+    for line in env_path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        os.environ.setdefault(key, value)
 ```
 
 ```ruby
-# collector/test/support/env.rb
 # ABOUTME: Loads repo-root .env before collector tests run.
 # ABOUTME: Preserves exported shell values and fills only missing test variables.
 env_path = File.expand_path("../../../.env", __dir__)
-
 if File.exist?(env_path)
   File.readlines(env_path, chomp: true).each do |line|
     stripped = line.strip
     next if stripped.empty? || stripped.start_with?("#") || !stripped.include?("=")
-
     key, value = stripped.split("=", 2)
     ENV[key] ||= value
   end
@@ -193,7 +180,6 @@ end
 - [ ] **Step 8: Wire collector test startup**
 
 ```ruby
-# add to the top of each collector test file
 require_relative "support/env"
 ```
 
@@ -211,7 +197,7 @@ DEMO_REPO=bwarminski/db-specialist-demo
 LLM_MODEL=openai/gpt-4o-mini
 
 # Optional comma-separated fallbacks
-# LLM_FALLBACK_MODELS=ollama/llama3.1:8b,anthropic/claude-sonnet-4-20250514
+# LLM_FALLBACK_MODELS=ollama/llama3.1:8b,openai/gpt-4o-mini
 ```
 
 - [ ] **Step 10: Run tests to verify they pass**
@@ -258,12 +244,7 @@ def test_run_once_captures_rows_examined_metrics
     }]
   end
 
-  collector = Collector.new(
-    stats_connection: stats_connection,
-    sample_query_lookup: nil,
-    clock: -> { Time.utc(2026, 4, 5, 12, 0, 0) }
-  )
-
+  collector = Collector.new(stats_connection: stats_connection, clock: -> { Time.utc(2026, 4, 5, 12, 0, 0) })
   row = collector.run_once.first
 
   assert_equal 2500, row[:rows_examined]
@@ -282,17 +263,9 @@ Expected: FAIL because the collector does not read the `rows` column yet.
 ```ruby
 STATS_SQL = "SELECT queryid, calls, mean_exec_time, rows FROM pg_stat_statements".freeze
 
-# inside build_row
 rows_examined = stats_row.fetch("rows", 0).to_i
 calls = stats_row.fetch("calls").to_i
-
-{
-  # existing keys...
-  total_exec_count: calls,
-  mean_exec_time_ms: stats_row.fetch("mean_exec_time").to_f,
-  rows_examined: rows_examined,
-  mean_rows_examined: calls.zero? ? 0.0 : rows_examined.to_f / calls
-}
+mean_rows_examined = calls.zero? ? 0.0 : rows_examined.to_f / calls
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -306,7 +279,6 @@ Expected: PASS
 ```ruby
 def test_query_events_schema_tracks_rows_examined
   sql = File.read(File.expand_path("../db/clickhouse/001_query_events.sql", __dir__))
-
   assert_match(/rows_examined\s+UInt64/, sql)
   assert_match(/mean_rows_examined\s+Float64/, sql)
 end
@@ -342,8 +314,7 @@ Expected: PASS
 
 ```bash
 git add collector/lib/collector.rb collector/db/clickhouse/001_query_events.sql \
-  collector/db/clickhouse/002_query_fingerprints.sql \
-  collector/db/clickhouse/003_top_offenders_mv.sql \
+  collector/db/clickhouse/002_query_fingerprints.sql collector/db/clickhouse/003_top_offenders_mv.sql \
   collector/test/collector_test.rb collector/test/sql/clickhouse_schema_test.rb
 git commit -m "feat: capture rows examined in collector pipeline"
 ```
@@ -404,7 +375,6 @@ async describeTable(table: string): Promise<string> {
   if (!/^[a-z0-9_]+$/i.test(table)) {
     throw new Error(`Invalid table name: ${table}`);
   }
-
   return this.transport!.query(`DESCRIBE TABLE ${table} FORMAT TSV`);
 }
 
@@ -412,7 +382,6 @@ async executeQuery(sql: string): Promise<string> {
   if (!/^\s*select\b/i.test(sql)) {
     throw new Error("SELECT-only queries are allowed");
   }
-
   return this.transport!.query(sql);
 }
 ```
@@ -423,27 +392,24 @@ Run: `cd agent && npm test -- --test-name-pattern "lists tables|describes a whit
 
 Expected: PASS
 
-- [ ] **Step 5: Write the failing executor-follow-on test**
+- [ ] **Step 5: Write the failing executor follow-on test**
 
 ```typescript
 test("DBSpecialistExecutor no longer depends on topOffenders", async () => {
-  const toolCalls: Array<string> = [];
+  const queries: Array<string> = [];
   const executor = new DBSpecialistExecutor({
     clickhouseTool: {
       listTables: async () => ["query_events"],
       describeTable: async () => "fingerprint\tString",
       executeQuery: async (sql: string) => {
-        toolCalls.push(sql);
-        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_time_ms\tp95_exec_time_ms\trows_examined\tmean_rows_examined\n";
+        queries.push(sql);
+        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_time_ms\tp95_exec_time_ms\n";
       },
     },
   } as any);
 
-  await executor.execute({ userMessage: { text: "analyze_db" } } as any, {
-    enqueueEvent() {},
-  } as any);
-
-  assert.equal(toolCalls.length > 0, true);
+  await executor.execute({ userMessage: { text: "analyze_db" } } as any, { enqueueEvent() {} } as any);
+  assert.equal(queries.length > 0, true);
 });
 ```
 
@@ -455,13 +421,7 @@ Expected: FAIL because the executor still reads the old method.
 
 - [ ] **Step 7: Write minimal implementation**
 
-```typescript
-// executor helper
-const rows = await this.deps.clickhouseTool.executeQuery(DEFAULT_TOP_OFFENDERS_SQL);
-const findings = parseTopOffenders(rows);
-```
-
-Remove the old `topOffenders()` dependency from the executor contract instead of preserving it.
+Remove the old `topOffenders()` dependency from the executor contract and parse its default offender query from `executeQuery()` output instead.
 
 - [ ] **Step 8: Run tests to verify they pass**
 
@@ -477,167 +437,135 @@ git add agent/src/tools/clickhouse_tool.ts agent/test/clickhouse_tool.test.ts \
 git commit -m "feat: switch to ClickHouse discovery and query interface"
 ```
 
-### Task 4: Memory Integration Without Storage Migration
+### Task 4: Hybrid Memory System
 
 **Files:**
-- Modify: `agent/src/tools/memory_tool.ts`
-- Modify: `agent/test/memory_tool.test.ts`
+- Rewrite: `agent/src/tools/memory_tool.ts`
+- Rewrite: `agent/test/memory_tool.test.ts`
 - Modify: `agent/src/runtime_dependencies.ts`
-- Modify: `agent/src/executor.ts`
+- Create: `agent/memory/MEMORY.md`
+- Create: `agent/memory/events.jsonl`
+- Modify: `.gitignore`
 
-- [ ] **Step 1: Write the failing tests for richer memory operations**
+- [ ] **Step 1: Write the failing memory tests**
 
 ```typescript
-test("MemoryTool records a finding row", async () => {
-  const calls: Array<{ sql: string; params?: unknown[] }> = [];
+test("MemoryTool returns markdown preferences and constraints in search results", async () => {
   const tool = new MemoryTool({
-    query: async (sql: string, params?: unknown[]) => {
-      calls.push({ sql, params });
-      return [];
-    },
-  } as any);
-
-  await tool.recordFinding({
-    fingerprint: "fp-1",
-    finding_type: "slow_query",
-    severity: "high",
-    details: { source_tag: "todos#index" },
+    rootDir: memoryRoot,
   });
 
-  assert.match(calls[0]?.sql ?? "", /INSERT INTO findings/i);
+  await writeFile(join(memoryRoot, "MEMORY.md"), [
+    "## Preferences",
+    "- Brett prefers provider-agnostic model configuration.",
+    "",
+    "## Constraints",
+    "- Do not preserve backward compatibility without explicit approval.",
+  ].join("\n"));
+
+  const results = await tool.search("provider configuration");
+  assert.equal(results.some((entry) => entry.kind === "preference"), true);
 });
 
-test("MemoryTool records a pending suggestion row", async () => {
-  const calls: Array<{ sql: string; params?: unknown[] }> = [];
-  const tool = new MemoryTool({
-    query: async (sql: string, params?: unknown[]) => {
-      calls.push({ sql, params });
-      return [];
-    },
-  } as any);
+test("MemoryTool appends failed attempts to JSONL history", async () => {
+  const tool = new MemoryTool({ rootDir: memoryRoot });
 
-  await tool.recordSuggestion({
-    fingerprint: "fp-1",
-    fixType: "add_index",
-    status: "pending",
-    prUrl: "https://example.test/pr/1",
+  await tool.record({
+    kind: "failed_attempt",
+    summary: "Adding an index did not improve the query plan.",
+    details: { fingerprint: "fp-1" },
   });
 
-  assert.match(calls[0]?.sql ?? "", /INSERT INTO suggestions/i);
+  const events = await readFile(join(memoryRoot, "events.jsonl"), "utf8");
+  assert.match(events, /failed_attempt/);
 });
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd agent && npm test -- --test-name-pattern "records a finding row|records a pending suggestion row"`
+Run: `cd agent && npm test -- --test-name-pattern "MemoryTool returns markdown|MemoryTool appends failed attempts"`
 
-Expected: FAIL because `MemoryTool` currently exposes only `shouldSuggest()`.
+Expected: FAIL because the current memory tool is still workflow-oriented.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```typescript
-async recordFinding(input: {
-  fingerprint: string;
-  finding_type: string;
-  severity: string;
-  details: unknown;
-}): Promise<void> {
-  await this.db.query(
-    "INSERT INTO findings (fingerprint, finding_type, severity, details) VALUES ($1, $2, $3, $4)",
-    [input.fingerprint, input.finding_type, input.severity, JSON.stringify(input.details)],
-  );
+type MemoryEntryKind = "preference" | "constraint" | "discovery" | "failed_attempt";
+
+async search(query: string): Promise<Array<MemoryEntry>> {
+  const markdownEntries = await readMarkdownMemory(this.rootDir);
+  const eventEntries = await readJsonlEvents(this.rootDir);
+  return [...markdownEntries, ...eventEntries].filter((entry) => matchesQuery(entry, query));
 }
 
-async recordSuggestion(input: {
-  fingerprint: string;
-  fixType: string;
-  status: string;
-  prUrl?: string;
+async record(input: {
+  kind: MemoryEntryKind;
+  summary: string;
+  details?: unknown;
 }): Promise<void> {
-  await this.db.query(
-    "INSERT INTO suggestions (fingerprint, fix_type, status, pr_url) VALUES ($1, $2, $3, $4)",
-    [input.fingerprint, input.fixType, input.status, input.prUrl ?? null],
+  await appendFile(
+    join(this.rootDir, "events.jsonl"),
+    `${JSON.stringify({ ts: new Date().toISOString(), ...input })}\n`,
   );
 }
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd agent && npm test -- --test-name-pattern "records a finding row|records a pending suggestion row"`
+Run: `cd agent && npm test -- --test-name-pattern "MemoryTool returns markdown|MemoryTool appends failed attempts"`
 
 Expected: PASS
 
-- [ ] **Step 5: Write the failing executor-memory test**
+- [ ] **Step 5: Write the failing runtime test**
 
 ```typescript
-test("executor records findings before opening a PR", async () => {
-  const calls: Array<string> = [];
-  const executor = new DBSpecialistExecutor({
-    clickhouseTool: {
-      listTables: async () => ["query_events"],
-      describeTable: async () => "fingerprint\tString",
-      executeQuery: async () => [
-        "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_time_ms\tp95_exec_time_ms",
-        "fp-1\ttodos#index\tapp/controllers/todos_controller.rb:1\tSELECT 1\t5000\t150",
-      ].join("\n"),
-    },
-    codeSearchTool: {
-      locate: async () => ({ content: "1: Todo.where(user_id: 7)", source_file: "app/controllers/todos_controller.rb:1" }),
-    },
-    explainTool: { analyze: async () => ({ validated: true }) },
-    memoryTool: {
-      shouldSuggest: async () => true,
-      recordFinding: async () => { calls.push("recordFinding"); },
-      recordSuggestion: async () => { calls.push("recordSuggestion"); },
-    },
-    demoRepoTool: { applyFix: async () => ({ branchName: "agent/demo-fix-fp-1", diff: "diff" }) },
-    githubTool: { openPullRequest: async () => ({ url: "https://example.test/pr/1" }) },
-  } as any);
-
-  await executor.execute({ userMessage: { text: "analyze_db" } } as any, { enqueueEvent() {} } as any);
-
-  assert.deepEqual(calls, ["recordFinding", "recordSuggestion"]);
+test("runtime dependencies point MemoryTool at agent/memory", async () => {
+  const deps = createRuntimeDependencies({ cwd: repoRoot });
+  assert.match(String(deps.memoryToolRoot), /agent\/memory$/);
 });
 ```
 
 - [ ] **Step 6: Run test to verify it fails**
 
-Run: `cd agent && npm test -- --test-name-pattern "records findings before opening a PR"`
+Run: `cd agent && npm test -- --test-name-pattern "point MemoryTool at agent/memory"`
 
-Expected: FAIL because the executor does not persist through memory yet.
+Expected: FAIL because runtime dependencies do not expose the new memory root yet.
 
 - [ ] **Step 7: Write minimal implementation**
 
 ```typescript
-await this.deps.memoryTool?.recordFinding({
-  fingerprint: finding.fingerprint,
-  finding_type: "slow_query",
-  severity: String(finding.severity ?? "unknown"),
-  details: { source_tag: finding.source_tag, source_file: finding.source_file },
-});
-
-if (pr?.url) {
-  await this.deps.memoryTool?.recordSuggestion({
-    fingerprint: finding.fingerprint,
-    fixType: fix.fix_type,
-    status: "pending",
-    prUrl: pr.url,
-  });
-}
+const memoryRoot = fileURLToPath(new URL("../memory/", import.meta.url));
+const memoryTool = new MemoryTool({ rootDir: memoryRoot });
 ```
 
-- [ ] **Step 8: Run tests to verify they pass**
+- [ ] **Step 8: Seed the memory directory**
 
-Run: `cd agent && npm test -- --test-name-pattern "MemoryTool|records findings before opening a PR"`
+Create `agent/memory/MEMORY.md` with starter sections:
+
+```md
+# Agent Memory
+
+## Preferences
+
+## Constraints
+
+## Discoveries
+```
+
+Create `agent/memory/events.jsonl` as an empty tracked file.
+
+- [ ] **Step 9: Run tests to verify they pass**
+
+Run: `cd agent && npm test -- --test-name-pattern "MemoryTool|point MemoryTool at agent/memory"`
 
 Expected: PASS
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add agent/src/tools/memory_tool.ts agent/test/memory_tool.test.ts \
-  agent/src/runtime_dependencies.ts agent/src/executor.ts
-git commit -m "feat: persist agent memory through existing SQL store"
+  agent/src/runtime_dependencies.ts agent/memory/MEMORY.md agent/memory/events.jsonl .gitignore
+git commit -m "feat: add hybrid markdown and jsonl memory"
 ```
 
 ### Task 5: pi-agent-core Loop And Provider-Agnostic Model Config
@@ -672,7 +600,6 @@ test("parseLlmConfig reads provider-qualified model refs", async () => {
 
   assert.equal(config.primary.provider, "ollama");
   assert.equal(config.primary.model, "llama3.1:8b");
-  assert.deepEqual(config.fallbacks.map((entry) => entry.provider), ["openai", "anthropic"]);
 });
 
 test("parseLlmConfig rejects an unqualified model ref", async () => {
@@ -689,27 +616,12 @@ Expected: FAIL because `llm_config.ts` does not exist yet.
 - [ ] **Step 4: Write minimal provider-config implementation**
 
 ```typescript
-export type QualifiedModelRef = { provider: string; model: string };
-
-export function parseQualifiedModelRef(value: string): QualifiedModelRef {
+export function parseQualifiedModelRef(value: string) {
   const [provider, ...modelParts] = value.split("/");
   if (!provider || modelParts.length === 0) {
     throw new Error("LLM_MODEL must use provider/model format");
   }
-
   return { provider, model: modelParts.join("/") };
-}
-```
-
-```typescript
-import { getModel } from "@mariozechner/pi-ai";
-
-export function resolvePrimaryModel(env: NodeJS.ProcessEnv) {
-  const primary = parseQualifiedModelRef(env.LLM_MODEL ?? "ollama/llama3.1:8b");
-  return {
-    ref: primary,
-    model: getModel(primary.provider, primary.model),
-  };
 }
 ```
 
@@ -722,8 +634,12 @@ Expected: PASS
 - [ ] **Step 6: Write the failing agent-tools tests**
 
 ```typescript
-test("buildAgentTools exposes list_tables and query_database", async () => {
+test("buildAgentTools exposes memory search and memory record tools", async () => {
   const tools = buildAgentTools({
+    memoryTool: {
+      search: async () => [],
+      record: async () => {},
+    },
     clickhouseTool: {
       listTables: async () => ["query_events"],
       describeTable: async () => "fingerprint\tString",
@@ -731,50 +647,49 @@ test("buildAgentTools exposes list_tables and query_database", async () => {
     },
   } as any);
 
-  assert.deepEqual(tools.map((tool) => tool.name).slice(0, 3), [
-    "list_tables",
-    "describe_table",
-    "query_database",
-  ]);
+  assert.equal(tools.some((tool) => tool.name === "search_memory"), true);
+  assert.equal(tools.some((tool) => tool.name === "record_memory"), true);
 });
 ```
 
 - [ ] **Step 7: Run tests to verify they fail**
 
-Run: `cd agent && npm test -- --test-name-pattern "buildAgentTools exposes"`
+Run: `cd agent && npm test -- --test-name-pattern "buildAgentTools exposes memory search"`
 
 Expected: FAIL because `agent_tools.ts` does not exist yet.
 
 - [ ] **Step 8: Write minimal agent-tools implementation**
 
 ```typescript
-export function buildAgentTools(deps: RuntimeDeps): AgentTool[] {
-  return [
-    {
-      name: "list_tables",
-      description: "List available ClickHouse tables.",
-      parameters: Type.Object({}),
-      execute: async () => textResult((await deps.clickhouseTool.listTables()).join("\n")),
-    },
-    {
-      name: "describe_table",
-      description: "Describe the schema for one ClickHouse table.",
-      parameters: Type.Object({ table: Type.String() }),
-      execute: async (_id, { table }) => textResult(await deps.clickhouseTool.describeTable(table)),
-    },
-    {
-      name: "query_database",
-      description: "Run a SELECT query against ClickHouse.",
-      parameters: Type.Object({ sql: Type.String() }),
-      execute: async (_id, { sql }) => textResult(await deps.clickhouseTool.executeQuery(sql)),
-    },
-  ];
+{
+  name: "search_memory",
+  description: "Search prior discoveries, preferences, constraints, and failed attempts.",
+  parameters: Type.Object({ query: Type.String() }),
+  execute: async (_id, { query }) => textResult(JSON.stringify(await deps.memoryTool.search(query))),
+},
+{
+  name: "record_memory",
+  description: "Record a durable lesson, preference, discovery, or failed attempt.",
+  parameters: Type.Object({
+    kind: Type.Union([
+      Type.Literal("preference"),
+      Type.Literal("constraint"),
+      Type.Literal("discovery"),
+      Type.Literal("failed_attempt"),
+    ]),
+    summary: Type.String(),
+    details: Type.Optional(Type.Unknown()),
+  }),
+  execute: async (_id, params) => {
+    await deps.memoryTool.record(params);
+    return textResult("Memory recorded.");
+  },
 }
 ```
 
 - [ ] **Step 9: Run tests to verify they pass**
 
-Run: `cd agent && npm test -- --test-name-pattern "buildAgentTools exposes"`
+Run: `cd agent && npm test -- --test-name-pattern "buildAgentTools exposes memory search"`
 
 Expected: PASS
 
@@ -787,7 +702,6 @@ test("executor bridges pi-agent-core events into working and completed task even
     createAgent: () => ({
       subscribe(handler: (event: any) => void) {
         handler({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "thinking" } });
-        handler({ type: "agent_end", messages: [] });
         return () => {};
       },
       prompt: async () => {},
@@ -814,28 +728,17 @@ Expected: FAIL because the executor still runs the deterministic path.
 
 - [ ] **Step 12: Write minimal executor implementation**
 
-```typescript
-const agent = this.agentFactory.createAgent({
-  initialState: {
-    systemPrompt: DB_SPECIALIST_SYSTEM_PROMPT,
-    model: this.deps.modelConfig.primary.model,
-    tools: buildAgentTools(this.deps),
-  },
-});
+The loop should:
 
-agent.subscribe((event) => {
-  if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-    this.publishWorking(requestContext, eventSink, event.assistantMessageEvent.delta);
-  }
-});
-
-await agent.prompt(userText ?? "Analyze the database for performance issues.");
-await agent.waitForIdle();
-```
+- create a `pi-agent-core` agent with provider-qualified model resolution
+- expose ClickHouse, code search, explain, demo-repo, GitHub, and memory tools
+- consult memory during exploration and planning
+- write memory only for durable lessons, preferences, constraints, discoveries, or failed attempts
+- avoid treating memory as the routine sink for every normal finding
 
 - [ ] **Step 13: Run tests to verify they pass**
 
-Run: `cd agent && npm test -- --test-name-pattern "bridges pi-agent-core events|parseLlmConfig|buildAgentTools exposes"`
+Run: `cd agent && npm test -- --test-name-pattern "bridges pi-agent-core events|parseLlmConfig|buildAgentTools exposes memory search"`
 
 Expected: PASS
 
@@ -862,7 +765,7 @@ Update the integration test and server test to:
 - inject a loop-backed executor
 - verify the A2A lifecycle still publishes `submitted`, `working`, and `completed`
 - verify the model config defaults to a provider-qualified ref
-- skip any live eval that needs external credentials unless the selected provider env is present
+- verify memory can be searched and recorded through tool wiring with mocks
 
 - [ ] **Step 17: Run all agent tests to verify they pass**
 
@@ -874,69 +777,13 @@ Expected: PASS
 
 ```bash
 git add agent/src/agent_tools.ts agent/src/llm_config.ts agent/src/executor.ts \
-  agent/src/runtime_dependencies.ts agent/src/server.ts agent/package.json \
-  agent/package-lock.json agent/test/executor.test.ts \
-  agent/test/integration/analyze_db.test.ts agent/test/server.test.ts \
-  agent/test/llm_config.test.ts agent/test/agent_tools.test.ts
+  agent/src/runtime_dependencies.ts agent/src/server.ts agent/package.json agent/package-lock.json \
+  agent/test/executor.test.ts agent/test/integration/analyze_db.test.ts \
+  agent/test/server.test.ts agent/test/llm_config.test.ts agent/test/agent_tools.test.ts
 git commit -m "feat: wire pi-agent-core loop with provider-agnostic model config"
 ```
 
-### Task 6: Memory Usefulness Checkpoint
-
-**Files:**
-- Modify: `agent/test/integration/analyze_db.test.ts`
-- Create: `agent/test/eval/memory_loop_checkpoint.test.ts`
-- Modify: `JOURNAL.md`
-
-- [ ] **Step 1: Write the failing checkpoint test**
-
-```typescript
-test("the stabilized agent loop suppresses a duplicate PR on the second pass", async () => {
-  const opened: Array<string> = [];
-  const memory = createInMemorySqlStyleMemory();
-  const executor = buildLoopExecutor({ memory, onPrOpen: (url: string) => opened.push(url) });
-
-  await runAnalyzeDb(executor, "Users report /todos is slow");
-  await runAnalyzeDb(executor, "Users report /todos is slow");
-
-  assert.equal(opened.length, 1);
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd agent && npm test -- test/eval/memory_loop_checkpoint.test.ts`
-
-Expected: FAIL until the loop consistently records and consults memory in the same path.
-
-- [ ] **Step 3: Make the smallest implementation needed**
-
-Only implement the missing glue needed for the loop to:
-
-- record the first finding and pending suggestion
-- consult `shouldSuggest()` before a second PR attempt
-- leave the storage backend unchanged
-
-Do not migrate away from SQL-backed memory in this task.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cd agent && npm test -- test/eval/memory_loop_checkpoint.test.ts`
-
-Expected: PASS
-
-- [ ] **Step 5: Record the checkpoint result**
-
-Add a `JOURNAL.md` entry stating whether the SQL-backed memory path was sufficient in the stabilized loop or whether a follow-on migration should be planned.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add agent/test/integration/analyze_db.test.ts agent/test/eval/memory_loop_checkpoint.test.ts JOURNAL.md
-git commit -m "test: prove memory suppression through the loop"
-```
-
-### Task 7: End-To-End Smoke Test
+### Task 6: End-To-End Smoke Test
 
 **Files:**
 - Modify only if the smoke test exposes a real defect
@@ -969,7 +816,7 @@ curl -sS -X POST http://127.0.0.1:3001/a2a/jsonrpc \
   -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"role":"user","parts":[{"kind":"text","text":"Users are reporting the /todos endpoint is slow. Please investigate and fix if possible."}]}}}'
 ```
 
-Expected: a submitted task, working updates, and a completed result that reflects the loop path rather than the deterministic executor.
+Expected: a submitted task, working updates, and a completed result that reflects the loop path rather than the deterministic executor. If a fix attempt fails or the caller supplies an architectural constraint, the agent records that durable lesson to memory.
 
 - [ ] **Step 5: Run the full verification suite**
 
@@ -993,7 +840,7 @@ git commit -m "fix: address phase 2 smoke test defects"
 - Spec coverage: the addendum decisions are all represented here.
   - no ClickHouse compatibility layer
   - no required Anthropic-only config
-  - no JSONL memory migration in the main path
-  - explicit memory checkpoint after the loop stabilizes
+  - hybrid markdown-plus-JSONL memory in the main path
+  - no memory checkpoint task
 - Placeholder scan: no `TODO`, `TBD`, or implicit “figure it out later” tasks remain in the critical path.
-- Type consistency: the plan uses `LLM_MODEL`, `recordFinding`, `recordSuggestion`, `listTables`, `describeTable`, and `executeQuery` consistently across tasks.
+- Type consistency: the plan uses `LLM_MODEL`, `search_memory`, `record_memory`, `listTables`, `describeTable`, and `executeQuery` consistently across tasks.

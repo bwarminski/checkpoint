@@ -17,36 +17,57 @@ compatibility, and Brett chose the clean break instead.
 
 The approved direction is:
 
-- `ClickHouseTool` exposes discovery/query methods for the agent loop
+- `ClickHouseTool` exposes discovery and query methods for the agent loop
 - the executor bridge and tests move to those methods directly
-- any deterministic helper logic needed during migration should live outside the
-  compatibility surface
+- deterministic helper logic, if temporarily needed, stays outside the public tool
+  interface
 
-This keeps the tool interface aligned with the `pi-agent-core` loop instead of
-anchoring Phase 2 to the deterministic executor shape.
+### 2. Memory becomes agent memory, not a workflow ledger
 
-### 2. Memory storage format is not changing yet
+The earlier draft was still treating memory as a structured workflow store for routine
+agent-loop findings and PR dedupe. That is no longer the design.
 
-The earlier draft widened Phase 2 by replacing the current SQL-backed `MemoryTool`
-with a JSONL store. That is not approved for the main path.
+The approved role for `MemoryTool` is:
 
-The current repo already has:
+- persist durable discoveries that matter across turns or sessions
+- persist user preferences and architectural constraints
+- persist lessons from failed or invalid fix attempts
+- provide retrieval during investigation and solution exploration
 
-- SQL schema in `agent/db/001_memory_schema.sql`
-- runtime bootstrap in `agent/src/runtime_dependencies.ts`
-- tests in `agent/test/memory_tool.test.ts`
+The agent loop should not write every ordinary finding from a query analysis pass into
+memory. The loop should look at current statistics, source, and plans directly, then
+use memory selectively when:
 
-Phase 2 will keep that storage model unless a later checkpoint proves it is the wrong
- fit. The approved plan is:
+- looking for prior context that code and metrics do not reveal
+- checking whether a similar attempt failed before
+- understanding user intent or architecture constraints
+- recording a durable lesson after a failed or constrained attempt
 
-- stabilize the `pi-agent-core` loop first
-- keep the existing memory contract available during that work
-- add a checkpoint after the loop is stable that exercises memory through the real
-  agent flow
-- decide after that checkpoint whether SQL-backed memory is sufficient or whether a
-  follow-on migration is justified
+### 3. Memory storage becomes a hybrid markdown-plus-JSONL model
 
-### 3. LLM provider choice stays open
+Phase 2 will not keep the SQL-backed memory schema in the main path.
+
+The approved direction is a hybrid inspired by OpenClaw and gstack:
+
+- markdown memory for human-readable durable knowledge
+- JSONL append-only event storage for machine-friendly history
+- one `MemoryTool` that searches both and returns normalized results
+
+The planned responsibilities are:
+
+- `MEMORY.md` and `memory/*.md`
+  - durable preferences
+  - architecture constraints
+  - curated discoveries worth keeping visible to humans
+- `memory/events.jsonl`
+  - failed attempts
+  - notable outcomes
+  - machine-friendly event history that should not be hand-edited
+
+This keeps memory readable and inspectable while still giving the agent a structured
+append path.
+
+### 4. LLM provider choice stays open
 
 Phase 2 must not require `ANTHROPIC_API_KEY` as the default configuration contract.
 The runtime should remain open to multiple providers and local/self-hosted models.
@@ -54,15 +75,14 @@ The runtime should remain open to multiple providers and local/self-hosted model
 The plan will therefore treat model selection as provider-agnostic:
 
 - `LLM_MODEL` is the primary configuration input
-- its value should be a canonical provider-qualified model reference
+- its value uses canonical `provider/model` format
 - provider credentials come from the selected backend's normal environment variables
 - optional fallback models may be added after the primary path works
 
-This direction is informed by OpenClaw's provider-qualified model selection and
-provider-specific credential handling, but without importing OpenClaw's full auth and
-model registry system into this repo.
+This direction is informed by OpenClaw's provider-qualified model selection without
+pulling its full auth and model registry system into this repo.
 
-### 4. Task 1 stays small and practical
+### 5. Task 1 stays small and practical
 
 The Config Cleanup task remains a warm-up task, but the implementation plan should not
 add avoidable dependency churn just to load `.env` during tests.
@@ -71,30 +91,28 @@ Approved refinements:
 
 - the Node agent may use `dotenv` because it is part of the runtime startup path
 - Python test startup should prefer a tiny stdlib loader in `tests/conftest.py`
-  instead of adding a new Python dependency system solely for `python-dotenv`
 - Ruby test startup should prefer a small helper over extra global setup unless a gem
-  is clearly justified by the existing collector test shape
+  is clearly justified
 - `.env.example` and `README.md` should be updated together so the documented contract
   matches the actual runtime behavior
 
-### 5. The rewritten plan replaces the untracked draft
+### 6. The rewritten plan replaces the untracked draft
 
 Brett approved replacing the existing untracked
 `docs/superpowers/plans/2026-04-05-phase2-implementation-plan.md` rather than trying
-to patch stale assumptions in place. `JOURNAL.md` records that approval.
+to patch stale assumptions in place. `JOURNAL.md` records that approval and the updated
+memory direction.
 
 ## Resulting Task Shape
 
-The implementation plan should keep the user-approved task order, with one important
-checkpoint inserted:
+The implementation plan should keep the approved task order in this form:
 
 1. Config and env cleanup
 2. Collector rows examined support
-3. ClickHouseTool query/discovery interface
-4. Memory integration cleanup without storage migration
+3. ClickHouseTool query and discovery interface
+4. Hybrid memory system for preferences, discoveries, and failed attempts
 5. `pi-agent-core` loop and executor bridge
-6. Memory usefulness checkpoint through the stabilized loop
-7. End-to-end smoke test
+6. End-to-end smoke test
 
-This sequencing preserves the intended vertical slice while preventing the storage
-rewrite and provider lock-in from expanding the critical path.
+This sequencing preserves the intended vertical slice while removing both the old SQL
+memory assumption and the no-longer-needed memory checkpoint task.
