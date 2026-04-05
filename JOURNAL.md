@@ -71,3 +71,4 @@
 - 2026-04-05: Updated the reset SQL to rebuild `query_fingerprints` and `top_offenders_mv` with the tuple representative state while keeping the stop-ingestion note intact.
 - 2026-04-05: Updated `DemoRepoTool` to require a finding fingerprint, create a per-finding `agent/demo-fix-<fingerprint>` branch after a `git ls-remote origin` credential check, verify each rewrite actually changes the file, and return the branch name plus diff output.
 - 2026-04-05: Added a deterministic hash suffix to `DemoRepoTool` branch names when sanitized fingerprints exceed 12 characters so long same-prefix findings no longer collide.
+- 2026-04-05: Added retry-safe demo branch creation by deleting the local branch before recreating it from `origin/<baseRef>`, and made unsupported `fix_type` values fail fast instead of falling through to `add_index`.

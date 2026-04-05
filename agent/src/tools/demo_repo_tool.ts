@@ -66,6 +66,7 @@ export class DemoRepoTool {
     const baseRef = this.env.DEMO_BASE_REF ?? "main";
     await ensureRemoteReachable(this.runner, root);
     const branchName = buildBranchName(input.finding.fingerprint);
+    await deleteLocalBranch(this.runner, root, branchName);
     await this.runner.exec(["git", "checkout", "-b", branchName, `origin/${baseRef}`], root);
     const touchedPaths = await this.applyChange(root, input);
 
@@ -88,8 +89,9 @@ export class DemoRepoTool {
       case "add_includes":
         return [await addIncludes(root, input.source)];
       case "add_index":
-      default:
         return [await addIndexMigration(root, input.source, this.now)];
+      default:
+        throw new Error(`DemoRepoTool: unsupported fix_type ${input.fix.fix_type}`);
     }
   }
 }
@@ -205,6 +207,18 @@ async function ensureRemoteReachable(runner: CommandRunner, root: string): Promi
     await runner.exec(["git", "ls-remote", "origin"], root);
   } catch {
     throw new Error(`DemoRepoTool: cannot reach git remote — check credentials for ${root}`);
+  }
+}
+
+async function deleteLocalBranch(
+  runner: CommandRunner,
+  root: string,
+  branchName: string,
+): Promise<void> {
+  try {
+    await runner.exec(["git", "branch", "-D", branchName], root);
+  } catch {
+    // The branch is only present on retries.
   }
 }
 
