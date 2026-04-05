@@ -101,6 +101,10 @@ test("ClickHouseTool uses query_events for time-windowed requests", async () => 
   assert.match(queries[0] ?? "", /FROM query_events/);
   assert.match(queries[0] ?? "", /collected_at > now\(\) - INTERVAL 60 MINUTE/);
   assert.match(queries[0] ?? "", /argMax\(\(source_tag, source_file, sample_query\), collected_at\) AS representative/);
+  assert.match(
+    queries[0] ?? "",
+    /tupleElement\(representative, 3\) AS sample_query,\n  total_exec_count,\n  total_exec_time_ms,\n  p95_exec_time_ms\nFROM \(/,
+  );
   assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
 });
 

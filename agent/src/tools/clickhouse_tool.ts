@@ -91,6 +91,7 @@ function buildWindowedQuery(request: ScopeRequest): string {
     "  tupleElement(representative, 2) AS source_file,",
     "  tupleElement(representative, 3) AS sample_query,",
     "  total_exec_count,",
+    "  total_exec_time_ms,",
     "  p95_exec_time_ms",
     "FROM (",
     "  SELECT",
