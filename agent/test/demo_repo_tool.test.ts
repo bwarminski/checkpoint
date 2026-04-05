@@ -39,10 +39,59 @@ test("DemoRepoTool creates a branch per finding fingerprint", async () => {
 
     assert.equal(first.branchName, "agent/demo-fix-1234567890ab");
     assert.equal(second.branchName, "agent/demo-fix-fedcba098765");
-    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-1234567890ab main/);
+    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-1234567890ab origin\/main/);
     assert.match(commands.join("\n"), /git push origin agent\/demo-fix-1234567890ab/);
-    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-fedcba098765 main/);
+    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-fedcba098765 origin\/main/);
     assert.match(commands.join("\n"), /git push origin agent\/demo-fix-fedcba098765/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("DemoRepoTool uses the remote-tracking base ref when creating a branch", async () => {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+  const commands: Array<string> = [];
+
+  try {
+    await writeControllerFile(root);
+
+    const tool = createTool(root, commands, undefined, "develop");
+
+    await tool.applyFix({
+      finding: { fingerprint: "base-ref-check" },
+      fix: { fix_type: "rewrite_like", summary: "summary" },
+      source: {
+        content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
+        source_file: "app/controllers/todos_controller.rb:3",
+      },
+    });
+
+    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-base-ref-che origin\/develop/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("DemoRepoTool sanitizes fingerprint characters before building the branch name", async () => {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+  const commands: Array<string> = [];
+
+  try {
+    await writeControllerFile(root);
+
+    const tool = createTool(root, commands);
+
+    const result = await tool.applyFix({
+      finding: { fingerprint: "abc/def:ghi?jklmnop" },
+      fix: { fix_type: "rewrite_like", summary: "summary" },
+      source: {
+        content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
+        source_file: "app/controllers/todos_controller.rb:3",
+      },
+    });
+
+    assert.equal(result.branchName, "agent/demo-fix-abc-def-ghi-");
+    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-abc-def-ghi- origin\/main/);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -73,7 +122,7 @@ test("DemoRepoTool rewrite_like updates the file and pushes the branch", async (
     assert.doesNotMatch(content, /"%\#\{params\[:q\]\}%"/);
     assert.deepEqual(commands, [
       `${root}: git ls-remote origin`,
-      `${root}: git checkout -b agent/demo-fix-rewrite-like main`,
+      `${root}: git checkout -b agent/demo-fix-rewrite-like origin/main`,
       `${root}: git add app/controllers/todos_controller.rb`,
       `${root}: git commit -m chore: apply rewrite_like fix`,
       `${root}: git diff HEAD~1 HEAD -- app/controllers/todos_controller.rb`,
@@ -117,7 +166,7 @@ test("DemoRepoTool add_includes updates the file and pushes the branch", async (
     assert.match(content, /Todo\.includes\(:user\)\.all/);
     assert.deepEqual(commands, [
       `${root}: git ls-remote origin`,
-      `${root}: git checkout -b agent/demo-fix-add-includes main`,
+      `${root}: git checkout -b agent/demo-fix-add-includes origin/main`,
       `${root}: git add app/controllers/todos_controller.rb`,
       `${root}: git commit -m chore: apply add_includes fix`,
       `${root}: git diff HEAD~1 HEAD -- app/controllers/todos_controller.rb`,
@@ -231,7 +280,7 @@ test("DemoRepoTool keeps add_index working and creates db/migrate", async () => 
     assert.match(migration, /add_index :todos, :status/);
     assert.deepEqual(commands, [
       `${root}: git ls-remote origin`,
-      `${root}: git checkout -b agent/demo-fix-add-index-1 main`,
+      `${root}: git checkout -b agent/demo-fix-add-index-1 origin/main`,
       `${root}: git add db/migrate/20260405012100_add_index_to_todos_status.rb`,
       `${root}: git commit -m chore: apply add_index fix`,
       `${root}: git diff HEAD~1 HEAD -- db/migrate/20260405012100_add_index_to_todos_status.rb`,
@@ -242,7 +291,12 @@ test("DemoRepoTool keeps add_index working and creates db/migrate", async () => 
   }
 });
 
-function createTool(root: string, commands: Array<string>, now?: Date): DemoRepoTool {
+function createTool(
+  root: string,
+  commands: Array<string>,
+  now?: Date,
+  baseRef?: string,
+): DemoRepoTool {
   return new DemoRepoTool(
     {
       exec: async (args, cwd) => {
@@ -257,7 +311,7 @@ function createTool(root: string, commands: Array<string>, now?: Date): DemoRepo
     {
       env: {
         DEMO_APP_ROOT: root,
-        DEMO_BASE_REF: "main",
+        DEMO_BASE_REF: baseRef ?? "main",
       },
       now: now ? () => now : undefined,
     },

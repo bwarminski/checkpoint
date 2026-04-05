@@ -65,7 +65,7 @@ export class DemoRepoTool {
     const baseRef = this.env.DEMO_BASE_REF ?? "main";
     await ensureRemoteReachable(this.runner, root);
     const branchName = buildBranchName(input.finding.fingerprint);
-    await this.runner.exec(["git", "checkout", "-b", branchName, baseRef], root);
+    await this.runner.exec(["git", "checkout", "-b", branchName, `origin/${baseRef}`], root);
     const touchedPaths = await this.applyChange(root, input);
 
     for (const path of touchedPaths) {
@@ -181,7 +181,8 @@ function camelize(value: string): string {
 }
 
 function buildBranchName(fingerprint: string): string {
-  return `agent/demo-fix-${fingerprint.slice(0, 12)}`;
+  const sanitized = fingerprint.replace(/[^A-Za-z0-9._-]/g, "-");
+  return `agent/demo-fix-${sanitized.slice(0, 12)}`;
 }
 
 function ensureReplacementChanged(path: string, original: string, updated: string): void {
