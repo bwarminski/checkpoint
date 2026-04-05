@@ -43,6 +43,19 @@ class ClickhouseSchemaTest < Minitest::Test
     assert_includes sql, "collected_at DateTime64(3)"
   end
 
+  def test_query_events_and_fingerprints_track_rows_examined
+    query_events_sql = read_sql("001_query_events.sql")
+    fingerprints_sql = read_sql("002_query_fingerprints.sql")
+    mv_sql = read_sql("003_top_offenders_mv.sql")
+
+    assert_match(/rows_examined\s+UInt64/, query_events_sql)
+    assert_match(/mean_rows_examined\s+Float64/, query_events_sql)
+    assert_match(/rows_examined_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
+    assert_match(/mean_rows_examined_state\s+AggregateFunction\(avg,\s+Float64\)/, fingerprints_sql)
+    assert_includes mv_sql, "sumState(rows_examined) AS rows_examined_state"
+    assert_includes mv_sql, "avgState(mean_rows_examined) AS mean_rows_examined_state"
+  end
+
   private
 
   def read_sql(name)

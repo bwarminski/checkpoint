@@ -3,7 +3,7 @@
 require_relative "query_comment_parser"
 
 class Collector
-  STATS_SQL = "SELECT queryid, calls, mean_exec_time FROM pg_stat_statements".freeze
+  STATS_SQL = "SELECT queryid, calls, mean_exec_time, rows FROM pg_stat_statements".freeze
   COMMENT_BLOCK_PATTERN = %r{/\*.*?\*/}m
   COMMENT_METADATA_MARKERS = [
     "controller:",
@@ -50,8 +50,16 @@ class Collector
       source_file: presence(parsed[:source_file]),
       sample_query: sample_query,
       total_exec_count: stats_row.fetch("calls").to_i,
-      mean_exec_time_ms: stats_row.fetch("mean_exec_time").to_f
+      mean_exec_time_ms: stats_row.fetch("mean_exec_time").to_f,
+      rows_examined: stats_row.fetch("rows", 0).to_i,
+      mean_rows_examined: mean_rows_examined(stats_row)
     }
+  end
+
+  def mean_rows_examined(stats_row)
+    calls = stats_row.fetch("calls").to_i
+    rows_examined = stats_row.fetch("rows", 0).to_i
+    calls.zero? ? 0.0 : rows_examined.to_f / calls
   end
 
   def extract_comment(sample_query)

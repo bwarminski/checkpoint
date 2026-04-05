@@ -96,13 +96,35 @@ class CollectorTest < Minitest::Test
         source_file: "/app/controllers/todos_controller.rb:12",
         sample_query: sample_query,
         total_exec_count: 7,
-        mean_exec_time_ms: 12.5
+        mean_exec_time_ms: 12.5,
+        rows_examined: 0,
+        mean_rows_examined: 0.0
       }
     ]
 
     assert_equal expected_rows, rows
     assert_equal "query_events", clickhouse_connection.table
     assert_equal expected_rows, clickhouse_connection.rows
+  end
+
+  def test_run_once_captures_rows_examined_metrics
+    stats_connection = StatsConnection.new([
+      {
+        "queryid" => "123",
+        "calls" => "10",
+        "mean_exec_time" => "15.5",
+        "rows" => "2500"
+      }
+    ])
+    collector = Collector.new(
+      stats_connection: stats_connection,
+      clock: -> { Time.utc(2026, 4, 5, 12, 0, 0) }
+    )
+
+    row = collector.run_once.first
+
+    assert_equal 2500, row[:rows_examined]
+    assert_in_delta 250.0, row[:mean_rows_examined], 0.001
   end
 
   def test_uses_only_the_rails_metadata_block_when_query_has_multiple_comments

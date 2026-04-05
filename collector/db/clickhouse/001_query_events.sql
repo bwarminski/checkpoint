@@ -7,6 +7,8 @@ CREATE TABLE query_events (
   source_file Nullable(String),
   sample_query Nullable(String),
   total_exec_count UInt64,
-  mean_exec_time_ms Float64
+  mean_exec_time_ms Float64,
+  rows_examined UInt64,
+  mean_rows_examined Float64
 ) ENGINE = MergeTree
 ORDER BY (fingerprint, collected_at);
