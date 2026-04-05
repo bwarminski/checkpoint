@@ -18,7 +18,7 @@ test("DemoRepoTool creates a branch per finding fingerprint", async () => {
     const tool = createTool(root, commands);
 
     const first = await tool.applyFix({
-      finding: { fingerprint: "1234567890abcdef" },
+      finding: { fingerprint: "1234567890ab" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -29,7 +29,7 @@ test("DemoRepoTool creates a branch per finding fingerprint", async () => {
     await writeControllerFile(root);
 
     const second = await tool.applyFix({
-      finding: { fingerprint: "fedcba0987654321" },
+      finding: { fingerprint: "fedcba098765" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -58,7 +58,7 @@ test("DemoRepoTool uses the remote-tracking base ref when creating a branch", as
     const tool = createTool(root, commands, undefined, "develop");
 
     await tool.applyFix({
-      finding: { fingerprint: "base-ref-check" },
+      finding: { fingerprint: "base-ref-123" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -66,7 +66,7 @@ test("DemoRepoTool uses the remote-tracking base ref when creating a branch", as
       },
     });
 
-    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-base-ref-che origin\/develop/);
+    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-base-ref-123 origin\/develop/);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -82,7 +82,7 @@ test("DemoRepoTool sanitizes fingerprint characters before building the branch n
     const tool = createTool(root, commands);
 
     const result = await tool.applyFix({
-      finding: { fingerprint: "abc/def:ghi?jklmnop" },
+      finding: { fingerprint: "abc/def:gh" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -90,8 +90,44 @@ test("DemoRepoTool sanitizes fingerprint characters before building the branch n
       },
     });
 
-    assert.equal(result.branchName, "agent/demo-fix-abc-def-ghi-");
-    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-abc-def-ghi- origin\/main/);
+    assert.equal(result.branchName, "agent/demo-fix-abc-def-gh");
+    assert.match(commands.join("\n"), /git checkout -b agent\/demo-fix-abc-def-gh origin\/main/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("DemoRepoTool appends a suffix for long fingerprints that share the same prefix", async () => {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+  try {
+    await writeControllerFile(root);
+
+    const firstTool = createTool(root, []);
+    const secondTool = createTool(root, []);
+
+    const first = await firstTool.applyFix({
+      finding: { fingerprint: "abcdefghijklmnop" },
+      fix: { fix_type: "rewrite_like", summary: "summary" },
+      source: {
+        content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
+        source_file: "app/controllers/todos_controller.rb:3",
+      },
+    });
+
+    await writeControllerFile(root);
+
+    const second = await secondTool.applyFix({
+      finding: { fingerprint: "abcdefghijklqrstuv" },
+      fix: { fix_type: "rewrite_like", summary: "summary" },
+      source: {
+        content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
+        source_file: "app/controllers/todos_controller.rb:3",
+      },
+    });
+
+    assert.equal(first.branchName.startsWith("agent/demo-fix-abcdefghijkl-"), true);
+    assert.equal(second.branchName.startsWith("agent/demo-fix-abcdefghijkl-"), true);
+    assert.notEqual(first.branchName, second.branchName);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -107,7 +143,7 @@ test("DemoRepoTool rewrite_like updates the file and pushes the branch", async (
     const tool = createTool(root, commands);
 
     const result = await tool.applyFix({
-      finding: { fingerprint: "rewrite-like-1" },
+      finding: { fingerprint: "rwlike123456" },
       fix: { fix_type: "rewrite_like", summary: "Remove the leading wildcard." },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -117,16 +153,63 @@ test("DemoRepoTool rewrite_like updates the file and pushes the branch", async (
 
     const content = await readFile(join(root, "app", "controllers", "todos_controller.rb"), "utf8");
 
-    assert.equal(result.branchName, "agent/demo-fix-rewrite-like");
+    assert.equal(result.branchName, "agent/demo-fix-rwlike123456");
     assert.match(content, /"\#\{params\[:q\]\}%"/);
     assert.doesNotMatch(content, /"%\#\{params\[:q\]\}%"/);
     assert.deepEqual(commands, [
       `${root}: git ls-remote origin`,
-      `${root}: git checkout -b agent/demo-fix-rewrite-like origin/main`,
+      `${root}: git checkout -b agent/demo-fix-rwlike123456 origin/main`,
       `${root}: git add app/controllers/todos_controller.rb`,
       `${root}: git commit -m chore: apply rewrite_like fix`,
       `${root}: git diff HEAD~1 HEAD -- app/controllers/todos_controller.rb`,
-      `${root}: git push origin agent/demo-fix-rewrite-like`,
+      `${root}: git push origin agent/demo-fix-rwlike123456`,
+    ]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("DemoRepoTool rewrite_count updates the file and pushes the branch", async () => {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+  const commands: Array<string> = [];
+
+  try {
+    await mkdir(join(root, "app", "controllers"), { recursive: true });
+    await writeFile(
+      join(root, "app", "controllers", "todos_controller.rb"),
+      [
+        "class TodosController < ApplicationController",
+        "  def stats",
+        "    render json: User.all.index_with { |user| user.todos.count }.transform_keys { |user| user.id.to_s }",
+        "  end",
+        "end",
+      ].join("\n"),
+    );
+
+    const tool = createTool(root, commands);
+
+    const result = await tool.applyFix({
+      finding: { fingerprint: "countfix1234" },
+      fix: { fix_type: "rewrite_count", summary: "Move the count query out of the loop." },
+      source: {
+        content:
+          "14: render json: User.all.index_with { |user| user.todos.count }.transform_keys { |user| user.id.to_s }",
+        source_file: "app/controllers/todos_controller.rb:13",
+      },
+    });
+
+    const content = await readFile(join(root, "app", "controllers", "todos_controller.rb"), "utf8");
+
+    assert.equal(result.branchName, "agent/demo-fix-countfix1234");
+    assert.match(content, /counts = Todo\.group\(:user_id\)\.count/);
+    assert.match(content, /counts\.fetch\(user\.id, 0\)/);
+    assert.deepEqual(commands, [
+      `${root}: git ls-remote origin`,
+      `${root}: git checkout -b agent/demo-fix-countfix1234 origin/main`,
+      `${root}: git add app/controllers/todos_controller.rb`,
+      `${root}: git commit -m chore: apply rewrite_count fix`,
+      `${root}: git diff HEAD~1 HEAD -- app/controllers/todos_controller.rb`,
+      `${root}: git push origin agent/demo-fix-countfix1234`,
     ]);
   } finally {
     await rm(root, { force: true, recursive: true });
@@ -149,7 +232,7 @@ test("DemoRepoTool add_includes updates the file and pushes the branch", async (
     const tool = createTool(root, commands);
 
     const result = await tool.applyFix({
-      finding: { fingerprint: "add-includes-1" },
+      finding: { fingerprint: "addincl12345" },
       fix: { fix_type: "add_includes", summary: "Eager load the user association." },
       source: {
         content: [
@@ -162,15 +245,15 @@ test("DemoRepoTool add_includes updates the file and pushes the branch", async (
 
     const content = await readFile(join(root, "app", "controllers", "todos_controller.rb"), "utf8");
 
-    assert.equal(result.branchName, "agent/demo-fix-add-includes");
+    assert.equal(result.branchName, "agent/demo-fix-addincl12345");
     assert.match(content, /Todo\.includes\(:user\)\.all/);
     assert.deepEqual(commands, [
       `${root}: git ls-remote origin`,
-      `${root}: git checkout -b agent/demo-fix-add-includes origin/main`,
+      `${root}: git checkout -b agent/demo-fix-addincl12345 origin/main`,
       `${root}: git add app/controllers/todos_controller.rb`,
       `${root}: git commit -m chore: apply add_includes fix`,
       `${root}: git diff HEAD~1 HEAD -- app/controllers/todos_controller.rb`,
-      `${root}: git push origin agent/demo-fix-add-includes`,
+      `${root}: git push origin agent/demo-fix-addincl12345`,
     ]);
   } finally {
     await rm(root, { force: true, recursive: true });
@@ -263,7 +346,7 @@ test("DemoRepoTool keeps add_index working and creates db/migrate", async () => 
     const tool = createTool(root, commands, new Date("2026-04-05T01:21:00Z"));
 
     const result = await tool.applyFix({
-      finding: { fingerprint: "add-index-1" },
+      finding: { fingerprint: "addindex1234" },
       fix: { fix_type: "add_index", summary: "Add an index for the status filter used at /app/models/todo.rb:2." },
       source: {
         content: "2: scope :open, -> { where(status: 'open') }",
@@ -276,15 +359,15 @@ test("DemoRepoTool keeps add_index working and creates db/migrate", async () => 
       "utf8",
     );
 
-    assert.equal(result.branchName, "agent/demo-fix-add-index-1");
+    assert.equal(result.branchName, "agent/demo-fix-addindex1234");
     assert.match(migration, /add_index :todos, :status/);
     assert.deepEqual(commands, [
       `${root}: git ls-remote origin`,
-      `${root}: git checkout -b agent/demo-fix-add-index-1 origin/main`,
+      `${root}: git checkout -b agent/demo-fix-addindex1234 origin/main`,
       `${root}: git add db/migrate/20260405012100_add_index_to_todos_status.rb`,
       `${root}: git commit -m chore: apply add_index fix`,
       `${root}: git diff HEAD~1 HEAD -- db/migrate/20260405012100_add_index_to_todos_status.rb`,
-      `${root}: git push origin agent/demo-fix-add-index-1`,
+      `${root}: git push origin agent/demo-fix-addindex1234`,
     ]);
   } finally {
     await rm(root, { force: true, recursive: true });

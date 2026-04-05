@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
 
 type FixProposal = {
   fix_type: string;
@@ -182,7 +183,13 @@ function camelize(value: string): string {
 
 function buildBranchName(fingerprint: string): string {
   const sanitized = fingerprint.replace(/[^A-Za-z0-9._-]/g, "-");
-  return `agent/demo-fix-${sanitized.slice(0, 12)}`;
+  const readable = sanitized.slice(0, 12);
+  if (sanitized.length <= 12) {
+    return `agent/demo-fix-${readable}`;
+  }
+
+  const suffix = createHash("sha256").update(sanitized).digest("hex").slice(0, 8);
+  return `agent/demo-fix-${readable}-${suffix}`;
 }
 
 function ensureReplacementChanged(path: string, original: string, updated: string): void {
