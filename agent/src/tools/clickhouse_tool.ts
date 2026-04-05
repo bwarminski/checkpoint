@@ -86,7 +86,7 @@ function buildWindowedQuery(request: ScopeRequest): string {
     "  source_tag,",
     "  argMax(source_file, collected_at) AS source_file,",
     "  argMax(sample_query, collected_at) AS sample_query,",
-    "  sum(total_exec_count) AS total_exec_count,",
+    "  sum(total_exec_count) AS call_count,",
     "  round(sum(total_exec_count * mean_exec_time_ms), 2) AS total_exec_time_ms,",
     "  round(quantile(0.95)(mean_exec_time_ms), 2) AS p95_exec_time_ms",
     "FROM query_events",
@@ -131,7 +131,7 @@ function parseRows(payload: string): Array<TopOffender> {
     const row = Object.fromEntries(
       headers.map((header, index) => [header, normalizeValue(header, values[index])]),
     );
-    const totalExecCount = Number(row.total_exec_count ?? 0);
+    const totalExecCount = Number(row.call_count ?? row.total_exec_count ?? 0);
     const p95ExecTimeMs = Number(row.p95_exec_time_ms ?? 0);
     const totalExecTimeMs = Number(row.total_exec_time_ms ?? 0);
 
