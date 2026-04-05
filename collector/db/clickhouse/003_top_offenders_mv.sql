@@ -5,10 +5,10 @@ TO query_fingerprints AS
 SELECT
   fingerprint,
   source_tag,
-  source_file,
-  sample_query,
+  argMaxState(source_file, collected_at) AS source_file_state,
+  argMaxState(sample_query, collected_at) AS sample_query_state,
   sumState(total_exec_count) AS total_exec_count_state,
   sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state,
   quantileState(0.95)(mean_exec_time_ms) AS p95_exec_time_state
 FROM query_events
-GROUP BY fingerprint, source_tag, source_file, sample_query;
+GROUP BY fingerprint, source_tag;

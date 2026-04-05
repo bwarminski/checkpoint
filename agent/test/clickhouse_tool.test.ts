@@ -124,10 +124,9 @@ test("ClickHouseTool uses source-tag-aware query_fingerprints for all-time reque
   assert.match(queries[0] ?? "", /FROM query_fingerprints/);
   assert.match(
     queries[0] ?? "",
-    /SELECT\n  fingerprint,\n  source_tag,\n  source_file,\n  sample_query,\n  sumMerge\(total_exec_count_state\) AS total_exec_count,\n  sumMerge\(total_exec_time_ms_state\) AS total_exec_time_ms,\n  round\(quantileMerge\(0\.95\)\(p95_exec_time_state\), 2\) AS p95_exec_time_ms\nFROM query_fingerprints/,
+    /SELECT\n  fingerprint,\n  source_tag,\n  argMaxMerge\(source_file_state\) AS source_file,\n  argMaxMerge\(sample_query_state\) AS sample_query,\n  sumMerge\(total_exec_count_state\) AS total_exec_count,\n  sumMerge\(total_exec_time_ms_state\) AS total_exec_time_ms,\n  round\(quantileMerge\(0\.95\)\(p95_exec_time_state\), 2\) AS p95_exec_time_ms\nFROM query_fingerprints/,
   );
-  assert.match(queries[0] ?? "", /sumMerge\(total_exec_time_ms_state\) AS total_exec_time_ms/);
-  assert.match(queries[0] ?? "", /GROUP BY fingerprint, source_tag, source_file, sample_query/);
+  assert.match(queries[0] ?? "", /GROUP BY fingerprint, source_tag/);
   assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
 });
 
@@ -146,6 +145,6 @@ test("ClickHouseTool keeps analyze_table all-time filtering source-tag aware", a
 
   assert.match(queries[0] ?? "", /FROM query_fingerprints/);
   assert.match(queries[0] ?? "", /WHERE source_tag IS NOT NULL AND source_tag ILIKE 'todos#%'/);
-  assert.match(queries[0] ?? "", /GROUP BY fingerprint, source_tag, source_file, sample_query/);
+  assert.match(queries[0] ?? "", /GROUP BY fingerprint, source_tag/);
   assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
 });
