@@ -89,7 +89,9 @@ for table-scoped analysis to remain accurate when one fingerprint appears under
 multiple tags. The stable grouping key should be `fingerprint + source_tag`;
 `source_file` and `sample_query` remain representative values rather than part
 of the aggregate identity, because `sample_query` is sampled raw SQL and would
-fragment one logical offender if used as a grouping key.
+fragment one logical offender if used as a grouping key. Those representative
+fields should be stored and merged as one tuple state, not as separate states,
+so the traced file and sampled query always describe the same underlying event.
 
 ### DemoRepoTool
 
