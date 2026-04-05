@@ -84,7 +84,10 @@ This adds one schema requirement beyond the original review text: the all-time
 table-scoped path cannot filter against a single merged representative tag per
 fingerprint. The read model must preserve enough source-tag-specific state for
 `analyze_table ... all` to filter before or during aggregation instead of after
-a lossy merge.
+a lossy merge. The stable grouping key should be `fingerprint + source_tag`;
+`source_file` and `sample_query` remain representative values rather than part
+of the aggregate identity, because `sample_query` is sampled raw SQL and would
+fragment one logical offender if used as a grouping key.
 
 ### DemoRepoTool
 
