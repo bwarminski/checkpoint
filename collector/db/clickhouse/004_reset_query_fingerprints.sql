@@ -6,28 +6,18 @@ DROP TABLE IF EXISTS query_fingerprints;
 CREATE TABLE query_fingerprints (
   fingerprint String,
   source_tag Nullable(String),
-  source_file_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
-  sample_query_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
+  representative_state AggregateFunction(argMax, Tuple(Nullable(String), Nullable(String)), DateTime64(3)),
   total_exec_count_state AggregateFunction(sum, UInt64),
   total_exec_time_ms_state AggregateFunction(sum, Float64),
   p95_exec_time_state AggregateFunction(quantile(0.95), Float64)
 ) ENGINE = AggregatingMergeTree
 ORDER BY (fingerprint, source_tag);
 
-INSERT INTO query_fingerprints (
-  fingerprint,
-  source_tag,
-  source_file_state,
-  sample_query_state,
-  total_exec_count_state,
-  total_exec_time_ms_state,
-  p95_exec_time_state
-)
+INSERT INTO query_fingerprints
 SELECT
   fingerprint,
   source_tag,
-  argMaxState(source_file, collected_at) AS source_file_state,
-  argMaxState(sample_query, collected_at) AS sample_query_state,
+  argMaxState((source_file, sample_query), collected_at) AS representative_state,
   sumState(total_exec_count) AS total_exec_count_state,
   sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state,
   quantileState(0.95)(mean_exec_time_ms) AS p95_exec_time_state
@@ -39,8 +29,7 @@ TO query_fingerprints AS
 SELECT
   fingerprint,
   source_tag,
-  argMaxState(source_file, collected_at) AS source_file_state,
-  argMaxState(sample_query, collected_at) AS sample_query_state,
+  argMaxState((source_file, sample_query), collected_at) AS representative_state,
   sumState(total_exec_count) AS total_exec_count_state,
   sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state,
   quantileState(0.95)(mean_exec_time_ms) AS p95_exec_time_state

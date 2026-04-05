@@ -67,3 +67,5 @@
 - 2026-04-05: Aligned the default `query_events` path with the same `fingerprint + source_tag` grouping so both ClickHouse query paths treat source tags consistently and keep `source_file` / `sample_query` as representatives.
 - 2026-04-04: Added `DemoRepoTool` to apply the smallest concrete fix in the sibling demo repo, commit it on `agent/demo-fix`, and push before GitHub PR creation; the first live proof produced commits `4e68f5f`, `c2bcc5f`, and `c2fb3d5` in `/home/bjw/db-specialist-demo`.
 - 2026-04-04: The live GitHub proof now succeeds when the env contract is present: `analyze_db` returned `rewrite_like`, `add_index`, and `rewrite_count` findings and opened `https://github.com/bwarminski/db-specialist-demo/pull/1`.
+- 2026-04-05: Tightened the ClickHouse read model so both query paths group by `fingerprint + source_tag` and carry a single `representative_state` tuple for `source_file` and `sample_query`, preventing mismatched representative values from separate aggregate states.
+- 2026-04-05: Updated the reset SQL to rebuild `query_fingerprints` and `top_offenders_mv` with the tuple representative state while keeping the stop-ingestion note intact.

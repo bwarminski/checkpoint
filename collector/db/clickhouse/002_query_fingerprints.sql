@@ -3,8 +3,7 @@
 CREATE TABLE query_fingerprints (
   fingerprint String,
   source_tag Nullable(String),
-  source_file_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
-  sample_query_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
+  representative_state AggregateFunction(argMax, Tuple(Nullable(String), Nullable(String)), DateTime64(3)),
   total_exec_count_state AggregateFunction(sum, UInt64),
   total_exec_time_ms_state AggregateFunction(sum, Float64),
   p95_exec_time_state AggregateFunction(quantile(0.95), Float64)

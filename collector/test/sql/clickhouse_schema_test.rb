@@ -10,8 +10,7 @@ class ClickhouseSchemaTest < Minitest::Test
     assert_includes sql, "CREATE MATERIALIZED VIEW"
     refute_match(/\banyState\b/i, sql)
     assert_includes sql, "source_tag,"
-    assert_includes sql, "argMaxState(source_file, collected_at) AS source_file_state"
-    assert_includes sql, "argMaxState(sample_query, collected_at) AS sample_query_state"
+    assert_includes sql, "argMaxState((source_file, sample_query), collected_at) AS representative_state"
     assert_includes sql, "sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state"
     assert_includes sql, "GROUP BY fingerprint, source_tag"
   end
@@ -20,8 +19,7 @@ class ClickhouseSchemaTest < Minitest::Test
     sql = read_sql("002_query_fingerprints.sql")
 
     assert_includes sql, "source_tag Nullable(String)"
-    assert_includes sql, "source_file_state AggregateFunction(argMax, Nullable(String), DateTime64(3))"
-    assert_includes sql, "sample_query_state AggregateFunction(argMax, Nullable(String), DateTime64(3))"
+    assert_includes sql, "representative_state AggregateFunction(argMax, Tuple(Nullable(String), Nullable(String)), DateTime64(3))"
     assert_includes sql, "total_exec_time_ms_state AggregateFunction(sum, Float64)"
     assert_includes sql, "ORDER BY (fingerprint, source_tag)"
   end
@@ -33,9 +31,8 @@ class ClickhouseSchemaTest < Minitest::Test
     assert_includes sql, "DROP TABLE IF EXISTS top_offenders_mv"
     assert_includes sql, "DROP TABLE IF EXISTS query_fingerprints"
     assert_includes sql, "CREATE TABLE query_fingerprints"
-    assert_includes sql, "INSERT INTO query_fingerprints ("
-    assert_includes sql, "argMaxState(source_file, collected_at) AS source_file_state"
-    assert_includes sql, "argMaxState(sample_query, collected_at) AS sample_query_state"
+    assert_includes sql, "INSERT INTO query_fingerprints"
+    assert_includes sql, "argMaxState((source_file, sample_query), collected_at) AS representative_state"
     assert_includes sql, "sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state"
     assert_includes sql, "CREATE MATERIALIZED VIEW top_offenders_mv"
   end
