@@ -42,6 +42,29 @@ def test_pytest_env_loader_preserves_shell_values(tmp_path, monkeypatch):
     assert os.environ["DEMO_BASE_REF"] == "main"
 
 
+def test_pytest_env_loader_parses_quoted_values_and_inline_comments(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "A=one # comment\n"
+        'B="two # not comment"\n'
+        "C='three # not comment'\n"
+        'D="line\\nquote"\n'
+    )
+
+    monkeypatch.delenv("A", raising=False)
+    monkeypatch.delenv("B", raising=False)
+    monkeypatch.delenv("C", raising=False)
+    monkeypatch.delenv("D", raising=False)
+
+    conftest = load_conftest_module()
+    conftest.load_env_file(env_file)
+
+    assert os.environ["A"] == "one"
+    assert os.environ["B"] == "two # not comment"
+    assert os.environ["C"] == "three # not comment"
+    assert os.environ["D"] == "line\nquote"
+
+
 def load_conftest_module():
     path = Path(__file__).resolve().parents[1] / "conftest.py"
     spec = importlib.util.spec_from_file_location("conftest", path)

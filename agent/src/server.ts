@@ -21,6 +21,7 @@ import { createRuntimeExecutor } from "./runtime_dependencies.ts";
 loadDotenv({
   path: resolve(fileURLToPath(new URL(".", import.meta.url)), "../../.env"),
   override: false,
+  quiet: true,
 });
 
 type ServerOptions = {

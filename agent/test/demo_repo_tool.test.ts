@@ -2,14 +2,18 @@
 // ABOUTME: Covers branching, drift detection, and the git command sequence needed for the live GitHub proof.
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { DemoRepoTool, defaultDemoAppRoot } from "../src/tools/demo_repo_tool.ts";
 
 test("DemoRepoTool falls back to the sibling db-specialist-demo path when DEMO_APP_ROOT is unset", () => {
-  assert.equal(defaultDemoAppRoot(), "/home/bjw/db-specialist-demo");
+  assert.equal(
+    defaultDemoAppRoot(),
+    resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../db-specialist-demo"),
+  );
 });
 
 test("DemoRepoTool creates a branch per finding fingerprint", async () => {
