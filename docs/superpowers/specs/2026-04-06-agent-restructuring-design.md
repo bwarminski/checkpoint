@@ -27,6 +27,12 @@ testable, and deployable in isolated customer containers.
   multiple pi sessions. Firecracker VMs are a future deployment detail.
 - **A2A as a thin bridge** — not the primary interface. It creates/manages pi
   sessions inside containers.
+- **Lightweight safety gates** — `apply_fix` and `open_pull_request` re-validate
+  preconditions at call time against DB/tool state rather than an in-memory audit
+  trail. This preserves deterministic guardrails without the per-run evidence object.
+- **Versioned schema contract** — collector images are tagged with a schema version.
+  The agent verifies the ClickHouse table shape at startup and integration tests pin
+  to a specific collector image version.
 
 ---
 
@@ -51,14 +57,24 @@ testable, and deployable in isolated customer containers.
 
 ### New collector repo produces
 
-- Docker images pushed to GitHub Container Registry
+- Docker images pushed to GitHub Container Registry, tagged with a `SCHEMA_VERSION`
+  label (e.g. `ghcr.io/checkpoint/collector:latest` + `SCHEMA_VERSION=2`)
 - A standalone compose file for running the full pipeline locally
 - ClickHouse DDLs baked into the image or applied on startup
+- A machine-readable schema contract file listing expected table names and column
+  shapes (consumed by the agent's startup check)
+
+### Hard prerequisite
+
+**The collector repo must publish at least one image before Phase 1 merges here.**
+The slim compose in this repo pulls pre-built images. If those images don't exist,
+local dev is broken. Create the collector repo and run its CI first.
 
 ### Impact on agent dev workflow
 
 - `docker compose up` pulls pre-built images instead of building from local source
-- ClickHouse schema changes happen in the collector repo
+- ClickHouse schema changes happen in the collector repo and require a version bump
+- Agent startup validates the connected ClickHouse schema version matches expectations
 
 ---
 
@@ -121,9 +137,27 @@ The repo root becomes a pi package with this manifest in `package.json`:
 | `apply_fix` | `demo_repo_tool.ts` |
 | `open_pull_request` | `github_tool.ts` |
 
-`LoopRunEvidence` is created per-investigation-run (not per-session — a session
-can contain multiple investigations). The extension resets evidence when the user
-starts a new investigation prompt. Evidence gates remain unchanged.
+**Extension entry point pattern:** A single `extensions/db-specialist.ts` file
+exports a default function `(pi: ExtensionAPI) => void`. It instantiates shared
+tool objects once at load time from env vars (one `ClickHouseTool`, one
+`ExplainTool`, etc.) and registers all eight tools. Tool instances are reused
+across calls within a session.
+
+**Safety gates (lightweight re-validation):** `apply_fix` and `open_pull_request`
+do not use an in-memory audit trail. Instead each gated tool re-validates its
+preconditions at call time:
+
+- `apply_fix` — re-reads the finding severity from the LLM's provided fingerprint
+  by calling `queryFindings` internally (or accepts it from the LLM input and
+  validates `severity === "high"`), checks that `analyze_query` was called by
+  requiring a non-empty `validation` input from the LLM, and requires
+  `source_file` to be present.
+- `open_pull_request` — requires `headRef` and `codeDiff` to be non-empty inputs
+  (only `apply_fix` produces these; the LLM cannot invent valid values).
+
+This preserves deterministic enforcement without a per-run shared object. The LLM
+cannot bypass `apply_fix` severity or validation requirements via conversational
+context alone.
 
 **Skills** (markdown, loaded on demand):
 
@@ -172,8 +206,10 @@ The deployment unit is a Docker image per customer supporting multiple pi sessio
 **Session isolation within a container:**
 
 - Pi sessions are independent — separate conversation history and context
-- `LoopRunEvidence` is per-session, no cross-session bleed
 - Target repo isolation via separate working directories or volume mounts
+- Concurrent sessions share the Node process; LLM call concurrency is bounded by
+  the provider's rate limits. No hard session cap is enforced for now — revisit
+  once observed memory/CPU usage under multi-session load is known.
 
 **Testing:**
 
@@ -192,6 +228,27 @@ A2A becomes a thin entry point layered on top of pi sessions. Built last.
 - `message/send` maps to a pi session: creates one if new context, resumes if existing
 - Uses pi's SDK (`createAgentSession`) or RPC mode to drive sessions
 - Translates pi session events to A2A status updates
+
+**Session registry:**
+
+The bridge maintains a sidecar JSON file (`/var/lib/checkpoint/sessions.json`)
+mapping A2A `contextId` to pi session path:
+
+```json
+{ "ctx-abc123": { "sessionPath": "/sessions/abc123", "createdAt": "...", "lastActiveAt": "..." } }
+```
+
+Rules:
+- One pi session per A2A `contextId`. New `contextId` → new pi session.
+- Concurrent `message/send` calls for the same `contextId` are serialized (queued,
+  not parallelized) to prevent interleaving.
+- Sessions with `lastActiveAt` older than 24 hours are eligible for cleanup on
+  bridge startup or on a background interval.
+- On bridge restart, the registry is read from disk — session resume works across
+  restarts. If a session path no longer exists on disk, the entry is dropped and
+  a fresh session is created on the next request.
+- Cancellation (`tasks/cancel`) calls pi's session abort and marks the entry as
+  cancelled in the registry.
 
 **Sequence:**
 
