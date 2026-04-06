@@ -865,7 +865,7 @@ Run:
 ```bash
 curl -sS -X POST http://127.0.0.1:3001/a2a/jsonrpc \
   -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"role":"user","parts":[{"kind":"text","text":"Users are reporting the /todos endpoint is slow. Please investigate and fix if possible."}]}}}'
+  -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"kind":"message","messageId":"task-6-smoke","role":"user","parts":[{"kind":"text","text":"Users are reporting the /todos endpoint is slow. Please investigate and fix if possible."}]}}}'
 ```
 
 Expected: a submitted task, working updates, and a completed result that reflects the loop path rather than the deterministic executor. If a fix attempt fails or the caller supplies an architectural constraint, the agent records that durable lesson to memory.
