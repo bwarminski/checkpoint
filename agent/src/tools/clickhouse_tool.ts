@@ -208,6 +208,9 @@ function extractReferencedTables(sql: string): Array<string> {
 }
 
 function normalizeTableName(value: string): string {
+  // TODO: db-qualified names like `other_db.query_events` pass the whitelist because only the
+  // last segment is checked. Reject names containing a dot to close the bypass if untrusted SQL
+  // sources are added in future.
   return value.replace(/[`"]/g, "").split(".").at(-1) ?? "";
 }
 

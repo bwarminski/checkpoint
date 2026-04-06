@@ -130,3 +130,26 @@ test("ClickHouseTool queries all-time findings from the fingerprint table", asyn
   assert.match(queries[0] ?? "", /FROM query_fingerprints/);
   assert.match(queries[0] ?? "", /source_tag ILIKE 'todos#%'/);
 });
+
+test("ClickHouseTool rejects describeTable for unsupported table", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "unused",
+    },
+  });
+
+  await assert.rejects(() => tool.describeTable("system.tables"), /Unsupported ClickHouse table/i);
+});
+
+test("ClickHouseTool rejects executeQuery with no table reference", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "unused",
+    },
+  });
+
+  await assert.rejects(
+    () => tool.executeQuery("SELECT now()"),
+    /supported ClickHouse tables/i,
+  );
+});
