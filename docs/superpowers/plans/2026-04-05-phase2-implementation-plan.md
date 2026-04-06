@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the deterministic Phase 1 executor path with a `pi-agent-core` loop while keeping Phase 2 narrow: clean local config, collect `rows_examined`, expose ClickHouse discovery/query tools, add a hybrid memory system for durable discoveries and preferences, and finish with a live smoke test.
+**Goal:** Replace the deterministic Phase 1 executor path with a `pi-agent-core` loop while keeping Phase 2 narrow: clean local config, collect richer `pg_stat_statements` row and block metrics, expose ClickHouse discovery/query tools, add a hybrid memory system for durable discoveries and preferences, and finish with a live smoke test.
 
 **Architecture:** The A2A server remains the entrypoint, but `DBSpecialistExecutor` becomes a thin bridge around a `pi-agent-core` agent. The LLM interacts through focused agent tools built over ClickHouse, code search, explain, memory, demo-repo, and GitHub boundaries. Memory is for long-lived context and failed-attempt learning, not routine query-loop bookkeeping. Model selection is provider-agnostic through `LLM_MODEL`, not Anthropic-specific env wiring.
 
@@ -31,9 +31,9 @@
 - `agent/test/integration/*.test.ts`
   Mocked integration coverage for A2A-to-agent-loop behavior without real network calls.
 - `collector/lib/collector.rb`
-  Adds `rows` capture from `pg_stat_statements`.
+  Adds `rows` and block-counter capture from `pg_stat_statements`.
 - `collector/db/clickhouse/*.sql`
-  Adds `rows_examined` and `mean_rows_examined` to the ClickHouse write/read model.
+  Adds row-count plus block-access diagnostics to the ClickHouse write/read model.
 - `tests/conftest.py`
   New file. Loads `.env` for pytest using stdlib code.
 - `collector/test/support/env.rb`
@@ -220,35 +220,45 @@ git add agent/src/tools/demo_repo_tool.ts agent/src/server.ts agent/package.json
 git commit -m "feat: auto-load local env and detect demo repo path"
 ```
 
-### Task 2: Collector Rows Examined Support
+### Task 2: Collector Row And Block Diagnostics
 
 **Files:**
 - Modify: `collector/lib/collector.rb`
 - Modify: `collector/db/clickhouse/001_query_events.sql`
 - Modify: `collector/db/clickhouse/002_query_fingerprints.sql`
 - Modify: `collector/db/clickhouse/003_top_offenders_mv.sql`
+- Modify: `collector/db/clickhouse/004_reset_query_fingerprints.sql`
 - Modify: `collector/test/collector_test.rb`
 - Modify: `collector/test/sql/clickhouse_schema_test.rb`
 
 - [ ] **Step 1: Write the failing collector test**
 
 ```ruby
-def test_run_once_captures_rows_examined_metrics
+def test_run_once_captures_row_and_block_metrics
   stats_connection = Object.new
   def stats_connection.exec(_sql)
     [{
       "queryid" => "123",
       "calls" => "10",
       "mean_exec_time" => "15.5",
-      "rows" => "2500"
+      "rows" => "2500",
+      "shared_blks_hit" => "100",
+      "shared_blks_read" => "40",
+      "local_blks_hit" => "20",
+      "local_blks_read" => "5",
+      "temp_blks_read" => "3",
+      "temp_blks_written" => "2"
     }]
   end
 
   collector = Collector.new(stats_connection: stats_connection, clock: -> { Time.utc(2026, 4, 5, 12, 0, 0) })
   row = collector.run_once.first
 
-  assert_equal 2500, row[:rows_examined]
-  assert_in_delta 250.0, row[:mean_rows_examined], 0.001
+  assert_equal 2500, row[:rows_returned_or_affected]
+  assert_equal 170, row[:total_block_accesses]
+  assert_in_delta 17.0, row[:mean_block_accesses_per_call], 0.001
+  assert_equal 100, row[:shared_blks_hit]
+  assert_equal 2, row[:temp_blks_written]
 end
 ```
 
@@ -256,16 +266,28 @@ end
 
 Run: `cd collector && bundle exec ruby -Itest test/collector_test.rb`
 
-Expected: FAIL because the collector does not read the `rows` column yet.
+Expected: FAIL because the collector does not read the row and block columns yet.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```ruby
-STATS_SQL = "SELECT queryid, calls, mean_exec_time, rows FROM pg_stat_statements".freeze
+STATS_SQL = [
+  "SELECT queryid, calls, mean_exec_time, rows,",
+  "shared_blks_hit, shared_blks_read, local_blks_hit, local_blks_read,",
+  "temp_blks_read, temp_blks_written",
+  "FROM pg_stat_statements",
+].join(" ").freeze
 
-rows_examined = stats_row.fetch("rows", 0).to_i
 calls = stats_row.fetch("calls").to_i
-mean_rows_examined = calls.zero? ? 0.0 : rows_examined.to_f / calls
+total_block_accesses = %w[
+  shared_blks_hit
+  shared_blks_read
+  local_blks_hit
+  local_blks_read
+  temp_blks_read
+  temp_blks_written
+].sum { |key| stats_row.fetch(key, 0).to_i }
+mean_block_accesses_per_call = calls.zero? ? 0.0 : total_block_accesses.to_f / calls
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -277,10 +299,14 @@ Expected: PASS
 - [ ] **Step 5: Write the failing schema test**
 
 ```ruby
-def test_query_events_schema_tracks_rows_examined
+def test_query_events_schema_tracks_row_and_block_metrics
   sql = File.read(File.expand_path("../db/clickhouse/001_query_events.sql", __dir__))
-  assert_match(/rows_examined\s+UInt64/, sql)
-  assert_match(/mean_rows_examined\s+Float64/, sql)
+
+  assert_match(/rows_returned_or_affected\s+UInt64/, sql)
+  assert_match(/shared_blks_hit\s+UInt64/, sql)
+  assert_match(/temp_blks_written\s+UInt64/, sql)
+  assert_match(/total_block_accesses\s+UInt64/, sql)
+  assert_match(/mean_block_accesses_per_call\s+Float64/, sql)
 end
 ```
 
@@ -288,21 +314,42 @@ end
 
 Run: `cd collector && bundle exec ruby -Itest test/sql/clickhouse_schema_test.rb`
 
-Expected: FAIL because the DDLs do not contain the new columns yet.
+Expected: FAIL because the DDLs do not contain the new row and block columns yet.
 
 - [ ] **Step 7: Write minimal implementation**
 
 ```sql
-rows_examined UInt64,
-mean_rows_examined Float64,
-rows_examined_state AggregateFunction(sum, UInt64),
-mean_rows_examined_state AggregateFunction(avg, Float64)
+rows_returned_or_affected UInt64,
+shared_blks_hit UInt64,
+shared_blks_read UInt64,
+local_blks_hit UInt64,
+local_blks_read UInt64,
+temp_blks_read UInt64,
+temp_blks_written UInt64,
+total_block_accesses UInt64,
+mean_block_accesses_per_call Float64,
+rows_returned_or_affected_state AggregateFunction(sum, UInt64),
+shared_blks_hit_state AggregateFunction(sum, UInt64),
+shared_blks_read_state AggregateFunction(sum, UInt64),
+local_blks_hit_state AggregateFunction(sum, UInt64),
+local_blks_read_state AggregateFunction(sum, UInt64),
+temp_blks_read_state AggregateFunction(sum, UInt64),
+temp_blks_written_state AggregateFunction(sum, UInt64),
+total_block_accesses_state AggregateFunction(sum, UInt64)
 ```
 
 ```sql
-sumState(rows_examined) AS rows_examined_state,
-avgState(mean_rows_examined) AS mean_rows_examined_state
+sumState(rows_returned_or_affected) AS rows_returned_or_affected_state,
+sumState(shared_blks_hit) AS shared_blks_hit_state,
+sumState(shared_blks_read) AS shared_blks_read_state,
+sumState(local_blks_hit) AS local_blks_hit_state,
+sumState(local_blks_read) AS local_blks_read_state,
+sumState(temp_blks_read) AS temp_blks_read_state,
+sumState(temp_blks_written) AS temp_blks_written_state,
+sumState(total_block_accesses) AS total_block_accesses_state
 ```
+
+Update `004_reset_query_fingerprints.sql` to rebuild the same aggregate columns and MV projection so the reset path stays in sync with the live schema.
 
 - [ ] **Step 8: Run tests to verify they pass**
 
@@ -315,8 +362,9 @@ Expected: PASS
 ```bash
 git add collector/lib/collector.rb collector/db/clickhouse/001_query_events.sql \
   collector/db/clickhouse/002_query_fingerprints.sql collector/db/clickhouse/003_top_offenders_mv.sql \
+  collector/db/clickhouse/004_reset_query_fingerprints.sql \
   collector/test/collector_test.rb collector/test/sql/clickhouse_schema_test.rb
-git commit -m "feat: capture rows examined in collector pipeline"
+git commit -m "feat: capture query row and block diagnostics"
 ```
 
 ### Task 3: ClickHouseTool Discovery And Query Interface
@@ -421,7 +469,14 @@ Expected: FAIL because the executor still reads the old method.
 
 - [ ] **Step 7: Write minimal implementation**
 
-Remove the old `topOffenders()` dependency from the executor contract and parse its default offender query from `executeQuery()` output instead.
+Keep the MCP-style LLM-facing methods in `ClickHouseTool`, but do not move TSV parsing into the executor. `ClickHouseTool` should own:
+
+- `listTables()`
+- `describeTable()`
+- `executeQuery()`
+- one typed internal helper for the app's own default findings lookup
+
+The executor should consume typed findings from `ClickHouseTool`, not transport-format TSV. The raw query guard should also be stricter than a simple `SELECT` prefix check: reject multi-statement input and restrict the raw interface to the supported ClickHouse tables used by this repo.
 
 - [ ] **Step 8: Run tests to verify they pass**
 
