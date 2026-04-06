@@ -15,6 +15,16 @@ test("createServer advertises analyze_db and analyze_table skills", async () => 
   );
 });
 
+test("createServer uses a provider-qualified default LLM model", async () => {
+  const { createServer } = await loadServerModule();
+  const server = createServer({ baseUrl: "http://127.0.0.1:3001" });
+
+  assert.deepEqual(server.executor.llmConfig.primary, {
+    provider: "openai",
+    model: "gpt-4o-mini",
+  });
+});
+
 test("server startup loads repo-root .env without overriding existing shell vars", async () => {
   const repoRoot = resolve(process.cwd(), "..");
   const envPath = resolve(repoRoot, ".env");
