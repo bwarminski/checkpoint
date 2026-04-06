@@ -64,7 +64,7 @@ type ExecutorDependencies = {
     }>;
   };
   memoryTool?: {
-    shouldSuggest(input: { fingerprint: string; fixType: string }): Promise<boolean>;
+    search(query: string): Promise<Array<{ kind: string }>>;
   };
 };
 
@@ -179,12 +179,12 @@ export class DBSpecialistExecutor {
     const source = await this.locateSource(finding);
     const fix = buildFixProposal(finding, source);
     const validation = await this.validateFinding(finding);
-    const allowed = await this.deps.memoryTool?.shouldSuggest({
-      fingerprint: finding.fingerprint,
-      fixType: fix.fix_type,
-    });
+    const memoryEntries = await this.searchMemory(finding, fix);
+    const allowed = !memoryEntries.some(
+      (entry) => entry.kind === "constraint" || entry.kind === "failed_attempt",
+    );
     const mayOpenPr =
-      allowed !== false &&
+      allowed &&
       finding.severity === "high" &&
       validation.validated &&
       this.deps.githubTool;
@@ -206,7 +206,7 @@ export class DBSpecialistExecutor {
     }
 
     return {
-      decision: allowed === false ? "blocked" : pr ? "opened" : "reported",
+      decision: allowed ? (pr ? "opened" : "reported") : "blocked",
       fingerprint: finding.fingerprint,
       fix,
       pr,
@@ -241,6 +241,14 @@ export class DBSpecialistExecutor {
     return normalizeValidationResult(
       await this.deps.explainTool.analyze({ sql: finding.sample_query }),
     );
+  }
+
+  private async searchMemory(finding: TopOffender, fix: FixProposal): Promise<Array<{ kind: string }>> {
+    if (!this.deps.memoryTool) {
+      return [];
+    }
+
+    return this.deps.memoryTool.search(buildMemoryQuery(finding, fix));
   }
 }
 
@@ -284,6 +292,18 @@ function buildFixProposal(finding: TopOffender, source: LocatedSource): FixPropo
       ? `Add an index for the ${column} filter used at ${sourceFile}.`
       : `Add an index for the equality filter used at ${sourceFile}.`,
   };
+}
+
+function buildMemoryQuery(finding: TopOffender, fix: FixProposal): string {
+  return [
+    finding.fingerprint,
+    fix.fix_type,
+    fix.summary,
+    finding.source_file,
+    finding.source_tag,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ");
 }
 
 function normalizeValidationResult(result: unknown): ValidationResult {

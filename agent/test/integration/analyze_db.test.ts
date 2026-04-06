@@ -40,7 +40,7 @@ test("analyze_db streams a completed finding payload over A2A", async () => {
       openPullRequest: async () => ({ url: "https://example.test/pr/1" }),
     },
     memoryTool: {
-      shouldSuggest: async () => true,
+      search: async () => [],
     },
   } as any);
   const { app } = createServer({

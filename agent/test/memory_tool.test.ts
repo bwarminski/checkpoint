@@ -95,6 +95,21 @@ test("MemoryTool appends records to events.jsonl", async () => {
   }
 });
 
+test("MemoryTool surfaces malformed JSONL during search", async () => {
+  const root = await mkdtemp(join(tmpdir(), "memory-tool-"));
+
+  try {
+    await writeFile(join(root, "MEMORY.md"), "# Agent Memory\n");
+    await writeFile(join(root, "events.jsonl"), '{not json}\n');
+
+    const tool = new MemoryTool({ rootDir: root });
+
+    await assert.rejects(() => tool.search("json"), /Invalid JSONL/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("runtime dependencies point MemoryTool at agent/memory", () => {
   const deps = createRuntimeDependencies();
 

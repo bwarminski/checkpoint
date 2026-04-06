@@ -64,7 +64,7 @@ test("DBSpecialistExecutor publishes findings on the A2A event bus", async () =>
       analyze: async () => ({ validated: true }),
     },
     memoryTool: {
-      shouldSuggest: async () => true,
+      search: async () => [],
     },
     githubTool: {
       openPullRequest: async () => ({ url: "https://example.test/pr/1" }),
@@ -197,7 +197,7 @@ test("DBSpecialistExecutor passes source_tag to code search when source_file is 
       analyze: async () => ({ validated: true }),
     },
     memoryTool: {
-      shouldSuggest: async () => true,
+      search: async () => [],
     },
     githubTool: {
       openPullRequest: async () => ({ url: "https://example.test/pr/2" }),
@@ -282,7 +282,7 @@ test("DBSpecialistExecutor classifies multiple fix types from traced source cont
       analyze: async () => ({ validated: true }),
     },
     memoryTool: {
-      shouldSuggest: async () => true,
+      search: async () => [],
     },
   } as any);
 
@@ -330,7 +330,7 @@ test("DBSpecialistExecutor passes demo repo branch and diff metadata to GitHubTo
       analyze: async () => ({ validated: true }),
     },
     memoryTool: {
-      shouldSuggest: async () => true,
+      search: async () => [],
     },
     demoRepoTool: {
       applyFix: async (input: any) => {
@@ -416,7 +416,7 @@ test("DBSpecialistExecutor prepares the demo repo branch before opening a PR", a
       analyze: async () => ({ validated: true }),
     },
     memoryTool: {
-      shouldSuggest: async () => true,
+      search: async () => [],
     },
     demoRepoTool: {
       applyFix: async () => {
@@ -440,4 +440,64 @@ test("DBSpecialistExecutor prepares the demo repo branch before opening a PR", a
 
   assert.deepEqual(scopes, ["analyze_table todos all"]);
   assert.deepEqual(callOrder, ["prepare", "open"]);
+});
+
+test("DBSpecialistExecutor consults memory search before opening a PR", async () => {
+  const memoryQueries: Array<string> = [];
+  let openPullRequestCalls = 0;
+  const executor = new DBSpecialistExecutor({
+    clickhouseTool: {
+      queryFindings: async () => [
+        {
+          fingerprint: "fp-memory",
+          sample_query: "SELECT * FROM todos WHERE user_id = 7",
+          source_file: "/app/controllers/todos_controller.rb:12",
+          total_exec_count: 9,
+          total_exec_time_ms: 301.5,
+          p95_exec_time_ms: 120,
+          severity: "high",
+        },
+      ],
+    },
+    codeSearchTool: {
+      locate: async ({ source_file }: { source_file: string }) => ({
+        content: "12: Todo.where(user_id: 7)",
+        source_file,
+      }),
+    },
+    explainTool: {
+      analyze: async () => ({ validated: true }),
+    },
+    memoryTool: {
+      search: async (query: string) => {
+        memoryQueries.push(query);
+        return [
+          {
+            kind: "failed_attempt",
+          },
+        ];
+      },
+    },
+    githubTool: {
+      openPullRequest: async () => {
+        openPullRequestCalls += 1;
+        return { url: "https://example.test/pr/block" };
+      },
+    },
+  } as any);
+
+  const events: Array<any> = [];
+  await executor.execute(
+    { userMessage: { text: "analyze_db" } } as any,
+    {
+      enqueueEvent(event: unknown) {
+        events.push(event);
+      },
+    },
+  );
+
+  assert.equal(memoryQueries.length, 1);
+  assert.match(memoryQueries[0], /fp-memory/);
+  assert.equal(openPullRequestCalls, 0);
+  assert.equal(events[1]?.result?.findings?.[0]?.decision, "blocked");
 });

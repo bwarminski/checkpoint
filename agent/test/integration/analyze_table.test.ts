@@ -42,7 +42,7 @@ test("analyze_table streams reported findings without opening a PR", async () =>
       openPullRequest: async () => ({ url: "https://example.test/pr/2" }),
     },
     memoryTool: {
-      shouldSuggest: async () => true,
+      search: async () => [],
     },
   } as any);
   const { app } = createServer({

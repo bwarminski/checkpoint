@@ -153,15 +153,14 @@ async function readJsonlEntries(rootDir: string): Promise<Array<MemoryEntry>> {
   const content = await readFile(eventsPath, "utf8").catch(() => "");
   const entries: Array<MemoryEntry> = [];
 
-  for (const line of content.split(/\r?\n/)) {
+  const lines = content.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (!line.trim()) {
       continue;
     }
 
-    const parsed = parseJsonlEvent(rootDir, line, eventsPath);
-    if (parsed) {
-      entries.push(parsed);
-    }
+    entries.push(parseJsonlEvent(rootDir, line, eventsPath, index + 1));
   }
 
   return entries;
@@ -171,41 +170,56 @@ function parseJsonlEvent(
   rootDir: string,
   line: string,
   eventsPath: string,
-): MemoryEntry | undefined {
+  lineNumber: number,
+): MemoryEntry {
+  let event: unknown;
   try {
-    const event = JSON.parse(line) as {
-      details?: unknown;
-      kind?: string;
-      summary?: string;
-      ts?: string;
-    };
-
-    if (!isMemoryEntryKind(event.kind) || typeof event.summary !== "string") {
-      return undefined;
-    }
-
-    const metadata: MemoryEntry["metadata"] = {
-      path: relative(rootDir, eventsPath) || "events.jsonl",
-    };
-
-    if (typeof event.ts === "string" && event.ts.length > 0) {
-      metadata.ts = event.ts;
-    }
-
-    return {
-      kind: event.kind,
-      summary: event.summary,
-      details: event.details,
-      source: "events_jsonl",
-      metadata,
-    };
+    event = JSON.parse(line);
   } catch {
-    return undefined;
+    throw new Error(`Invalid JSONL in ${relative(rootDir, eventsPath) || "events.jsonl"} at line ${lineNumber}`);
   }
+
+  if (!isMemoryEntryRecord(event)) {
+    throw new Error(`Invalid memory event in ${relative(rootDir, eventsPath) || "events.jsonl"} at line ${lineNumber}`);
+  }
+
+  const metadata: MemoryEntry["metadata"] = {
+    path: relative(rootDir, eventsPath) || "events.jsonl",
+  };
+
+  if (typeof event.ts === "string" && event.ts.length > 0) {
+    metadata.ts = event.ts;
+  }
+
+  return {
+    kind: event.kind,
+    summary: event.summary,
+    details: event.details,
+    source: "events_jsonl",
+    metadata,
+  };
 }
 
 function isMemoryEntryKind(kind: string | undefined): kind is MemoryEntryKind {
   return kind === "preference" || kind === "constraint" || kind === "discovery" || kind === "failed_attempt";
+}
+
+function isMemoryEntryRecord(value: unknown): value is {
+  details?: unknown;
+  kind: MemoryEntryKind;
+  summary: string;
+  ts?: string;
+} {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as {
+    kind?: string;
+    summary?: unknown;
+  };
+
+  return isMemoryEntryKind(record.kind) && typeof record.summary === "string";
 }
 
 function matchesQuery(entry: MemoryEntry, query: string): boolean {

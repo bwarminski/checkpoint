@@ -10,7 +10,7 @@ test("createServer advertises analyze_db and analyze_table skills", async () => 
   const server = createServer({ baseUrl: "http://127.0.0.1:3001" });
 
   assert.deepEqual(
-    server.agentCard.skills.map((skill) => skill.id),
+    server.agentCard.skills.map((skill: { id: string }) => skill.id),
     ["analyze_db", "analyze_table"],
   );
 });
