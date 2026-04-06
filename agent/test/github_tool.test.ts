@@ -24,7 +24,6 @@ test("GitHubTool posts a real pull request when token and repo config are presen
   const tool = new GitHubTool(undefined, {
     env: {
       DEMO_BASE_REF: "main",
-      DEMO_HEAD_REF: "agent/demo-fix",
       DEMO_REPO: "brett/db-specialist-demo",
       GITHUB_TOKEN: "secret-token",
     },
@@ -78,7 +77,6 @@ test("GitHubTool posts a real pull request when token and repo config are presen
 test("GitHubTool throws when token is set without DEMO_REPO", async () => {
   const tool = new GitHubTool(undefined, {
     env: {
-      DEMO_HEAD_REF: "agent/demo-fix",
       GITHUB_TOKEN: "secret-token",
     },
     fetchImpl: async () =>
@@ -98,11 +96,34 @@ test("GitHubTool throws when token is set without DEMO_REPO", async () => {
   );
 });
 
+test("GitHubTool requires a headRef when token and repo config are present", async () => {
+  const tool = new GitHubTool(undefined, {
+    env: {
+      DEMO_BASE_REF: "main",
+      DEMO_REPO: "brett/db-specialist-demo",
+      GITHUB_TOKEN: "secret-token",
+    },
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ html_url: "https://example.test/pr/ignored" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  await assert.rejects(
+    tool.openPullRequest({
+      finding: { fingerprint: "fp-missing-head" },
+      fix: { fix_type: "add_index", summary: "Add an index." },
+      validation: { validated: true },
+    } as any),
+    /headRef/,
+  );
+});
+
 test("GitHubTool returns an existing pull request url when GitHub reports one already exists", async () => {
   const tool = new GitHubTool(undefined, {
     env: {
       DEMO_BASE_REF: "main",
-      DEMO_HEAD_REF: "agent/demo-fix",
       DEMO_REPO: "brett/db-specialist-demo",
       GITHUB_TOKEN: "secret-token",
     },
@@ -134,6 +155,7 @@ test("GitHubTool returns an existing pull request url when GitHub reports one al
     finding: { fingerprint: "fp-existing", source_tag: "todos#status" },
     fix: { fix_type: "add_index", summary: "Add an index for status." },
     validation: { validated: true },
+    headRef: "agent/demo-fix/fp-existing",
   } as any);
 
   assert.equal(result.url, "https://github.com/brett/db-specialist-demo/pull/15");

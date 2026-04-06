@@ -558,7 +558,7 @@ function readOptionalStringProperty(value: unknown, key: string): string | undef
 
 function readStringProperty(value: unknown, key: string): string {
   const result = readOptionalStringProperty(value, key);
-  if (!result) {
+  if (result === undefined) {
     throw new Error(`${key} is required`);
   }
 

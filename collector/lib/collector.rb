@@ -59,6 +59,7 @@ class Collector
       sample_query: sample_query,
       total_exec_count: stats_row.fetch("calls").to_i,
       mean_exec_time_ms: stats_row.fetch("mean_exec_time").to_f,
+      # pg_stat_statements.rows reports rows returned or affected, not rows visited.
       rows_returned_or_affected: stats_row.fetch("rows", 0).to_i,
       shared_blks_hit: stat_value(stats_row, "shared_blks_hit"),
       shared_blks_read: stat_value(stats_row, "shared_blks_read"),

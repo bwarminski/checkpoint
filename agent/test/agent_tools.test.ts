@@ -65,6 +65,28 @@ test("query_findings returns typed ClickHouse findings details", async () => {
   ]);
 });
 
+test("record_memory accepts an empty string summary", async () => {
+  let recorded: { summary: string } | undefined;
+  const tools = buildAgentTools({
+    memoryTool: {
+      search: async () => [],
+      record: async (input: { summary: string }) => {
+        recorded = { summary: input.summary };
+      },
+    },
+  } as any, createLoopRunEvidence());
+
+  const recordMemory = tools.find((tool) => tool.name === "record_memory");
+  assert.ok(recordMemory);
+
+  await recordMemory.execute("tool-empty-summary", {
+    kind: "discovery",
+    summary: "",
+  } as any);
+
+  assert.deepEqual(recorded, { summary: "" });
+});
+
 test("locate_source rejects calls without source_file or source_tag", async () => {
   const tools = buildAgentTools({
     codeSearchTool: {

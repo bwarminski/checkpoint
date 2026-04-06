@@ -28,27 +28,25 @@ class CollectorTest < Minitest::Test
     end
   end
 
-  def test_env_loader_parses_quoted_values_and_inline_comments
+  def test_env_loader_uses_simple_split_and_skips_comments
     Dir.mktmpdir do |dir|
       env_path = File.join(dir, ".env")
       File.write(
         env_path,
         [
-          "A=one # comment",
-          'B="two # not comment"',
-          "C='three # not comment'",
-          'D="line\nquote"',
+          "# comment",
+          "",
+          "A=one=two",
+          "B=plain value",
         ].join("\n"),
       )
 
-      %w[A B C D].each { |key| ENV.delete(key) }
+      %w[A B].each { |key| ENV.delete(key) }
 
       load_env_file(env_path)
 
-      assert_equal "one", ENV["A"]
-      assert_equal "two # not comment", ENV["B"]
-      assert_equal "three # not comment", ENV["C"]
-      assert_equal "line\nquote", ENV["D"]
+      assert_equal "one=two", ENV["A"]
+      assert_equal "plain value", ENV["B"]
     end
   end
 

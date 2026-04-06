@@ -23,7 +23,6 @@ type PullRequestResult = {
 
 type GitHubEnv = {
   DEMO_BASE_REF?: string;
-  DEMO_HEAD_REF?: string;
   DEMO_REPO?: string;
   GITHUB_TOKEN?: string;
 };
@@ -68,9 +67,9 @@ export class GitHubTool {
       throw new Error("GitHubTool requires DEMO_REPO when GITHUB_TOKEN is set.");
     }
 
-    const head = input.headRef ?? this.env.DEMO_HEAD_REF;
+    const head = input.headRef;
     if (!head) {
-      throw new Error("GitHubTool requires DEMO_HEAD_REF when GITHUB_TOKEN is set.");
+      throw new Error("GitHubTool requires headRef when GITHUB_TOKEN is set.");
     }
 
     const base = this.env.DEMO_BASE_REF ?? "main";
