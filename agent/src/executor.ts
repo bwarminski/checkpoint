@@ -28,7 +28,6 @@ type QueueRequestContext = Partial<RequestContext> & {
 type ExecutorOptions = {
   createAgent?: (input: CreateAgentInput) => LoopAgent;
   env?: {
-    LLM_FALLBACK_MODELS?: string;
     LLM_MODEL?: string;
   };
   now?: () => Date;
@@ -69,7 +68,7 @@ export class DBSpecialistExecutor {
   private readonly createAgentImpl: (input: CreateAgentInput) => LoopAgent;
   private readonly now: () => Date;
   private readonly systemPrompt: string;
-  private activeAgent?: LoopAgent;
+  private readonly activeTasks = new Map<string, { agent: LoopAgent; contextId: string }>();
 
   constructor(
     private readonly deps: AgentToolDependencies = {
@@ -100,7 +99,9 @@ export class DBSpecialistExecutor {
       response: "",
     };
 
-    this.activeAgent = agent;
+    const taskId = requestContext.taskId ?? "gate-a-task";
+    const contextId = requestContext.contextId ?? "gate-a-context";
+    this.activeTasks.set(taskId, { agent, contextId });
     const unsubscribe = agent.subscribe((event) => {
       applyLoopEvent(runResult, event);
     });
@@ -113,14 +114,23 @@ export class DBSpecialistExecutor {
       this.publishCompleted(requestContext, eventSink, runResult);
     } finally {
       unsubscribe();
-      if (this.activeAgent === agent) {
-        this.activeAgent = undefined;
+      const activeTask = this.activeTasks.get(taskId);
+      if (activeTask?.agent === agent) {
+        this.activeTasks.delete(taskId);
       }
     }
   }
 
-  async cancelTask(_taskId: string, eventBus: ExecutionEventBus): Promise<void> {
-    this.activeAgent?.abort?.();
+  async cancelTask(taskId: string, eventBus: ExecutionEventBus): Promise<void> {
+    const activeTask = this.activeTasks.get(taskId);
+    activeTask?.agent.abort?.();
+    eventBus.publish({
+      kind: "status-update",
+      taskId,
+      contextId: activeTask?.contextId ?? "gate-a-context",
+      status: { state: "canceled", timestamp: this.timestamp() },
+      final: true,
+    });
     eventBus.finished();
   }
 
@@ -301,4 +311,3 @@ function buildCompletedMessage(
     taskId,
   };
 }
-

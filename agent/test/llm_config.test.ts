@@ -8,15 +8,10 @@ import { parseLlmConfig } from "../src/llm_config.ts";
 test("parseLlmConfig reads provider-qualified model refs", () => {
   const config = parseLlmConfig({
     LLM_MODEL: "ollama/llama3.1:8b",
-    LLM_FALLBACK_MODELS: "openai/gpt-4o-mini,anthropic/claude-sonnet-4-20250514",
   });
 
   assert.equal(config.primary.provider, "ollama");
   assert.equal(config.primary.model, "llama3.1:8b");
-  assert.deepEqual(
-    config.fallbacks.map((entry) => `${entry.provider}/${entry.model}`),
-    ["openai/gpt-4o-mini", "anthropic/claude-sonnet-4-20250514"],
-  );
 });
 
 test("parseLlmConfig rejects an unqualified model ref", () => {
@@ -25,4 +20,3 @@ test("parseLlmConfig rejects an unqualified model ref", () => {
     /provider\/model/i,
   );
 });
-

@@ -231,6 +231,147 @@ test("executor publishes submitted, working, and completed events on the A2A bus
   ]);
 });
 
+test("cancelTask cancels only the matching active task and publishes canceled status", async () => {
+  const aborts: Array<string> = [];
+  const releases = new Map<string, () => void>();
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => ["query_events"],
+        describeTable: async () => "fingerprint\tString",
+        executeQuery: async () => "fingerprint\tabc",
+        queryFindings: async () => [],
+      },
+      memoryTool: {
+        search: async () => [],
+        record: async () => {},
+      },
+    } as any,
+    {
+      createAgent: () => {
+        const handlers = new Set<(event: any) => void>();
+        let promptText = "";
+
+        return {
+          subscribe(handler: (event: any) => void) {
+            handlers.add(handler);
+            return () => {
+              handlers.delete(handler);
+            };
+          },
+          async prompt(input: string) {
+            promptText = input;
+            await new Promise<void>((resolve) => {
+              releases.set(input, resolve);
+            });
+            for (const handler of handlers) {
+              handler({ type: "agent_end", messages: [] });
+            }
+          },
+          abort() {
+            aborts.push(promptText);
+          },
+          async waitForIdle() {},
+        };
+      },
+    },
+  );
+
+  const first = executor.execute(
+    {
+      taskId: "task-1",
+      contextId: "context-1",
+      userMessage: { text: "first task" },
+    } as any,
+    {
+      publish() {},
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      once() {
+        return this;
+      },
+      removeAllListeners() {
+        return this;
+      },
+      finished() {},
+    } as any,
+  );
+  const second = executor.execute(
+    {
+      taskId: "task-2",
+      contextId: "context-2",
+      userMessage: { text: "second task" },
+    } as any,
+    {
+      publish() {},
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      once() {
+        return this;
+      },
+      removeAllListeners() {
+        return this;
+      },
+      finished() {},
+    } as any,
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const cancelEvents: Array<any> = [];
+  let finished = false;
+  await executor.cancelTask(
+    "task-2",
+    {
+      publish(event: unknown) {
+        cancelEvents.push(event);
+      },
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      once() {
+        return this;
+      },
+      removeAllListeners() {
+        return this;
+      },
+      finished() {
+        finished = true;
+      },
+    } as any,
+  );
+
+  releases.get("first task")?.();
+  releases.get("second task")?.();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(aborts, ["second task"]);
+  assert.equal(finished, true);
+  assert.deepEqual(cancelEvents, [
+    {
+      kind: "status-update",
+      taskId: "task-2",
+      contextId: "context-2",
+      status: {
+        state: "canceled",
+        timestamp: cancelEvents[0]?.status?.timestamp,
+      },
+      final: true,
+    },
+  ]);
+});
+
 function assistantMessage(text: string) {
   return {
     role: "assistant" as const,
@@ -256,4 +397,3 @@ function assistantMessage(text: string) {
     content: [{ type: "text" as const, text }],
   };
 }
-

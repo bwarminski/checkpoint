@@ -64,3 +64,57 @@ test("query_findings returns typed ClickHouse findings details", async () => {
     },
   ]);
 });
+
+test("locate_source rejects calls without source_file or source_tag", async () => {
+  const tools = buildAgentTools({
+    codeSearchTool: {
+      locate: async () => {
+        throw new Error("should not reach code search");
+      },
+    },
+  } as any);
+
+  const locateSource = tools.find((tool) => tool.name === "locate_source");
+  assert.ok(locateSource);
+
+  await assert.rejects(
+    () => locateSource.execute("tool-2", {} as any),
+    /source_file or source_tag/i,
+  );
+});
+
+test("apply_fix rejects malformed payloads at the tool boundary", async () => {
+  const tools = buildAgentTools({
+    demoRepoTool: {
+      applyFix: async () => {
+        throw new Error("should not reach demo repo");
+      },
+    },
+  } as any);
+
+  const applyFix = tools.find((tool) => tool.name === "apply_fix");
+  assert.ok(applyFix);
+
+  await assert.rejects(
+    () => applyFix.execute("tool-3", { finding: {}, fix: {} } as any),
+    /source is required/i,
+  );
+});
+
+test("open_pull_request rejects malformed payloads at the tool boundary", async () => {
+  const tools = buildAgentTools({
+    githubTool: {
+      openPullRequest: async () => {
+        throw new Error("should not reach github");
+      },
+    },
+  } as any);
+
+  const openPullRequest = tools.find((tool) => tool.name === "open_pull_request");
+  assert.ok(openPullRequest);
+
+  await assert.rejects(
+    () => openPullRequest.execute("tool-4", { finding: {}, headRef: "branch" } as any),
+    /fix is required/i,
+  );
+});

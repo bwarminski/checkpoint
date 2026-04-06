@@ -16,16 +16,49 @@ export type AgentToolDependencies = {
     queryFindings(scope?: unknown): Promise<Array<ClickHouseFinding>>;
   };
   codeSearchTool?: {
-    locate(input: unknown): Promise<unknown>;
+    locate(input: {
+      source_file?: string;
+      source_tag?: string;
+    }): Promise<unknown>;
   };
   demoRepoTool?: {
-    applyFix(input: unknown): Promise<unknown>;
+    applyFix(input: {
+      finding: {
+        fingerprint: string;
+      };
+      fix: {
+        fix_type: string;
+        summary: string;
+      };
+      source: {
+        content: string;
+        source_file: string;
+      };
+    }): Promise<unknown>;
   };
   explainTool?: {
     analyze(input: { sql: string }): Promise<unknown>;
   };
   githubTool?: {
-    openPullRequest(input: unknown): Promise<unknown>;
+    openPullRequest(input: {
+      codeDiff?: string;
+      finding: {
+        fingerprint?: string;
+        source_tag?: string;
+      };
+      fix: {
+        fix_type?: string;
+        summary?: string;
+      };
+      headRef?: string;
+      source?: {
+        [key: string]: unknown;
+      };
+      validation?: {
+        [key: string]: unknown;
+        plan_rows?: Array<Record<string, unknown>>;
+      };
+    }): Promise<unknown>;
   };
   memoryTool?: {
     record(input: {
@@ -141,7 +174,7 @@ export function buildAgentTools(deps: AgentToolDependencies): Array<AgentTool<an
         source_tag: Type.Optional(Type.String()),
       }),
       execute: async (_id, params) => {
-        const source = await deps.codeSearchTool!.locate(params);
+        const source = await deps.codeSearchTool!.locate(asLocateSourceInput(params));
         return textResult(JSON.stringify(source), source);
       },
     });
@@ -169,12 +202,20 @@ export function buildAgentTools(deps: AgentToolDependencies): Array<AgentTool<an
       label: "Apply Fix",
       description: "Apply a concrete fix in the demo repo for a selected finding.",
       parameters: Type.Object({
-        finding: Type.Unknown(),
-        fix: Type.Unknown(),
-        source: Type.Unknown(),
+        finding: Type.Object({
+          fingerprint: Type.String(),
+        }),
+        fix: Type.Object({
+          fix_type: Type.String(),
+          summary: Type.String(),
+        }),
+        source: Type.Object({
+          content: Type.String(),
+          source_file: Type.String(),
+        }),
       }),
       execute: async (_id, params) => {
-        const result = await deps.demoRepoTool!.applyFix(params);
+        const result = await deps.demoRepoTool!.applyFix(asApplyFixInput(params));
         return textResult(JSON.stringify(result), result);
       },
     });
@@ -186,15 +227,21 @@ export function buildAgentTools(deps: AgentToolDependencies): Array<AgentTool<an
       label: "Open Pull Request",
       description: "Open a pull request for the selected finding and prepared fix.",
       parameters: Type.Object({
-        finding: Type.Unknown(),
-        fix: Type.Unknown(),
+        finding: Type.Object({
+          fingerprint: Type.Optional(Type.String()),
+          source_tag: Type.Optional(Type.String()),
+        }),
+        fix: Type.Object({
+          fix_type: Type.Optional(Type.String()),
+          summary: Type.Optional(Type.String()),
+        }),
         source: Type.Optional(Type.Unknown()),
         validation: Type.Optional(Type.Unknown()),
         headRef: Type.Optional(Type.String()),
         codeDiff: Type.Optional(Type.String()),
       }),
       execute: async (_id, params) => {
-        const result = await deps.githubTool!.openPullRequest(params);
+        const result = await deps.githubTool!.openPullRequest(asOpenPullRequestInput(params));
         return textResult(JSON.stringify(result), result);
       },
     });
@@ -207,6 +254,97 @@ function textResult<TDetails>(text: string, details: TDetails): AgentToolResult<
   return {
     content: [{ type: "text", text }],
     details,
+  };
+}
+
+function asLocateSourceInput(value: unknown): {
+  source_file?: string;
+  source_tag?: string;
+} {
+  const source_file = readOptionalStringProperty(value, "source_file");
+  const source_tag = readOptionalStringProperty(value, "source_tag");
+
+  if (!source_file && !source_tag) {
+    throw new Error("locate_source requires source_file or source_tag");
+  }
+
+  return { source_file, source_tag };
+}
+
+function asApplyFixInput(value: unknown): {
+  finding: {
+    fingerprint: string;
+  };
+  fix: {
+    fix_type: string;
+    summary: string;
+  };
+  source: {
+    content: string;
+    source_file: string;
+  };
+} {
+  const finding = readRecordProperty(value, "finding");
+  const fix = readRecordProperty(value, "fix");
+  const source = readRecordProperty(value, "source");
+
+  return {
+    finding: {
+      fingerprint: readStringProperty(finding, "fingerprint"),
+    },
+    fix: {
+      fix_type: readStringProperty(fix, "fix_type"),
+      summary: readStringProperty(fix, "summary"),
+    },
+    source: {
+      content: readStringProperty(source, "content"),
+      source_file: readStringProperty(source, "source_file"),
+    },
+  };
+}
+
+function asOpenPullRequestInput(value: unknown): {
+  codeDiff?: string;
+  finding: {
+    fingerprint?: string;
+    source_tag?: string;
+  };
+  fix: {
+    fix_type?: string;
+    summary?: string;
+  };
+  headRef?: string;
+  source?: {
+    [key: string]: unknown;
+  };
+  validation?: {
+    [key: string]: unknown;
+    plan_rows?: Array<Record<string, unknown>>;
+  };
+} {
+  const finding = readRecordProperty(value, "finding");
+  const fix = readRecordProperty(value, "fix");
+  const source = readOptionalRecordProperty(value, "source");
+  const validation = readOptionalRecordProperty(value, "validation");
+
+  return {
+    finding: {
+      fingerprint: readOptionalStringProperty(finding, "fingerprint"),
+      source_tag: readOptionalStringProperty(finding, "source_tag"),
+    },
+    fix: {
+      fix_type: readOptionalStringProperty(fix, "fix_type"),
+      summary: readOptionalStringProperty(fix, "summary"),
+    },
+    headRef: readOptionalStringProperty(value, "headRef"),
+    codeDiff: readOptionalStringProperty(value, "codeDiff"),
+    source,
+    validation: validation
+      ? {
+          ...validation,
+          plan_rows: readOptionalPlanRows(validation),
+        }
+      : undefined,
   };
 }
 
@@ -232,6 +370,38 @@ function asMemoryRecord(value: unknown): {
     summary,
     details: isRecord(value) ? value.details : undefined,
   };
+}
+
+function readRecordProperty(value: unknown, key: string): Record<string, unknown> {
+  if (!isRecord(value) || !isRecord(value[key])) {
+    throw new Error(`${key} is required`);
+  }
+
+  return value[key];
+}
+
+function readOptionalRecordProperty(value: unknown, key: string): Record<string, unknown> | undefined {
+  if (!isRecord(value) || value[key] === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value[key])) {
+    throw new Error(`${key} must be an object`);
+  }
+
+  return value[key];
+}
+
+function readOptionalPlanRows(value: Record<string, unknown>): Array<Record<string, unknown>> | undefined {
+  if (value.plan_rows === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value.plan_rows) || value.plan_rows.some((row) => !isRecord(row))) {
+    throw new Error("validation.plan_rows must be an array of objects");
+  }
+
+  return value.plan_rows;
 }
 
 function readOptionalStringProperty(value: unknown, key: string): string | undefined {
