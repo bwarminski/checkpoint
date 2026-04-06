@@ -19,6 +19,7 @@ type MemoryEntry = {
 };
 
 type MemoryToolOptions = {
+  appendFile?: (path: string, data: string) => Promise<void>;
   now?: () => Date;
   rootDir: string;
 };
@@ -31,9 +32,12 @@ const KIND_BY_SECTION = new Map<string, MemoryEntryKind>([
 ]);
 
 export class MemoryTool {
+  private readonly appendFileFn: (path: string, data: string) => Promise<void>;
   private readonly now: () => Date;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: MemoryToolOptions) {
+    this.appendFileFn = options.appendFile ?? appendFile;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -59,7 +63,11 @@ export class MemoryTool {
       ...input,
     });
 
-    await appendFile(join(this.options.rootDir, "events.jsonl"), `${line}\n`);
+    const currentWrite = this.writeQueue
+      .catch(() => {})
+      .then(() => this.appendFileFn(join(this.options.rootDir, "events.jsonl"), `${line}\n`));
+    this.writeQueue = currentWrite.catch(() => {});
+    await currentWrite;
   }
 }
 
@@ -83,7 +91,15 @@ async function collectMarkdownFiles(rootDir: string): Promise<Array<string>> {
 }
 
 async function walkDirectory(directory: string, files: Array<string>): Promise<void> {
-  const entries = await readdir(directory, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw err;
+  }
 
   for (const entry of entries) {
     const path = join(directory, entry.name);

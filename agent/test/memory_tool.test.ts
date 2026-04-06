@@ -1,9 +1,8 @@
 // ABOUTME: Exercises the hybrid markdown-plus-JSONL memory surface.
 // ABOUTME: Verifies durable memory search, append-only recording, and runtime wiring.
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
@@ -105,6 +104,30 @@ test("MemoryTool surfaces malformed JSONL during search", async () => {
     const tool = new MemoryTool({ rootDir: root });
 
     await assert.rejects(() => tool.search("json"), /Invalid JSONL/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("MemoryTool write failure does not poison subsequent record calls", async () => {
+  const root = await mkdtemp(join(tmpdir(), "memory-tool-"));
+
+  try {
+    await mkdir(root, { recursive: true });
+    let callCount = 0;
+    const tool = new MemoryTool({
+      rootDir: root,
+      appendFile: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error("disk full");
+        }
+      },
+    });
+
+    await assert.rejects(() => tool.record({ kind: "discovery", summary: "first" }), /disk full/);
+    await tool.record({ kind: "discovery", summary: "second" });
+    assert.equal(callCount, 2);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
