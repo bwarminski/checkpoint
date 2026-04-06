@@ -459,6 +459,27 @@ test("DemoRepoTool keeps add_index working and creates db/migrate", async () => 
   }
 });
 
+test("DemoRepoTool rejects source_file paths that escape the repo root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+  try {
+    const tool = createTool(root, []);
+    await assert.rejects(
+      () =>
+        tool.applyFix({
+          finding: { fingerprint: "traversal-test" },
+          fix: { fix_type: "rewrite_like", summary: "summary" },
+          source: {
+            content: "some content",
+            source_file: "../../../etc/passwd:1",
+          },
+        }),
+      /path escapes the repo root/i,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("DemoRepoTool rejects unsupported fix types", async () => {
   const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
   const commands: Array<string> = [];

@@ -100,6 +100,7 @@ export class DemoRepoTool {
 async function rewriteCount(root: string, source: LocatedSource): Promise<string> {
   const path = filePathFromSource(source.source_file);
   const absolutePath = resolve(root, path);
+  assertWithinRoot(root, absolutePath, source.source_file);
   const content = await readFile(absolutePath, "utf8");
   const updated = content.replace(
     "    render json: User.all.index_with { |user| user.todos.count }.transform_keys { |user| user.id.to_s }",
@@ -116,6 +117,7 @@ async function rewriteCount(root: string, source: LocatedSource): Promise<string
 async function rewriteLike(root: string, source: LocatedSource): Promise<string> {
   const path = filePathFromSource(source.source_file);
   const absolutePath = resolve(root, path);
+  assertWithinRoot(root, absolutePath, source.source_file);
   const content = await readFile(absolutePath, "utf8");
   const updated = content.replace('"%#{params[:q]}%"', '"#{params[:q]}%"');
   ensureReplacementChanged(path, content, updated);
@@ -126,6 +128,7 @@ async function rewriteLike(root: string, source: LocatedSource): Promise<string>
 async function addIncludes(root: string, source: LocatedSource): Promise<string> {
   const path = filePathFromSource(source.source_file);
   const absolutePath = resolve(root, path);
+  assertWithinRoot(root, absolutePath, source.source_file);
   const content = await readFile(absolutePath, "utf8");
   const hasWhereClause = content.includes('Todo.where("title LIKE ?", "#{params[:q]}%")');
   const hasAllClause = content.includes(" : Todo.all");
@@ -176,6 +179,12 @@ async function addIndexMigration(
 
 function filePathFromSource(sourceFile: string): string {
   return sourceFile.replace(/:\d+$/, "");
+}
+
+function assertWithinRoot(root: string, absolutePath: string, sourceFile: string): void {
+  if (!absolutePath.startsWith(root + "/")) {
+    throw new Error(`DemoRepoTool: path escapes the repo root: ${sourceFile}`);
+  }
 }
 
 function formatTimestamp(date: Date): string {
