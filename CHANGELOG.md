@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0.0] - 2026-04-06
+
+Phase 2: LLM reasoning loop, per-loop evidence guardrails, and security hardening.
+
+### Added
+
+**LLM Agent Loop**
+- `DBSpecialistExecutor` now drives a full pi-agent-core agent loop instead of deterministic orchestration
+- Provider-agnostic model config via `LLM_MODEL` env var (supports `openai/`, `anthropic/`, etc.)
+- `cancelTask` A2A method that aborts the active pi-agent-core agent and publishes a `canceled` status event
+- `LoopRunEvidence` per-request guardrails: `apply_fix` requires prior `query_findings` call, validated query, and source lookup; `open_pull_request` requires a prepared fix from the same loop run
+- `analyze_query` tool wrapping `ExplainTool` for guarded EXPLAIN ANALYZE validation
+- `locate_source` tool wrapping `CodeSearchTool` to load source context by file or tag
+- Memory tools (`search_memory`, `record_memory`) exposed to the agent loop
+- Hybrid markdown + append-only JSONL memory backend for durable agent memory
+- A2A `submitted` / `working` / `completed` / `failed` / `canceled` lifecycle events
+
+**Security Fixes**
+- `DemoRepoTool` now rejects `source_file` paths that escape the demo repo root (path traversal guard)
+- `MemoryTool` writeQueue poison fixed: a failed append no longer permanently blocks subsequent `record()` calls
+- `MemoryTool` walks memory root gracefully when the directory does not yet exist (no unhandled ENOENT)
+- `DBSpecialistExecutor` publishes a `failed` status event when `agent.prompt()` throws, closing the SSE stream
+- `preparationsByFingerprint` now keys on `(fingerprint, fix_type)` pair, preventing second `apply_fix` call from clobbering the first preparation
+
+**Tests**
+- 75 agent TypeScript unit and integration tests (up from 51), covering agent loop event bridging, A2A lifecycle, guardrail enforcement, path traversal rejection, writeQueue recovery, cancelTask, and the full default pi-agent-core path with a local streamFn
+
+### Changed
+
+- `DBSpecialistExecutor` constructor accepts `createAgent` and `streamFn` overrides for test injection
+- Fallback task/context IDs extracted to named constants (`FALLBACK_TASK_ID`, `FALLBACK_CONTEXT_ID`)
+- `ClickHouseTool.queryFindings` returns `allTime: false` (60-minute window) by default; all-time aggregates use `query_fingerprints` AggregatingMergeTree
+
+---
+
 ## [0.1.0.0] - 2026-04-05
 
 Initial alpha release of the DB Specialist Agent scaffolding. This is a portfolio
