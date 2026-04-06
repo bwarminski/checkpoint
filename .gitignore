@@ -6,6 +6,7 @@ __pycache__/
 collector/.bundle/
 collector/vendor/
 .env
+agent/memory/*.tmp
 
 # gstack local artifacts
 .gstack/

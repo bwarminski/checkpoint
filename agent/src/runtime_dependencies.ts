@@ -1,6 +1,5 @@
 // ABOUTME: Builds the default runtime tool set for the live DB specialist server.
-// ABOUTME: Wires ClickHouse, Postgres validation, memory schema setup, code search, and demo PR handling together.
-import { readFile } from "node:fs/promises";
+// ABOUTME: Wires ClickHouse, Postgres validation, hybrid memory, code search, and demo PR handling together.
 import { fileURLToPath } from "node:url";
 
 import { Pool } from "pg";
@@ -14,26 +13,39 @@ import { GitHubTool } from "./tools/github_tool.ts";
 import { MemoryTool } from "./tools/memory_tool.ts";
 
 let pool: Pool | undefined;
-let memorySchemaPromise: Promise<void> | undefined;
+
+type RuntimeDependencies = {
+  explainTool: ExplainTool;
+  memoryTool: MemoryTool;
+  memoryToolRoot: string;
+  postgresPool: Pool;
+};
+
+export function createRuntimeDependencies(): RuntimeDependencies {
+  const postgresPool = getPool();
+  const memoryToolRoot = fileURLToPath(new URL("../memory", import.meta.url));
+
+  return {
+    explainTool: new ExplainTool({
+      query: async (sql: string) => postgresPool.query(sql),
+    }),
+    memoryTool: new MemoryTool({
+      rootDir: memoryToolRoot,
+    }),
+    memoryToolRoot,
+    postgresPool,
+  };
+}
 
 export function createRuntimeExecutor(): DBSpecialistExecutor {
-  const postgresPool = getPool();
-  const explainTool = new ExplainTool({
-    query: async (sql: string) => postgresPool.query(sql),
-  });
-  const memoryTool = new MemoryTool({
-    query: async (sql: string, params?: unknown[]) => {
-      await ensureMemorySchema(postgresPool);
-      return (await postgresPool.query(sql, params)).rows as Array<{ created_at?: string | null; status: string }>;
-    },
-  });
+  const { explainTool, memoryTool } = createRuntimeDependencies();
 
   return new DBSpecialistExecutor({
     clickhouseTool: new ClickHouseTool(),
     codeSearchTool: new CodeSearchTool(),
     explainTool: {
       analyze: async ({ sql }: { sql: string }) => {
-        const result = await explainTool.analyze({ sql }) as { rows?: Array<unknown> };
+        const result = (await explainTool.analyze({ sql })) as { rows?: Array<unknown> };
 
         return {
           plan_rows: result.rows ?? [],
@@ -57,17 +69,4 @@ function getPool(): Pool {
   }
 
   return pool;
-}
-
-async function ensureMemorySchema(pool: Pool): Promise<void> {
-  if (!memorySchemaPromise) {
-    memorySchemaPromise = readFile(
-      fileURLToPath(new URL("../db/001_memory_schema.sql", import.meta.url)),
-      "utf8",
-    ).then(async (schemaSql) => {
-      await pool.query(schemaSql);
-    });
-  }
-
-  return memorySchemaPromise;
 }
