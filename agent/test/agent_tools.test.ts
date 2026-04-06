@@ -123,7 +123,7 @@ test("apply_fix requires a previously loaded high-severity finding and validated
       ],
     },
     explainTool: {
-      analyze: async ({ sql }) => ({ sql, validated: true }),
+      analyze: async ({ sql }: { sql: string }) => ({ sql, validated: true }),
     },
     codeSearchTool: {
       locate: async () => ({
@@ -226,7 +226,7 @@ test("open_pull_request requires a prepared fix from the current loop run", asyn
       ],
     },
     explainTool: {
-      analyze: async ({ sql }) => ({ sql, validated: true, plan_rows: [{ plan: sql }] }),
+      analyze: async ({ sql }: { sql: string }) => ({ sql, validated: true, plan_rows: [{ plan: sql }] }),
     },
     codeSearchTool: {
       locate: async () => ({
@@ -238,7 +238,7 @@ test("open_pull_request requires a prepared fix from the current loop run", asyn
       applyFix: async () => ({ branchName: "agent/demo-fix-fp-1", diff: "diff --git a/file b/file" }),
     },
     githubTool: {
-      openPullRequest: async (input) => {
+      openPullRequest: async (input: { codeDiff?: string; headRef?: string }) => {
         openPullRequestCalls += 1;
         return {
           url: `local:///${input.headRef}:${input.codeDiff}`,
