@@ -21,7 +21,7 @@
 - `agent/src/agent_tools.ts`
   New file. Defines the `pi-agent-core` tool wrappers over runtime dependencies.
 - `agent/src/llm_config.ts`
-  New file. Parses `LLM_MODEL` and optional fallback models.
+  New file. Parses `LLM_MODEL` as a provider-qualified model reference.
 - `agent/src/tools/clickhouse_tool.ts`
   Exposes schema discovery and guarded query execution to the LLM.
 - `agent/src/tools/memory_tool.ts`
@@ -196,8 +196,6 @@ DEMO_REPO=bwarminski/db-specialist-demo
 # Provider-qualified model selection for the agent loop
 LLM_MODEL=openai/gpt-4o-mini
 
-# Optional comma-separated fallbacks
-# LLM_FALLBACK_MODELS=ollama/llama3.1:8b,openai/gpt-4o-mini
 ```
 
 - [ ] **Step 10: Run tests to verify they pass**
@@ -650,7 +648,6 @@ Expected: `package.json` and `package-lock.json` update cleanly.
 test("parseLlmConfig reads provider-qualified model refs", async () => {
   const config = parseLlmConfig({
     LLM_MODEL: "ollama/llama3.1:8b",
-    LLM_FALLBACK_MODELS: "openai/gpt-4o-mini,anthropic/claude-sonnet-4-20250514",
   });
 
   assert.equal(config.primary.provider, "ollama");
