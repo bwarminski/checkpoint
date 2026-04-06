@@ -51,6 +51,12 @@ test("analyze_db publishes submitted, working, and completed events through the 
     assert.deepEqual(results.at(-1)?.status?.message?.parts?.[0]?.data, {
       findings: [{ fingerprint: "fp-loop", severity: "high" }],
       response: "loop complete",
+      toolResults: [
+        {
+          toolName: "query_findings",
+          details: [{ fingerprint: "fp-loop", severity: "high" }],
+        },
+      ],
     });
   } finally {
     if (listening) {
@@ -176,4 +182,3 @@ async function readSsePayloads(response: Response): Promise<Array<any>> {
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 }
-

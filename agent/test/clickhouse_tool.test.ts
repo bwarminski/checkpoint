@@ -6,9 +6,24 @@ import test from "node:test";
 import { ClickHouseTool } from "../src/tools/clickhouse_tool.ts";
 
 test("ClickHouseTool lists tables from SHOW TABLES", async () => {
+  let queryCalls = 0;
   const tool = new ClickHouseTool({
     transport: {
-      query: async () => "query_events\nquery_fingerprints\n",
+      query: async () => {
+        queryCalls += 1;
+        return "query_events\nquery_fingerprints\nsystem.tables\n";
+      },
+    },
+  });
+
+  assert.deepEqual(await tool.listTables(), ["query_events", "query_fingerprints"]);
+  assert.equal(queryCalls, 0);
+});
+
+test("ClickHouseTool hides unsupported tables from discovery", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "query_events\nquery_fingerprints\ntop_offenders_mv\nsystem.tables\n",
     },
   });
 

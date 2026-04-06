@@ -3,6 +3,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+
 import { DBSpecialistExecutor } from "../src/executor.ts";
 
 test("executor bridges pi-agent-core events into working and completed task events", async () => {
@@ -94,6 +96,12 @@ test("executor bridges pi-agent-core events into working and completed task even
       result: {
         findings: [{ fingerprint: "fp-1", severity: "high" }],
         response: "analysis complete",
+        toolResults: [
+          {
+            toolName: "query_findings",
+            details: [{ fingerprint: "fp-1", severity: "high" }],
+          },
+        ],
       },
     },
   ]);
@@ -221,6 +229,7 @@ test("executor publishes submitted, working, and completed events on the A2A bus
               data: {
                 findings: [],
                 response: "loop finished",
+                toolResults: [],
               },
             },
           ],
@@ -229,6 +238,203 @@ test("executor publishes submitted, working, and completed events on the A2A bus
       final: true,
     },
   ]);
+});
+
+test("executor preserves structured tool outcomes in the completed payload", async () => {
+  const events: Array<unknown> = [];
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => ["query_events"],
+        describeTable: async () => "fingerprint\tString",
+        executeQuery: async () => "fingerprint\tabc",
+        queryFindings: async () => [],
+      },
+      memoryTool: {
+        search: async () => [],
+        record: async () => {},
+      },
+    } as any,
+    {
+      createAgent: () => {
+        const handlers = new Set<(event: any) => void>();
+        const finalMessage = assistantMessage("loop finished");
+
+        return {
+          subscribe(handler: (event: any) => void) {
+            handlers.add(handler);
+            return () => {
+              handlers.delete(handler);
+            };
+          },
+          async prompt() {
+            for (const handler of handlers) {
+              handler({
+                type: "tool_execution_end",
+                toolCallId: "tool-1",
+                toolName: "analyze_query",
+                isError: false,
+                result: {
+                  content: [{ type: "text", text: "{\"validated\":true}" }],
+                  details: { validated: true, plan_rows: [{ "QUERY PLAN": "Index Scan" }] },
+                },
+              });
+              handler({
+                type: "tool_execution_end",
+                toolCallId: "tool-2",
+                toolName: "apply_fix",
+                isError: false,
+                result: {
+                  content: [{ type: "text", text: "{\"branchName\":\"agent/demo-fix-fp-1\"}" }],
+                  details: { branchName: "agent/demo-fix-fp-1", diff: "diff --git a/file b/file" },
+                },
+              });
+              handler({
+                type: "tool_execution_end",
+                toolCallId: "tool-3",
+                toolName: "open_pull_request",
+                isError: false,
+                result: {
+                  content: [{ type: "text", text: "{\"url\":\"https://example.test/pr/1\"}" }],
+                  details: { url: "https://example.test/pr/1" },
+                },
+              });
+              handler({
+                type: "message_end",
+                message: finalMessage,
+              });
+              handler({
+                type: "agent_end",
+                messages: [finalMessage],
+              });
+            }
+          },
+          async waitForIdle() {},
+        };
+      },
+    },
+  );
+
+  await executor.execute(
+    { userMessage: { text: "analyze_db" } } as any,
+    {
+      enqueueEvent(event: unknown) {
+        events.push(event);
+      },
+    },
+  );
+
+  assert.deepEqual(events.at(-1), {
+    type: "completed",
+    result: {
+      findings: [],
+      response: "loop finished",
+      toolResults: [
+        {
+          toolName: "analyze_query",
+          details: { validated: true, plan_rows: [{ "QUERY PLAN": "Index Scan" }] },
+        },
+        {
+          toolName: "apply_fix",
+          details: { branchName: "agent/demo-fix-fp-1", diff: "diff --git a/file b/file" },
+        },
+        {
+          toolName: "open_pull_request",
+          details: { url: "https://example.test/pr/1" },
+        },
+      ],
+    },
+  });
+});
+
+test("executor can run through the default pi-agent-core agent path with a local streamFn", async () => {
+  const events: Array<unknown> = [];
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => ["query_events"],
+        describeTable: async () => "fingerprint\tString",
+        executeQuery: async () => "fingerprint\tabc",
+        queryFindings: async () => [{ fingerprint: "fp-agent", severity: "high" }],
+      },
+      memoryTool: {
+        search: async () => [],
+        record: async () => {},
+      },
+    } as any,
+    {
+      env: { LLM_MODEL: "openai/gpt-4o-mini" },
+      streamFn: async (_model, context) => {
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => {
+          const toolResultSeen = context.messages.some(
+            (message) => message.role === "toolResult" && message.toolName === "query_findings",
+          );
+          if (!toolResultSeen) {
+            const partial = assistantMessage("");
+            const toolCall = {
+              type: "toolCall" as const,
+              id: "tool-1",
+              name: "query_findings",
+              arguments: { scope: "analyze_db" },
+            };
+            const message = {
+              ...assistantMessage(""),
+              content: [toolCall],
+              stopReason: "toolUse" as const,
+            };
+            stream.push({ type: "start", partial });
+            stream.push({ type: "toolcall_start", contentIndex: 0, partial });
+            stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: message });
+            stream.push({ type: "done", reason: "toolUse", message });
+            return;
+          }
+
+          const partial = assistantMessage("");
+          const message = assistantMessage("agent path complete");
+          stream.push({ type: "start", partial });
+          stream.push({ type: "text_start", contentIndex: 0, partial });
+          stream.push({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "agent path complete",
+            partial: message,
+          });
+          stream.push({
+            type: "text_end",
+            contentIndex: 0,
+            content: "agent path complete",
+            partial: message,
+          });
+          stream.push({ type: "done", reason: "stop", message });
+        });
+        return stream;
+      },
+    },
+  );
+
+  await executor.execute(
+    { userMessage: { text: "analyze_db" } } as any,
+    {
+      enqueueEvent(event: unknown) {
+        events.push(event);
+      },
+    },
+  );
+
+  assert.deepEqual(events.at(-1), {
+    type: "completed",
+    result: {
+      findings: [{ fingerprint: "fp-agent", severity: "high" }],
+      response: "agent path complete",
+      toolResults: [
+        {
+          toolName: "query_findings",
+          details: [{ fingerprint: "fp-agent", severity: "high" }],
+        },
+      ],
+    },
+  });
 });
 
 test("cancelTask cancels only the matching active task and publishes canceled status", async () => {

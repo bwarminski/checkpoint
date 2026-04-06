@@ -51,6 +51,12 @@ test("analyze_table streams reported findings without opening a PR", async () =>
     assert.deepEqual(results.at(-1)?.status?.message?.parts?.[0]?.data, {
       findings: [{ fingerprint: "fp-medium", severity: "medium" }],
       response: "table analysis complete",
+      toolResults: [
+        {
+          toolName: "query_findings",
+          details: [{ fingerprint: "fp-medium", severity: "medium" }],
+        },
+      ],
     });
   } finally {
     if (listening) {
@@ -176,4 +182,3 @@ async function readSsePayloads(response: Response): Promise<Array<any>> {
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 }
-

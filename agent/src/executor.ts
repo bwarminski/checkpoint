@@ -1,10 +1,14 @@
 // ABOUTME: Bridges the DB specialist A2A lifecycle onto a pi-agent-core agent session.
 // ABOUTME: Keeps transport concerns in A2A while the loop uses provider-agnostic model config and agent tools.
 import type { ExecutionEventBus, RequestContext } from "@a2a-js/sdk/server";
-import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
+import { Agent, type AgentEvent, type AgentTool, type StreamFn } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 
-import { buildAgentTools, type AgentToolDependencies } from "./agent_tools.ts";
+import {
+  buildAgentTools,
+  createLoopRunEvidence,
+  type AgentToolDependencies,
+} from "./agent_tools.ts";
 import {
   parseLlmConfig,
   type LlmConfig,
@@ -32,12 +36,14 @@ type ExecutorOptions = {
   };
   now?: () => Date;
   systemPrompt?: string;
+  streamFn?: StreamFn;
 };
 
 type CreateAgentInput = {
   deps: AgentToolDependencies;
   llmConfig: LlmConfig;
   systemPrompt: string;
+  streamFn?: StreamFn;
   tools: Array<AgentTool>;
 };
 
@@ -51,6 +57,10 @@ type LoopAgent = {
 type LoopRunResult = {
   findings: Array<unknown>;
   response: string;
+  toolResults: Array<{
+    details: unknown;
+    toolName: string;
+  }>;
 };
 
 const DEFAULT_SYSTEM_PROMPT = [
@@ -68,6 +78,7 @@ export class DBSpecialistExecutor {
   private readonly createAgentImpl: (input: CreateAgentInput) => LoopAgent;
   private readonly now: () => Date;
   private readonly systemPrompt: string;
+  private readonly streamFn?: StreamFn;
   private readonly activeTasks = new Map<string, { agent: LoopAgent; contextId: string }>();
 
   constructor(
@@ -80,6 +91,7 @@ export class DBSpecialistExecutor {
     this.createAgentImpl = options.createAgent ?? createAgent;
     this.now = options.now ?? (() => new Date());
     this.systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.streamFn = options.streamFn;
   }
 
   async execute(
@@ -87,16 +99,19 @@ export class DBSpecialistExecutor {
     eventSink: EventSink,
   ): Promise<void> {
     const userText = readUserText(requestContext) ?? "analyze_db";
-    const tools = buildAgentTools(this.deps);
+    const loopEvidence = createLoopRunEvidence();
+    const tools = buildAgentTools(this.deps, loopEvidence);
     const agent = this.createAgentImpl({
       deps: this.deps,
       llmConfig: this.llmConfig,
       systemPrompt: this.systemPrompt,
+      streamFn: this.streamFn,
       tools,
     });
     const runResult: LoopRunResult = {
       findings: [],
       response: "",
+      toolResults: [],
     };
 
     const taskId = requestContext.taskId ?? "gate-a-task";
@@ -205,6 +220,7 @@ function createAgent(input: CreateAgentInput): LoopAgent {
       systemPrompt: input.systemPrompt,
       tools: input.tools,
     },
+    streamFn: input.streamFn,
   });
 }
 
@@ -234,11 +250,20 @@ function applyLoopEvent(runResult: LoopRunResult, event: AgentEvent): void {
 
   if (
     event.type === "tool_execution_end" &&
-    !event.isError &&
-    event.toolName === "query_findings" &&
-    Array.isArray(event.result?.details)
+    typeof event.toolName === "string"
   ) {
-    runResult.findings = event.result.details;
+    runResult.toolResults.push({
+      details: event.result?.details,
+      toolName: event.toolName,
+    });
+
+    if (
+      !event.isError &&
+      event.toolName === "query_findings" &&
+      Array.isArray(event.result?.details)
+    ) {
+      runResult.findings = event.result.details;
+    }
   }
 }
 

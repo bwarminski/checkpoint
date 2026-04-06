@@ -21,12 +21,7 @@ export class ClickHouseTool {
   }
 
   async listTables(): Promise<Array<string>> {
-    const payload = await this.transport!.query("SHOW TABLES FORMAT TSV");
-
-    return payload
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
+    return [...SUPPORTED_TABLES];
   }
 
   async describeTable(table: string): Promise<string> {
