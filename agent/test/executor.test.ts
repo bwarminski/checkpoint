@@ -437,6 +437,43 @@ test("executor can run through the default pi-agent-core agent path with a local
   });
 });
 
+test("executor publishes failed status and closes stream when agent.prompt throws", async () => {
+  const events: Array<unknown> = [];
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => [],
+        describeTable: async () => "",
+        executeQuery: async () => "",
+        queryFindings: async () => [],
+      },
+    } as any,
+    {
+      createAgent: () => ({
+        subscribe: () => () => {},
+        prompt: async () => {
+          throw new Error("LLM provider unavailable");
+        },
+        waitForIdle: async () => {},
+      }),
+    },
+  );
+
+  await executor.execute(
+    { userMessage: { text: "analyze_db" } } as any,
+    {
+      enqueueEvent(event: unknown) {
+        events.push(event);
+      },
+    },
+  );
+
+  assert.deepEqual(events, [
+    { type: "working", message: "analysis started" },
+    { type: "failed", error: "Error: LLM provider unavailable" },
+  ]);
+});
+
 test("cancelTask cancels only the matching active task and publishes canceled status", async () => {
   const aborts: Array<string> = [];
   const releases = new Map<string, () => void>();

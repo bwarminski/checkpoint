@@ -63,6 +63,9 @@ type LoopRunResult = {
   }>;
 };
 
+const FALLBACK_TASK_ID = "gate-a-task";
+const FALLBACK_CONTEXT_ID = "gate-a-context";
+
 const DEFAULT_SYSTEM_PROMPT = [
   "You are the DB specialist agent.",
   "Investigate database issues by using the available tools instead of inventing data.",
@@ -114,8 +117,8 @@ export class DBSpecialistExecutor {
       toolResults: [],
     };
 
-    const taskId = requestContext.taskId ?? "gate-a-task";
-    const contextId = requestContext.contextId ?? "gate-a-context";
+    const taskId = requestContext.taskId ?? FALLBACK_TASK_ID;
+    const contextId = requestContext.contextId ?? FALLBACK_CONTEXT_ID;
     this.activeTasks.set(taskId, { agent, contextId });
     const unsubscribe = agent.subscribe((event) => {
       applyLoopEvent(runResult, event);
@@ -127,6 +130,8 @@ export class DBSpecialistExecutor {
       await agent.prompt(userText);
       await agent.waitForIdle();
       this.publishCompleted(requestContext, eventSink, runResult);
+    } catch (err) {
+      this.publishFailed(requestContext, eventSink, err);
     } finally {
       unsubscribe();
       const activeTask = this.activeTasks.get(taskId);
@@ -142,7 +147,7 @@ export class DBSpecialistExecutor {
     eventBus.publish({
       kind: "status-update",
       taskId,
-      contextId: activeTask?.contextId ?? "gate-a-context",
+      contextId: activeTask?.contextId ?? FALLBACK_CONTEXT_ID,
       status: { state: "canceled", timestamp: this.timestamp() },
       final: true,
     });
@@ -160,8 +165,8 @@ export class DBSpecialistExecutor {
 
     eventSink.publish({
       kind: "status-update",
-      taskId: requestContext.taskId ?? "gate-a-task",
-      contextId: requestContext.contextId ?? "gate-a-context",
+      taskId: requestContext.taskId ?? FALLBACK_TASK_ID,
+      contextId: requestContext.contextId ?? FALLBACK_CONTEXT_ID,
       status: { state: "working", timestamp: this.timestamp() },
       final: false,
     });
@@ -177,8 +182,8 @@ export class DBSpecialistExecutor {
 
     eventSink.publish({
       kind: "task",
-      id: requestContext.taskId ?? "gate-a-task",
-      contextId: requestContext.contextId ?? "gate-a-context",
+      id: requestContext.taskId ?? FALLBACK_TASK_ID,
+      contextId: requestContext.contextId ?? FALLBACK_CONTEXT_ID,
       status: { state: "submitted", timestamp: this.timestamp() },
       history: toTaskHistory(requestContext.userMessage),
     });
@@ -196,13 +201,33 @@ export class DBSpecialistExecutor {
 
     eventSink.publish({
       kind: "status-update",
-      taskId: requestContext.taskId ?? "gate-a-task",
-      contextId: requestContext.contextId ?? "gate-a-context",
+      taskId: requestContext.taskId ?? FALLBACK_TASK_ID,
+      contextId: requestContext.contextId ?? FALLBACK_CONTEXT_ID,
       status: {
         state: "completed",
         timestamp: this.timestamp(),
         message: buildCompletedMessage(requestContext, runResult),
       },
+      final: true,
+    });
+    eventSink.finished();
+  }
+
+  private publishFailed(
+    requestContext: Partial<RequestContext>,
+    eventSink: EventSink,
+    err: unknown,
+  ): void {
+    if ("enqueueEvent" in eventSink) {
+      eventSink.enqueueEvent({ type: "failed", error: String(err) });
+      return;
+    }
+
+    eventSink.publish({
+      kind: "status-update",
+      taskId: requestContext.taskId ?? FALLBACK_TASK_ID,
+      contextId: requestContext.contextId ?? FALLBACK_CONTEXT_ID,
+      status: { state: "failed", timestamp: this.timestamp() },
       final: true,
     });
     eventSink.finished();
@@ -319,8 +344,8 @@ function buildCompletedMessage(
   role: "agent";
   taskId: string;
 } {
-  const taskId = requestContext.taskId ?? "gate-a-task";
-  const contextId = requestContext.contextId ?? "gate-a-context";
+  const taskId = requestContext.taskId ?? FALLBACK_TASK_ID;
+  const contextId = requestContext.contextId ?? FALLBACK_CONTEXT_ID;
 
   return {
     contextId,
