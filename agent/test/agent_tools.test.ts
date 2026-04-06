@@ -208,6 +208,72 @@ test("apply_fix requires a previously loaded high-severity finding and validated
   });
 });
 
+test("createLoopRunEvidence accumulates preparations per fingerprint and fix_type pair", () => {
+  const loopState = createLoopRunEvidence();
+
+  loopState.recordPreparation({
+    branchName: "agent/demo-fix-fp-1-add-index",
+    diff: "diff add_index",
+    findingFingerprint: "fp-1",
+    fix_type: "add_index",
+    source_file: "/app/models/todo.rb:2",
+  });
+
+  loopState.recordPreparation({
+    branchName: "agent/demo-fix-fp-1-rewrite-like",
+    diff: "diff rewrite_like",
+    findingFingerprint: "fp-1",
+    fix_type: "rewrite_like",
+    source_file: "/app/controllers/todos_controller.rb:3",
+  });
+
+  const addIndex = loopState.readPreparation({ findingFingerprint: "fp-1", fix_type: "add_index" });
+  const rewriteLike = loopState.readPreparation({ findingFingerprint: "fp-1", fix_type: "rewrite_like" });
+
+  assert.equal(addIndex?.branchName, "agent/demo-fix-fp-1-add-index");
+  assert.equal(rewriteLike?.branchName, "agent/demo-fix-fp-1-rewrite-like");
+});
+
+test("apply_fix rejects when finding severity is not high", async () => {
+  const loopState = createLoopRunEvidence();
+  const tools = buildAgentTools({
+    clickhouseTool: {
+      listTables: async () => ["query_events"],
+      describeTable: async () => "fingerprint\tString",
+      executeQuery: async () => "fingerprint\tabc",
+      queryFindings: async () => [
+        {
+          fingerprint: "fp-medium",
+          sample_query: "SELECT * FROM todos",
+          severity: "medium",
+        },
+      ],
+    },
+    demoRepoTool: {
+      applyFix: async () => {
+        throw new Error("should not reach demo repo");
+      },
+    },
+  } as any, loopState);
+
+  const queryFindings = tools.find((tool) => tool.name === "query_findings");
+  const applyFix = tools.find((tool) => tool.name === "apply_fix");
+  assert.ok(queryFindings);
+  assert.ok(applyFix);
+
+  await queryFindings.execute("tool-1", { scope: "analyze_db" } as any);
+
+  await assert.rejects(
+    () =>
+      applyFix.execute("tool-2", {
+        finding: { fingerprint: "fp-medium", severity: "medium", sample_query: "SELECT * FROM todos" },
+        fix: { fix_type: "add_index", summary: "Add an index." },
+        source: { content: "where(status: 'open')", source_file: "/app/models/todo.rb:2" },
+      } as any),
+    /high-severity/i,
+  );
+});
+
 test("open_pull_request rejects when the loop has not recorded prior validation and preparation evidence", async () => {
   const tools = buildAgentTools({
     githubTool: {

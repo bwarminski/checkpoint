@@ -119,7 +119,7 @@ export function createLoopRunEvidence(): LoopRunEvidence {
       validationsBySql.set(input.sql, input.validation);
     },
     recordPreparation(input) {
-      preparationsByFingerprint.set(input.findingFingerprint, input);
+      preparationsByFingerprint.set(`${input.findingFingerprint}::${input.fix_type}`, input);
     },
     recordSourceLookup(input) {
       if (typeof input.source_file === "string" && input.source_file.length > 0) {
@@ -133,12 +133,7 @@ export function createLoopRunEvidence(): LoopRunEvidence {
       return validationsBySql.get(sql);
     },
     readPreparation(input) {
-      const preparationEvidence = preparationsByFingerprint.get(input.findingFingerprint);
-      if (!preparationEvidence || preparationEvidence.fix_type !== input.fix_type) {
-        return undefined;
-      }
-
-      return preparationEvidence;
+      return preparationsByFingerprint.get(`${input.findingFingerprint}::${input.fix_type}`);
     },
     sawSourceLookup(source_file: string) {
       return sourceLookups.has(source_file);
