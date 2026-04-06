@@ -1,5 +1,5 @@
 // ABOUTME: Defines the ClickHouse access point used by the DB specialist agent.
-// ABOUTME: Keeps offender lookups isolated from executor orchestration logic.
+// ABOUTME: Exposes table discovery and guarded query execution for the executor.
 export type TopOffender = {
   fingerprint: string;
   [key: string]: unknown;
@@ -9,10 +9,6 @@ type ClickHouseTransport = {
   query(sql: string): Promise<string>;
 };
 
-type ClickHouseReader = {
-  topOffenders(scope?: unknown): Promise<Array<TopOffender>>;
-};
-
 type ClickHouseToolOptions = {
   transport?: ClickHouseTransport;
 };
@@ -20,28 +16,37 @@ type ClickHouseToolOptions = {
 export class ClickHouseTool {
   private readonly transport?: ClickHouseTransport;
 
-  constructor(
-    private readonly reader?: ClickHouseReader,
-    options: ClickHouseToolOptions = {},
-  ) {
+  constructor(options: ClickHouseToolOptions = {}) {
     this.transport = options.transport ?? createHttpTransport();
   }
 
-  async topOffenders(scope?: unknown): Promise<Array<TopOffender>> {
-    if (this.reader) {
-      return this.reader.topOffenders(scope);
+  async listTables(): Promise<Array<string>> {
+    const payload = await this.transport!.query("SHOW TABLES FORMAT TSV");
+
+    return payload
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  async describeTable(table: string): Promise<string> {
+    if (!/^[a-z0-9_]+$/i.test(table)) {
+      throw new Error(`Invalid table name: ${table}`);
     }
 
-    if (!this.transport) {
-      return [];
+    return this.transport!.query(`DESCRIBE TABLE ${table} FORMAT TSV`);
+  }
+
+  async executeQuery(sql: string): Promise<string> {
+    if (!/^\s*select\b/i.test(sql)) {
+      throw new Error("SELECT-only queries are allowed");
     }
 
-    const rows = await this.transport.query(buildTopOffendersQuery(scope));
-    return parseRows(rows);
+    return this.transport!.query(sql);
   }
 }
 
-function buildTopOffendersQuery(scope?: unknown): string {
+export function buildOffenderQuery(scope?: unknown): string {
   const request = parseScope(scope);
   if (!request.allTime) {
     return buildWindowedQuery(request);
@@ -119,7 +124,7 @@ function parseScope(scope?: unknown): ScopeRequest {
   };
 }
 
-function parseRows(payload: string): Array<TopOffender> {
+export function parseOffenderRows(payload: string): Array<TopOffender> {
   const [headerLine, ...dataLines] = payload.trim().split("\n").filter(Boolean);
   if (!headerLine) {
     return [];

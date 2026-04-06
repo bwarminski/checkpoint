@@ -8,19 +8,21 @@ import test from "node:test";
 import { DBSpecialistExecutor } from "../../src/executor.ts";
 import { createServer } from "../../src/server.ts";
 
+function buildOffenderTsv(): string {
+  return [
+    "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
+    "fp-high\t\\N\t/app/controllers/todos_controller.rb:12\tSELECT * FROM todos WHERE user_id = 7\t11\t250.5\t120",
+    "",
+  ].join("\n");
+}
+
 test("analyze_db streams a completed finding payload over A2A", async () => {
+  const queries: Array<string> = [];
   const executor = new DBSpecialistExecutor({
     clickhouseTool: {
-      topOffenders: async (scope?: unknown) => {
-        assert.equal(scope, "analyze_db");
-        return [
-          {
-            fingerprint: "fp-high",
-            sample_query: "SELECT * FROM todos WHERE user_id = 7",
-            severity: "high",
-            source_file: "/app/controllers/todos_controller.rb:12",
-          },
-        ];
+      executeQuery: async (sql: string) => {
+        queries.push(sql);
+        return buildOffenderTsv();
       },
     },
     codeSearchTool: {
@@ -74,6 +76,7 @@ test("analyze_db streams a completed finding payload over A2A", async () => {
 
     assert.equal(response.ok, true);
     assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/i);
+    assert.match(queries[0] ?? "", /FROM query_events/);
     assert.equal(completed?.kind, "status-update");
     assert.equal(completed?.status?.state, "completed");
     assert.deepEqual(completed?.status?.message?.parts?.[0]?.data?.findings, [
