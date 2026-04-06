@@ -2,12 +2,7 @@
 // ABOUTME: Bridges the plan's simple test queue with the A2A SDK event bus.
 import type { ExecutionEventBus, RequestContext } from "@a2a-js/sdk/server";
 
-import {
-  buildOffenderQuery,
-  ClickHouseTool,
-  parseOffenderRows,
-  type TopOffender,
-} from "./tools/clickhouse_tool.ts";
+import { ClickHouseTool, type TopOffender } from "./tools/clickhouse_tool.ts";
 
 type EventQueue = {
   enqueueEvent(event: unknown): void;
@@ -37,7 +32,7 @@ type PullRequestResult = {
 
 type ExecutorDependencies = {
   clickhouseTool?: {
-    executeQuery(sql: string): Promise<string>;
+    queryFindings(scope?: unknown): Promise<Array<TopOffender>>;
   };
   codeSearchTool?: {
     locate(input: {
@@ -166,9 +161,7 @@ export class DBSpecialistExecutor {
       return [];
     }
 
-    const findings = parseOffenderRows(
-      await this.deps.clickhouseTool.executeQuery(buildOffenderQuery(scope)),
-    );
+    const findings = await this.deps.clickhouseTool.queryFindings(scope);
 
     if (!findings.length) {
       return [];

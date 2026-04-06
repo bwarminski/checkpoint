@@ -30,23 +30,23 @@ export class ClickHouseTool {
   }
 
   async describeTable(table: string): Promise<string> {
-    if (!/^[a-z0-9_]+$/i.test(table)) {
-      throw new Error(`Invalid table name: ${table}`);
-    }
+    assertSupportedTable(table);
 
     return this.transport!.query(`DESCRIBE TABLE ${table} FORMAT TSV`);
   }
 
   async executeQuery(sql: string): Promise<string> {
-    if (!/^\s*select\b/i.test(sql)) {
-      throw new Error("SELECT-only queries are allowed");
-    }
+    assertSupportedQuery(sql);
 
     return this.transport!.query(sql);
   }
+
+  async queryFindings(scope?: unknown): Promise<Array<TopOffender>> {
+    return parseOffenderRows(await this.executeQuery(buildOffenderQuery(scope)));
+  }
 }
 
-export function buildOffenderQuery(scope?: unknown): string {
+function buildOffenderQuery(scope?: unknown): string {
   const request = parseScope(scope);
   if (!request.allTime) {
     return buildWindowedQuery(request);
@@ -124,7 +124,7 @@ function parseScope(scope?: unknown): ScopeRequest {
   };
 }
 
-export function parseOffenderRows(payload: string): Array<TopOffender> {
+function parseOffenderRows(payload: string): Array<TopOffender> {
   const [headerLine, ...dataLines] = payload.trim().split("\n").filter(Boolean);
   if (!headerLine) {
     return [];
@@ -169,6 +169,53 @@ function escapeSqlLike(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+function assertSupportedTable(table: string): void {
+  if (!SUPPORTED_TABLES.has(table)) {
+    throw new Error(`Unsupported ClickHouse table: ${table}`);
+  }
+}
+
+function assertSupportedQuery(sql: string): void {
+  const trimmed = sql.trim();
+
+  if (!/^\s*select\b/i.test(trimmed)) {
+    throw new Error("SELECT-only queries are allowed");
+  }
+
+  if (trimmed.includes(";")) {
+    throw new Error("Only single statement SELECT queries are allowed");
+  }
+
+  const referencedTables = extractReferencedTables(trimmed);
+  if (!referencedTables.length) {
+    throw new Error("Raw queries must use supported ClickHouse tables");
+  }
+
+  const unsupportedTable = referencedTables.find((table) => !SUPPORTED_TABLES.has(table));
+  if (unsupportedTable) {
+    throw new Error(`Raw queries must use supported ClickHouse tables: ${unsupportedTable}`);
+  }
+}
+
+function extractReferencedTables(sql: string): Array<string> {
+  const matches = sql.matchAll(/\b(?:from|join)\s+([`"]?[a-zA-Z0-9_.]+[`"]?)/gi);
+  const tables = new Set<string>();
+
+  for (const match of matches) {
+    const raw = match[1] ?? "";
+    const normalized = normalizeTableName(raw);
+    if (normalized) {
+      tables.add(normalized);
+    }
+  }
+
+  return [...tables];
+}
+
+function normalizeTableName(value: string): string {
+  return value.replace(/[`"]/g, "").split(".").at(-1) ?? "";
+}
+
 function createHttpTransport(): ClickHouseTransport {
   const baseUrl = process.env.CLICKHOUSE_URL ?? "http://127.0.0.1:8123";
 
@@ -184,3 +231,5 @@ function createHttpTransport(): ClickHouseTransport {
     },
   };
 }
+
+const SUPPORTED_TABLES = new Set(["query_events", "query_fingerprints"]);

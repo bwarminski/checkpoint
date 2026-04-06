@@ -8,21 +8,24 @@ import test from "node:test";
 import { DBSpecialistExecutor } from "../../src/executor.ts";
 import { createServer } from "../../src/server.ts";
 
-function buildOffenderTsv(): string {
-  return [
-    "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
-    "fp-medium\ttodos#status\t/app/models/todo.rb:5\tSELECT * FROM todos WHERE status = 'open'\t6\t88.5\t30",
-    "",
-  ].join("\n");
-}
-
 test("analyze_table streams reported findings without opening a PR", async () => {
   const queries: Array<string> = [];
   const executor = new DBSpecialistExecutor({
     clickhouseTool: {
-      executeQuery: async (sql: string) => {
-        queries.push(sql);
-        return buildOffenderTsv();
+      queryFindings: async (scope: unknown) => {
+        queries.push(String(scope));
+        return [
+          {
+            fingerprint: "fp-medium",
+            sample_query: "SELECT * FROM todos WHERE status = 'open'",
+            source_file: "/app/models/todo.rb:5",
+            source_tag: "todos#status",
+            total_exec_count: 6,
+            total_exec_time_ms: 88.5,
+            p95_exec_time_ms: 30,
+            severity: "medium",
+          },
+        ];
       },
     },
     codeSearchTool: {
@@ -77,8 +80,7 @@ test("analyze_table streams reported findings without opening a PR", async () =>
 
     assert.equal(response.ok, true);
     assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/i);
-    assert.match(queries[0] ?? "", /FROM query_events/);
-    assert.match(queries[0] ?? "", /source_tag ILIKE 'todos#%'/);
+    assert.deepEqual(queries, ["analyze_table todos"]);
     assert.equal(completed?.kind, "status-update");
     assert.equal(completed?.status?.state, "completed");
     assert.deepEqual(completed?.status?.message?.parts?.[0]?.data?.findings, [

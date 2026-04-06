@@ -1,56 +1,18 @@
 // ABOUTME: Verifies the executor emits the minimal lifecycle events for Gate A.
-// ABOUTME: Keeps the agent scaffold honest while ClickHouse queries flow through raw TSV output.
+// ABOUTME: Keeps the agent scaffold honest while ClickHouse findings stay typed.
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { DBSpecialistExecutor } from "../src/executor.ts";
 
-function buildOffenderTsv(
-  rows: Array<{
-    fingerprint: string;
-    p95_exec_time_ms: number;
-    sample_query: string;
-    source_file?: string;
-    source_tag?: string;
-    total_exec_count: number;
-    total_exec_time_ms: number;
-  }>,
-): string {
-  const header = [
-    "fingerprint",
-    "source_tag",
-    "source_file",
-    "sample_query",
-    "total_exec_count",
-    "total_exec_time_ms",
-    "p95_exec_time_ms",
-  ];
-
-  return [
-    header.join("\t"),
-    ...rows.map((row) =>
-      [
-        row.fingerprint,
-        row.source_tag ?? "\\N",
-        row.source_file ?? "\\N",
-        row.sample_query,
-        row.total_exec_count,
-        row.total_exec_time_ms,
-        row.p95_exec_time_ms,
-      ].join("\t"),
-    ),
-    "",
-  ].join("\n");
-}
-
 test("DBSpecialistExecutor emits working and completed events", async () => {
-  const queries: Array<string> = [];
+  const scopes: Array<unknown> = [];
   const events: Array<unknown> = [];
   const executor = new DBSpecialistExecutor({
     clickhouseTool: {
-      executeQuery: async (sql: string) => {
-        queries.push(sql);
-        return buildOffenderTsv([]);
+      queryFindings: async (scope: unknown) => {
+        scopes.push(scope);
+        return [];
       },
     },
   } as any);
@@ -64,7 +26,7 @@ test("DBSpecialistExecutor emits working and completed events", async () => {
     },
   );
 
-  assert.match(queries[0] ?? "", /FROM query_events/);
+  assert.deepEqual(scopes, ["analyze_db"]);
   assert.deepEqual(events, [
     { type: "working", message: "analysis started" },
     { type: "completed", result: { findings: [] } },
@@ -72,14 +34,14 @@ test("DBSpecialistExecutor emits working and completed events", async () => {
 });
 
 test("DBSpecialistExecutor publishes findings on the A2A event bus", async () => {
-  const queries: Array<string> = [];
+  const scopes: Array<unknown> = [];
   const events: Array<any> = [];
   let finished = false;
   const executor = new DBSpecialistExecutor({
     clickhouseTool: {
-      executeQuery: async (sql: string) => {
-        queries.push(sql);
-        return buildOffenderTsv([
+      queryFindings: async (scope: unknown) => {
+        scopes.push(scope);
+        return [
           {
             fingerprint: "fp-a2a",
             sample_query: "SELECT * FROM todos WHERE user_id = 7",
@@ -87,8 +49,9 @@ test("DBSpecialistExecutor publishes findings on the A2A event bus", async () =>
             total_exec_count: 9,
             total_exec_time_ms: 301.5,
             p95_exec_time_ms: 120,
+            severity: "high",
           },
-        ]);
+        ];
       },
     },
     codeSearchTool: {
@@ -136,8 +99,7 @@ test("DBSpecialistExecutor publishes findings on the A2A event bus", async () =>
     } as any,
   );
 
-  assert.match(queries[0] ?? "", /FROM query_events/);
-  assert.match(queries[0] ?? "", /source_tag IS NOT NULL/);
+  assert.deepEqual(scopes, ["analyze_db"]);
   assert.equal(finished, true);
   assert.deepEqual(events, [
     {
@@ -204,12 +166,12 @@ test("DBSpecialistExecutor publishes findings on the A2A event bus", async () =>
 
 test("DBSpecialistExecutor passes source_tag to code search when source_file is missing", async () => {
   const locateCalls: Array<{ source_file?: string | null; source_tag?: string | null }> = [];
-  const queries: Array<string> = [];
+  const scopes: Array<unknown> = [];
   const executor = new DBSpecialistExecutor({
     clickhouseTool: {
-      executeQuery: async (sql: string) => {
-        queries.push(sql);
-        return buildOffenderTsv([
+      queryFindings: async (scope: unknown) => {
+        scopes.push(scope);
+        return [
           {
             fingerprint: "fp-tagged",
             sample_query: "SELECT * FROM todos WHERE status = 'open'",
@@ -217,8 +179,9 @@ test("DBSpecialistExecutor passes source_tag to code search when source_file is 
             total_exec_count: 4,
             total_exec_time_ms: 40,
             p95_exec_time_ms: 12,
+            severity: "high",
           },
-        ]);
+        ];
       },
     },
     codeSearchTool: {
@@ -251,7 +214,7 @@ test("DBSpecialistExecutor passes source_tag to code search when source_file is 
     },
   );
 
-  assert.match(queries[0] ?? "", /FROM query_events/);
+  assert.deepEqual(scopes, ["analyze_db"]);
   assert.deepEqual(locateCalls, [{ source_file: undefined, source_tag: "todos#status" }]);
   assert.equal(
     events[1]?.result?.findings?.[0]?.source?.source_file,
@@ -262,33 +225,35 @@ test("DBSpecialistExecutor passes source_tag to code search when source_file is 
 test("DBSpecialistExecutor classifies multiple fix types from traced source content", async () => {
   const executor = new DBSpecialistExecutor({
     clickhouseTool: {
-      executeQuery: async () =>
-        buildOffenderTsv([
-          {
-            fingerprint: "fp-like",
-            sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
-            source_file: "/app/controllers/todos_controller.rb:4",
-            total_exec_count: 5,
-            total_exec_time_ms: 80,
-            p95_exec_time_ms: 22,
-          },
-          {
-            fingerprint: "fp-count",
-            sample_query: "SELECT COUNT(*) FROM todos WHERE user_id = 1",
-            source_file: "/app/controllers/todos_controller.rb:12",
-            total_exec_count: 8,
-            total_exec_time_ms: 120,
-            p95_exec_time_ms: 18,
-          },
-          {
-            fingerprint: "fp-includes",
-            sample_query: "SELECT * FROM todos JOIN users ON users.id = todos.user_id",
-            source_file: "/app/controllers/todos_controller.rb:3",
-            total_exec_count: 2,
-            total_exec_time_ms: 40,
-            p95_exec_time_ms: 10,
-          },
-        ]),
+      queryFindings: async () => [
+        {
+          fingerprint: "fp-like",
+          sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
+          source_file: "/app/controllers/todos_controller.rb:4",
+          total_exec_count: 5,
+          total_exec_time_ms: 80,
+          p95_exec_time_ms: 22,
+          severity: "medium",
+        },
+        {
+          fingerprint: "fp-count",
+          sample_query: "SELECT COUNT(*) FROM todos WHERE user_id = 1",
+          source_file: "/app/controllers/todos_controller.rb:12",
+          total_exec_count: 8,
+          total_exec_time_ms: 120,
+          p95_exec_time_ms: 18,
+          severity: "medium",
+        },
+        {
+          fingerprint: "fp-includes",
+          sample_query: "SELECT * FROM todos JOIN users ON users.id = todos.user_id",
+          source_file: "/app/controllers/todos_controller.rb:3",
+          total_exec_count: 2,
+          total_exec_time_ms: 40,
+          p95_exec_time_ms: 10,
+          severity: "medium",
+        },
+      ],
     },
     codeSearchTool: {
       locate: async ({ source_file }: { source_file?: string | null }) => {
@@ -342,17 +307,17 @@ test("DBSpecialistExecutor passes demo repo branch and diff metadata to GitHubTo
   const applyFixCalls: Array<any> = [];
   const executor = new DBSpecialistExecutor({
     clickhouseTool: {
-      executeQuery: async () =>
-        buildOffenderTsv([
-          {
-            fingerprint: "fp-pr",
-            sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
-            source_file: "/app/controllers/todos_controller.rb:4",
-            total_exec_count: 4,
-            total_exec_time_ms: 240,
-            p95_exec_time_ms: 140,
-          },
-        ]),
+      queryFindings: async () => [
+        {
+          fingerprint: "fp-pr",
+          sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
+          source_file: "/app/controllers/todos_controller.rb:4",
+          total_exec_count: 4,
+          total_exec_time_ms: 240,
+          p95_exec_time_ms: 140,
+          severity: "high",
+        },
+      ],
     },
     codeSearchTool: {
       locate: async ({ source_file }: { source_file?: string | null }) => ({
@@ -400,7 +365,6 @@ test("DBSpecialistExecutor passes demo repo branch and diff metadata to GitHubTo
       fingerprint: "fp-pr",
       sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
       source_file: "/app/controllers/todos_controller.rb:4",
-      source_tag: null,
       total_exec_count: 4,
       total_exec_time_ms: 240,
       p95_exec_time_ms: 140,
@@ -423,12 +387,12 @@ test("DBSpecialistExecutor passes demo repo branch and diff metadata to GitHubTo
 
 test("DBSpecialistExecutor prepares the demo repo branch before opening a PR", async () => {
   const callOrder: Array<string> = [];
-  const queries: Array<string> = [];
+  const scopes: Array<unknown> = [];
   const executor = new DBSpecialistExecutor({
     clickhouseTool: {
-      executeQuery: async (sql: string) => {
-        queries.push(sql);
-        return buildOffenderTsv([
+      queryFindings: async (scope: unknown) => {
+        scopes.push(scope);
+        return [
           {
             fingerprint: "fp-pr",
             sample_query: "SELECT * FROM todos WHERE status = 'open'",
@@ -437,8 +401,9 @@ test("DBSpecialistExecutor prepares the demo repo branch before opening a PR", a
             total_exec_count: 13,
             total_exec_time_ms: 210,
             p95_exec_time_ms: 140,
+            severity: "high",
           },
-        ]);
+        ];
       },
     },
     codeSearchTool: {
@@ -473,7 +438,6 @@ test("DBSpecialistExecutor prepares the demo repo branch before opening a PR", a
     },
   );
 
-  assert.match(queries[0] ?? "", /FROM query_fingerprints/);
-  assert.match(queries[0] ?? "", /WHERE source_tag IS NOT NULL AND source_tag ILIKE 'todos#%'/);
+  assert.deepEqual(scopes, ["analyze_table todos all"]);
   assert.deepEqual(callOrder, ["prepare", "open"]);
 });

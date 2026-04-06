@@ -40,3 +40,78 @@ test("ClickHouseTool rejects non-SELECT queries", async () => {
 
   await assert.rejects(() => tool.executeQuery("DELETE FROM query_events"), /SELECT-only/i);
 });
+
+test("ClickHouseTool rejects multi-statement raw queries", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "unused",
+    },
+  });
+
+  await assert.rejects(
+    () => tool.executeQuery("SELECT * FROM query_events; SELECT * FROM query_fingerprints"),
+    /single statement/i,
+  );
+});
+
+test("ClickHouseTool rejects raw queries against unsupported tables", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "unused",
+    },
+  });
+
+  await assert.rejects(
+    () => tool.executeQuery("SELECT * FROM system.tables"),
+    /supported ClickHouse tables/i,
+  );
+});
+
+test("ClickHouseTool queries typed findings from source-tag-aware output", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return [
+          "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
+          "fp-1\ttodos#index\t/app/controllers/todos_controller.rb:12\tSELECT 1\t7\t50.5\t12",
+        ].join("\n");
+      },
+    },
+  });
+
+  assert.deepEqual(await tool.queryFindings("analyze_db"), [
+    {
+      fingerprint: "fp-1",
+      p95_exec_time_ms: 12,
+      sample_query: "SELECT 1",
+      severity: "medium",
+      source_file: "/app/controllers/todos_controller.rb:12",
+      source_tag: "todos#index",
+      total_exec_count: 7,
+      total_exec_time_ms: 50.5,
+    },
+  ]);
+  assert.match(queries[0] ?? "", /FROM query_events/);
+});
+
+test("ClickHouseTool queries all-time findings from the fingerprint table", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return [
+          "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
+          "fp-2\ttodos#status\t/app/models/todo.rb:5\tSELECT 2\t9\t100.0\t200",
+        ].join("\n");
+      },
+    },
+  });
+
+  await tool.queryFindings("analyze_table todos all");
+
+  assert.match(queries[0] ?? "", /FROM query_fingerprints/);
+  assert.match(queries[0] ?? "", /source_tag ILIKE 'todos#%'/);
+});
