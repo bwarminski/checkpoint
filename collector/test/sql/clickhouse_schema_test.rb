@@ -24,7 +24,7 @@ class ClickhouseSchemaTest < Minitest::Test
     assert_includes sql, "ORDER BY (fingerprint, source_tag)"
   end
 
-  def test_reset_sql_rebuilds_query_fingerprints_with_execution_time_state
+  def test_reset_sql_rebuilds_query_fingerprints_with_block_state
     sql = read_sql("004_reset_query_fingerprints.sql")
 
     assert_includes sql, "Run this only while collector ingestion is stopped so no raw events are missed."
@@ -33,7 +33,14 @@ class ClickhouseSchemaTest < Minitest::Test
     assert_includes sql, "CREATE TABLE query_fingerprints"
     assert_includes sql, "INSERT INTO query_fingerprints"
     assert_includes sql, "argMaxState((source_file, sample_query), collected_at) AS representative_state"
-    assert_includes sql, "sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state"
+    assert_includes sql, "sumState(rows_returned_or_affected) AS rows_returned_or_affected_state"
+    assert_includes sql, "sumState(shared_blks_hit) AS shared_blks_hit_state"
+    assert_includes sql, "sumState(shared_blks_read) AS shared_blks_read_state"
+    assert_includes sql, "sumState(local_blks_hit) AS local_blks_hit_state"
+    assert_includes sql, "sumState(local_blks_read) AS local_blks_read_state"
+    assert_includes sql, "sumState(temp_blks_read) AS temp_blks_read_state"
+    assert_includes sql, "sumState(temp_blks_written) AS temp_blks_written_state"
+    assert_includes sql, "sumState(total_block_accesses) AS total_block_accesses_state"
     assert_includes sql, "CREATE MATERIALIZED VIEW top_offenders_mv"
   end
 
@@ -43,17 +50,36 @@ class ClickhouseSchemaTest < Minitest::Test
     assert_includes sql, "collected_at DateTime64(3)"
   end
 
-  def test_query_events_and_fingerprints_track_rows_examined
+  def test_query_events_and_fingerprints_track_row_and_block_metrics
     query_events_sql = read_sql("001_query_events.sql")
     fingerprints_sql = read_sql("002_query_fingerprints.sql")
     mv_sql = read_sql("003_top_offenders_mv.sql")
 
-    assert_match(/rows_examined\s+UInt64/, query_events_sql)
-    assert_match(/mean_rows_examined\s+Float64/, query_events_sql)
-    assert_match(/rows_examined_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
-    assert_match(/mean_rows_examined_state\s+AggregateFunction\(avg,\s+Float64\)/, fingerprints_sql)
-    assert_includes mv_sql, "sumState(rows_examined) AS rows_examined_state"
-    assert_includes mv_sql, "avgState(mean_rows_examined) AS mean_rows_examined_state"
+    assert_match(/rows_returned_or_affected\s+UInt64/, query_events_sql)
+    assert_match(/shared_blks_hit\s+UInt64/, query_events_sql)
+    assert_match(/shared_blks_read\s+UInt64/, query_events_sql)
+    assert_match(/local_blks_hit\s+UInt64/, query_events_sql)
+    assert_match(/local_blks_read\s+UInt64/, query_events_sql)
+    assert_match(/temp_blks_read\s+UInt64/, query_events_sql)
+    assert_match(/temp_blks_written\s+UInt64/, query_events_sql)
+    assert_match(/total_block_accesses\s+UInt64/, query_events_sql)
+    assert_match(/mean_block_accesses_per_call\s+Float64/, query_events_sql)
+    assert_match(/rows_returned_or_affected_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
+    assert_match(/shared_blks_hit_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
+    assert_match(/shared_blks_read_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
+    assert_match(/local_blks_hit_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
+    assert_match(/local_blks_read_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
+    assert_match(/temp_blks_read_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
+    assert_match(/temp_blks_written_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
+    assert_match(/total_block_accesses_state\s+AggregateFunction\(sum,\s+UInt64\)/, fingerprints_sql)
+    assert_includes mv_sql, "sumState(rows_returned_or_affected) AS rows_returned_or_affected_state"
+    assert_includes mv_sql, "sumState(shared_blks_hit) AS shared_blks_hit_state"
+    assert_includes mv_sql, "sumState(shared_blks_read) AS shared_blks_read_state"
+    assert_includes mv_sql, "sumState(local_blks_hit) AS local_blks_hit_state"
+    assert_includes mv_sql, "sumState(local_blks_read) AS local_blks_read_state"
+    assert_includes mv_sql, "sumState(temp_blks_read) AS temp_blks_read_state"
+    assert_includes mv_sql, "sumState(temp_blks_written) AS temp_blks_written_state"
+    assert_includes mv_sql, "sumState(total_block_accesses) AS total_block_accesses_state"
   end
 
   private

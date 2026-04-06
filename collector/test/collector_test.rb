@@ -73,7 +73,14 @@ class CollectorTest < Minitest::Test
       {
         "queryid" => "42",
         "calls" => "7",
-        "mean_exec_time" => "12.5"
+        "mean_exec_time" => "12.5",
+        "rows" => "0",
+        "shared_blks_hit" => "0",
+        "shared_blks_read" => "0",
+        "local_blks_hit" => "0",
+        "local_blks_read" => "0",
+        "temp_blks_read" => "0",
+        "temp_blks_written" => "0"
       }
     ])
     clickhouse_connection = ClickhouseConnection.new
@@ -97,8 +104,15 @@ class CollectorTest < Minitest::Test
         sample_query: sample_query,
         total_exec_count: 7,
         mean_exec_time_ms: 12.5,
-        rows_examined: 0,
-        mean_rows_examined: 0.0
+        rows_returned_or_affected: 0,
+        shared_blks_hit: 0,
+        shared_blks_read: 0,
+        local_blks_hit: 0,
+        local_blks_read: 0,
+        temp_blks_read: 0,
+        temp_blks_written: 0,
+        total_block_accesses: 0,
+        mean_block_accesses_per_call: 0.0
       }
     ]
 
@@ -107,13 +121,19 @@ class CollectorTest < Minitest::Test
     assert_equal expected_rows, clickhouse_connection.rows
   end
 
-  def test_run_once_captures_rows_examined_metrics
+  def test_run_once_captures_row_and_block_metrics
     stats_connection = StatsConnection.new([
       {
         "queryid" => "123",
         "calls" => "10",
         "mean_exec_time" => "15.5",
-        "rows" => "2500"
+        "rows" => "2500",
+        "shared_blks_hit" => "100",
+        "shared_blks_read" => "40",
+        "local_blks_hit" => "20",
+        "local_blks_read" => "5",
+        "temp_blks_read" => "3",
+        "temp_blks_written" => "2"
       }
     ])
     collector = Collector.new(
@@ -123,8 +143,19 @@ class CollectorTest < Minitest::Test
 
     row = collector.run_once.first
 
-    assert_equal 2500, row[:rows_examined]
-    assert_in_delta 250.0, row[:mean_rows_examined], 0.001
+    assert_equal 2500, row[:rows_returned_or_affected]
+    assert_equal 100, row[:shared_blks_hit]
+    assert_equal 40, row[:shared_blks_read]
+    assert_equal 20, row[:local_blks_hit]
+    assert_equal 5, row[:local_blks_read]
+    assert_equal 3, row[:temp_blks_read]
+    assert_equal 2, row[:temp_blks_written]
+    assert_equal 170, row[:total_block_accesses]
+    assert_in_delta 17.0, row[:mean_block_accesses_per_call], 0.001
+    assert_equal(
+      "SELECT queryid, calls, mean_exec_time, rows, shared_blks_hit, shared_blks_read, local_blks_hit, local_blks_read, temp_blks_read, temp_blks_written FROM pg_stat_statements",
+      stats_connection.sql,
+    )
   end
 
   def test_uses_only_the_rails_metadata_block_when_query_has_multiple_comments
