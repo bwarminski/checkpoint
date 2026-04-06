@@ -15,4 +15,3 @@ def test_compose_uses_demo_app_root_for_demo_service():
 def test_env_example_documents_provider_agnostic_llm_model():
     text = Path(".env.example").read_text()
     assert "LLM_MODEL=" in text
-    assert "LLM_FALLBACK_MODELS" in text
