@@ -178,6 +178,27 @@ Confirmed by `/cso` audit 2026-04-05.
 
 ---
 
+## Agent loop timeout and max-turn limit
+
+**What:** The pi-agent-core loop has no timeout or maximum turn cap. A runaway scenario
+(bad tool, LLM retry loop, infinite tool call cycle) blocks the A2A task indefinitely
+and holds the active-task slot in `DBSpecialistExecutor` forever.
+
+**Fix options:**
+- Wall-clock timeout: pass an `AbortSignal` to `agent.prompt()` and reject after N seconds
+- Max-turn limit: count `agent_end` events and abort after N iterations
+- Both combined: abort on whichever comes first
+
+**Why deferred:** The correct limit values depend on observed demo run times, which we
+don't have yet. The mechanism (AbortSignal vs turn counter) also needs validation
+against pi-agent-core's abort contract.
+
+**Where:** `agent/src/executor.ts` — `execute()` method. Wrap `agent.prompt()` with a
+`Promise.race([agent.prompt(...), timeoutPromise])` or wire `AbortSignal` into
+`createAgent`.
+
+---
+
 ## pg_stat_monitor upgrade path
 
 **What:** Evaluate `pg_stat_monitor` (Percona) as a drop-in replacement for
