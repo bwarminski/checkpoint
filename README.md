@@ -8,6 +8,10 @@ This repo owns the DB-specialist orchestration stack:
 - agent
 - load harness
 
+The collector source of truth now lives in the sibling repo at
+`/home/bjw/checkpoint-collector`. Brett can create the GitHub remote for that
+repo while the follow-on tasks proceed.
+
 The Rails demo app is no longer stored here. Its source of truth is the sibling
 repo at `/home/bjw/db-specialist-demo`.
 
