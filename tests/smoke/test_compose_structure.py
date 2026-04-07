@@ -24,3 +24,12 @@ def test_compose_renders_only_the_slim_split_image_services():
     assert services["clickhouse"]["image"] == "checkpoint-clickhouse:local"
     assert "build" not in services["postgres"]
     assert "build" not in services["clickhouse"]
+
+
+def test_repo_no_longer_contains_collector_owned_assets():
+    root = Path(__file__).resolve().parents[2]
+
+    assert not (root / "collector").exists()
+    assert not (root / "postgres").exists()
+    assert not (root / "load").exists()
+    assert not (root / "clickhouse" / "users.d").exists()
