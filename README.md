@@ -10,11 +10,40 @@ create the GitHub remote for that repo while the follow-on tasks proceed.
 The Rails demo app is no longer stored here. Its source of truth is the sibling
 repo at `/home/bjw/db-specialist-demo`.
 
+## Standalone Pi Runtime
+
+Build the package image from this repo root:
+
+```bash
+docker build -t checkpoint-db-specialist .
+```
+
+Run a standalone Pi session with the runtime environment the package expects:
+
+```bash
+docker run --rm \
+  -e CLICKHOUSE_URL=http://127.0.0.1:8123 \
+  -e POSTGRES_URL=postgresql://... \
+  -e GITHUB_TOKEN=... \
+  -e DEMO_REPO=owner/db-specialist-demo \
+  -e DEMO_BASE_REF=main \
+  -e CODE_SEARCH_ROOT=/work/db-specialist-demo \
+  -e LLM_MODEL=openai/gpt-4o-mini \
+  -v /path/to/db-specialist-demo:/work/db-specialist-demo \
+  checkpoint-db-specialist -e ./extensions/db-specialist.ts -p "List the available DB specialist tools."
+```
+
+This image uses `@mariozechner/pi-coding-agent`, which provides the `pi`
+binary. `@mariozechner/pi` exposes `pi-pods` instead.
+
+The standalone runtime expects `CLICKHOUSE_URL`, `POSTGRES_URL`,
+`GITHUB_TOKEN`, `DEMO_REPO`, `DEMO_BASE_REF`, `CODE_SEARCH_ROOT`, and
+`LLM_MODEL`.
+
 ## Session Configuration
 
-No environment variables are required for the slim local stack. Build the
-local images in the sibling collector repo before starting the checkpoint
-compose stack.
+Build the local images in the sibling collector repo before starting the
+checkpoint compose stack.
 
 ## Local Run
 
