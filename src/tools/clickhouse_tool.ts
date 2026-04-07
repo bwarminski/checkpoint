@@ -1,6 +1,6 @@
 // ABOUTME: Defines the ClickHouse access point used by the DB specialist agent.
 // ABOUTME: Exposes table discovery and guarded query execution for the executor.
-import type { ClickHouseSchemaContract } from "../../agent/src/clickhouse_schema_contract.ts";
+import type { ClickHouseSchemaContract } from "../clickhouse_schema_contract.ts";
 
 export type TopOffender = {
   fingerprint: string;

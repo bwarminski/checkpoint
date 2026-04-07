@@ -44,6 +44,49 @@ test("CodeSearchTool default client reads from CODE_SEARCH_ROOT", async () => {
   }
 });
 
+test("CodeSearchTool default client falls back to DEMO_APP_ROOT when CODE_SEARCH_ROOT is unset", async () => {
+  const root = await mkdtemp(join(tmpdir(), "code-search-demo-root-"));
+  const previousCodeSearchRoot = process.env.CODE_SEARCH_ROOT;
+  const previousDemoAppRoot = process.env.DEMO_APP_ROOT;
+
+  try {
+    await mkdir(join(root, "app", "controllers"), { recursive: true });
+    await writeFile(
+      join(root, "app", "controllers", "todos_controller.rb"),
+      [
+        "class TodosController",
+        "  def index",
+        "    render json: Todo.all",
+        "  end",
+        "end",
+      ].join("\n"),
+    );
+
+    delete process.env.CODE_SEARCH_ROOT;
+    process.env.DEMO_APP_ROOT = root;
+
+    const tool = new CodeSearchTool();
+    const result = await tool.locate({ source_file: "/app/controllers/todos_controller.rb:3" });
+
+    assert.equal(result.source_file, "app/controllers/todos_controller.rb:3");
+    assert.match(result.content, /render json: Todo\.all/);
+  } finally {
+    if (previousCodeSearchRoot === undefined) {
+      delete process.env.CODE_SEARCH_ROOT;
+    } else {
+      process.env.CODE_SEARCH_ROOT = previousCodeSearchRoot;
+    }
+
+    if (previousDemoAppRoot === undefined) {
+      delete process.env.DEMO_APP_ROOT;
+    } else {
+      process.env.DEMO_APP_ROOT = previousDemoAppRoot;
+    }
+
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("CodeSearchTool source does not reference the agent package", async () => {
   const source = await readFile(new URL("../../src/tools/code_search_tool.ts", import.meta.url), "utf8");
 

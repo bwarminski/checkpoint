@@ -3,6 +3,8 @@
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { basename, resolve, sep } from "node:path";
 
+import { defaultDemoAppRoot } from "./demo_repo_tool.ts";
+
 type ReadFileResult =
   | string
   | {
@@ -105,7 +107,7 @@ type SearchMatch = {
 };
 
 async function createLocalClient(): Promise<CodeSearchClient> {
-  const root = resolve(process.env.CODE_SEARCH_ROOT ?? process.cwd());
+  const root = resolveCodeSearchRoot();
 
   return {
     async close() {
@@ -128,6 +130,10 @@ async function createLocalClient(): Promise<CodeSearchClient> {
       return JSON.stringify(matches);
     },
   };
+}
+
+function resolveCodeSearchRoot(): string {
+  return process.env.CODE_SEARCH_ROOT ?? process.env.DEMO_APP_ROOT ?? defaultDemoAppRoot();
 }
 
 async function toRelativeSourceFile(
