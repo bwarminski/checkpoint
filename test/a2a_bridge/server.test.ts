@@ -51,6 +51,54 @@ test("createA2ABridge records new sessions and resumes them", async () => {
   }
 });
 
+test("createA2ABridge drops a stale session path and creates a fresh session", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-a2a-bridge-"));
+  const registryPath = join(directory, "sessions.json");
+  const registry = new SessionRegistry(registryPath);
+  const seenSessionPaths: Array<string | undefined> = [];
+  const promptInputs: Array<string> = [];
+
+  try {
+    await registry.record("ctx-1", {
+      sessionPath: "/sessions/stale",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+
+    const bridge = createA2ABridge({
+      now: () => new Date("2026-04-07T00:01:00.000Z"),
+      registry,
+      createAgentSession: async (sessionPath) => {
+        seenSessionPaths.push(sessionPath);
+
+        if (sessionPath === "/sessions/stale") {
+          throw new Error("missing session");
+        }
+
+        return {
+          sessionPath: sessionPath ?? "/sessions/fresh",
+          prompt: async (text) => {
+            promptInputs.push(text);
+            return `reply:${text}`;
+          },
+        };
+      },
+    });
+
+    assert.equal(await bridge.send("ctx-1", "hello"), "reply:hello");
+
+    assert.deepEqual(seenSessionPaths, ["/sessions/stale", undefined]);
+    assert.deepEqual(promptInputs, ["hello"]);
+    assert.deepEqual(await registry.read("ctx-1"), {
+      sessionPath: "/sessions/fresh",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:01:00.000Z",
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("createA2ABridge serializes concurrent sends for one context", async () => {
   const directory = await mkdtemp(join(tmpdir(), "checkpoint-a2a-bridge-"));
   const registryPath = join(directory, "sessions.json");

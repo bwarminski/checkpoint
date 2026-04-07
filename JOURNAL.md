@@ -1,5 +1,6 @@
 # JOURNAL
 
+- 2026-04-07: Followed up Task 10 review feedback by serializing `SessionRegistry.record()`/`remove()` through a private write queue and adding stale-session retry handling in the A2A bridge; a failed resume now drops the recorded `sessionPath` and recreates the session in the same send path. The focused bridge tests, full `npm test`, and `npm run typecheck` all pass.
 - 2026-04-07: Completed Task 10 by adding the file-backed `SessionRegistry` plus the thin A2A bridge in `src/a2a_bridge/server.ts`; the bridge now resumes sessions by `contextId`, records `createdAt`/`lastActiveAt`, and serializes same-context sends with a per-context queue. The new focused tests and the full repo `npm test` plus `npm run typecheck` both pass.
 - 2026-04-07: Tightened the Task 9 standalone runtime docs so the README now matches the actual `pi` container contract: host services use `host.docker.internal`, the model is selected with explicit `--provider`/`--model` CLI flags plus provider API key env vars, and `GITHUB_TOKEN`/`DEMO_REPO` stay optional until a real GitHub PR is needed.
 - 2026-04-06: Task 7 follow-up tightened the stateless tool gates further by adding success-path coverage for `apply_fix` and `open_pull_request`, removing stale `sample_query` and `source` passthroughs from `agent/src/agent_tools.ts`, and confirming the full `agent` suite still passes.

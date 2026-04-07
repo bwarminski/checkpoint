@@ -20,7 +20,7 @@ export function createA2ABridge(input: BridgeInput) {
     async send(contextId: string, text: string): Promise<unknown> {
       return runSerialized(queues, contextId, async () => {
         const existing = await input.registry.read(contextId);
-        const session = await input.createAgentSession(existing?.sessionPath);
+        const session = await createSession(input, contextId, existing?.sessionPath);
         const timestamp = (input.now ?? (() => new Date()))().toISOString();
 
         await input.registry.record(contextId, {
@@ -33,6 +33,23 @@ export function createA2ABridge(input: BridgeInput) {
       });
     },
   };
+}
+
+async function createSession(
+  input: BridgeInput,
+  contextId: string,
+  sessionPath: string | undefined,
+): Promise<AgentSession> {
+  try {
+    return await input.createAgentSession(sessionPath);
+  } catch (error) {
+    if (sessionPath === undefined) {
+      throw error;
+    }
+
+    await input.registry.remove(contextId);
+    return input.createAgentSession();
+  }
 }
 
 async function runSerialized<T>(

@@ -12,6 +12,8 @@ export type SessionRecord = {
 type SessionRecords = Record<string, SessionRecord>;
 
 export class SessionRegistry {
+  private writeQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly path: string) {}
 
   async read(contextId: string): Promise<SessionRecord | undefined> {
@@ -20,9 +22,19 @@ export class SessionRegistry {
   }
 
   async record(contextId: string, value: SessionRecord): Promise<void> {
-    const records = await this.load();
-    records[contextId] = value;
-    await this.save(records);
+    await this.runExclusive(async () => {
+      const records = await this.load();
+      records[contextId] = value;
+      await this.save(records);
+    });
+  }
+
+  async remove(contextId: string): Promise<void> {
+    await this.runExclusive(async () => {
+      const records = await this.load();
+      delete records[contextId];
+      await this.save(records);
+    });
   }
 
   private async load(): Promise<SessionRecords> {
@@ -45,6 +57,23 @@ export class SessionRegistry {
   private async save(records: SessionRecords): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
     await writeFile(this.path, JSON.stringify(records, null, 2));
+  }
+
+  private async runExclusive(work: () => Promise<void>): Promise<void> {
+    const previous = this.writeQueue;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    this.writeQueue = previous.then(() => current);
+    await previous;
+
+    try {
+      await work();
+    } finally {
+      release();
+    }
   }
 }
 
