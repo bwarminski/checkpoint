@@ -1,5 +1,5 @@
 // ABOUTME: Builds focused pi-agent-core tool wrappers over the agent runtime boundaries.
-// ABOUTME: Exposes ClickHouse, memory, source lookup, validation, and fix/PR actions to the loop.
+// ABOUTME: Exposes ClickHouse, source lookup, validation, and fix/PR actions to the loop.
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 
@@ -92,14 +92,6 @@ export type AgentToolDependencies = {
         plan_rows?: Array<Record<string, unknown>>;
       };
     }): Promise<unknown>;
-  };
-  memoryTool?: {
-    record(input: {
-      details?: unknown;
-      kind: "preference" | "constraint" | "discovery" | "failed_attempt";
-      summary: string;
-    }): Promise<void>;
-    search(query: string): Promise<Array<unknown>>;
   };
 };
 
@@ -197,43 +189,6 @@ export function buildAgentTools(
           const findings = await deps.clickhouseTool!.queryFindings(scope);
           loopRunEvidence.recordFindings(findings);
           return textResult(JSON.stringify(findings), findings);
-        },
-      },
-    );
-  }
-
-  if (deps.memoryTool) {
-    tools.push(
-      {
-        name: "search_memory",
-        label: "Search Memory",
-        description: "Search prior discoveries, preferences, constraints, and failed attempts.",
-        parameters: Type.Object({
-          query: Type.String(),
-        }),
-        execute: async (_id, params) => {
-          const query = readStringProperty(params, "query");
-          const entries = await deps.memoryTool!.search(query);
-          return textResult(JSON.stringify(entries), entries);
-        },
-      },
-      {
-        name: "record_memory",
-        label: "Record Memory",
-        description: "Record a durable lesson, preference, discovery, or failed attempt.",
-        parameters: Type.Object({
-          kind: Type.Union([
-            Type.Literal("preference"),
-            Type.Literal("constraint"),
-            Type.Literal("discovery"),
-            Type.Literal("failed_attempt"),
-          ]),
-          summary: Type.String(),
-          details: Type.Optional(Type.Unknown()),
-        }),
-        execute: async (_id, params) => {
-          await deps.memoryTool!.record(asMemoryRecord(params));
-          return textResult("Memory recorded.", { recorded: true });
         },
       },
     );
@@ -480,30 +435,6 @@ function asOpenPullRequestInput(value: unknown): {
           plan_rows: readOptionalPlanRows(validation),
         }
       : undefined,
-  };
-}
-
-function asMemoryRecord(value: unknown): {
-  details?: unknown;
-  kind: "preference" | "constraint" | "discovery" | "failed_attempt";
-  summary: string;
-} {
-  const kind = readStringProperty(value, "kind");
-  const summary = readStringProperty(value, "summary");
-
-  if (
-    kind !== "preference" &&
-    kind !== "constraint" &&
-    kind !== "discovery" &&
-    kind !== "failed_attempt"
-  ) {
-    throw new Error(`Unsupported memory kind: ${kind}`);
-  }
-
-  return {
-    kind,
-    summary,
-    details: isRecord(value) ? value.details : undefined,
   };
 }
 

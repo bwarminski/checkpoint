@@ -1,7 +1,5 @@
 // ABOUTME: Builds the default runtime tool set for the live DB specialist server.
-// ABOUTME: Wires ClickHouse, Postgres validation, hybrid memory, code search, and demo PR handling together.
-import { fileURLToPath } from "node:url";
-
+// ABOUTME: Wires ClickHouse, Postgres validation, code search, and demo PR handling together.
 import { Pool } from "pg";
 
 import { assertSchemaContractSatisfied } from "./clickhouse_schema_contract.ts";
@@ -11,35 +9,27 @@ import { CodeSearchTool } from "./tools/code_search_tool.ts";
 import { DemoRepoTool } from "./tools/demo_repo_tool.ts";
 import { ExplainTool } from "./tools/explain_tool.ts";
 import { GitHubTool } from "./tools/github_tool.ts";
-import { MemoryTool } from "./tools/memory_tool.ts";
 
 let pool: Pool | undefined;
 
 type RuntimeDependencies = {
   explainTool: ExplainTool;
-  memoryTool: MemoryTool;
-  memoryToolRoot: string;
   postgresPool: Pool;
 };
 
 export function createRuntimeDependencies(): RuntimeDependencies {
   const postgresPool = getPool();
-  const memoryToolRoot = fileURLToPath(new URL("../memory", import.meta.url));
 
   return {
     explainTool: new ExplainTool({
       query: async (sql: string) => postgresPool.query(sql),
     }),
-    memoryTool: new MemoryTool({
-      rootDir: memoryToolRoot,
-    }),
-    memoryToolRoot,
     postgresPool,
   };
 }
 
 export function createRuntimeExecutor(): DBSpecialistExecutor {
-  const { explainTool, memoryTool } = createRuntimeDependencies();
+  const { explainTool } = createRuntimeDependencies();
 
   return new DBSpecialistExecutor({
     clickhouseTool: new ClickHouseTool(),
@@ -55,7 +45,6 @@ export function createRuntimeExecutor(): DBSpecialistExecutor {
       },
     },
     githubTool: new GitHubTool(),
-    memoryTool,
     demoRepoTool: new DemoRepoTool(),
   });
 }

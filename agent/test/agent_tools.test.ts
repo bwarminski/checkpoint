@@ -1,16 +1,12 @@
 // ABOUTME: Verifies the pi-agent-core tool wrappers stay aligned with the agent runtime boundaries.
-// ABOUTME: Keeps memory and ClickHouse access exposed through focused tool names and typed details.
+// ABOUTME: Keeps ClickHouse, source lookup, validation, and fix/PR actions exposed through focused tool names and typed details.
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildAgentTools, createLoopRunEvidence } from "../src/agent_tools.ts";
 
-test("buildAgentTools exposes memory search and memory record tools", () => {
+test("buildAgentTools does not expose memory tools", () => {
   const tools = buildAgentTools({
-    memoryTool: {
-      search: async () => [],
-      record: async () => {},
-    },
     clickhouseTool: {
       listTables: async () => ["query_events"],
       describeTable: async () => "fingerprint\tString",
@@ -19,8 +15,8 @@ test("buildAgentTools exposes memory search and memory record tools", () => {
     },
   } as any, createLoopRunEvidence());
 
-  assert.equal(tools.some((tool) => tool.name === "search_memory"), true);
-  assert.equal(tools.some((tool) => tool.name === "record_memory"), true);
+  assert.equal(tools.some((tool) => tool.name === "search_memory"), false);
+  assert.equal(tools.some((tool) => tool.name === "record_memory"), false);
   assert.equal(tools.some((tool) => tool.name === "list_tables"), true);
   assert.equal(tools.some((tool) => tool.name === "describe_table"), true);
   assert.equal(tools.some((tool) => tool.name === "query_database"), true);
@@ -63,28 +59,6 @@ test("query_findings returns typed ClickHouse findings details", async () => {
       total_exec_time_ms: 123.4,
     },
   ]);
-});
-
-test("record_memory accepts an empty string summary", async () => {
-  let recorded: { summary: string } | undefined;
-  const tools = buildAgentTools({
-    memoryTool: {
-      search: async () => [],
-      record: async (input: { summary: string }) => {
-        recorded = { summary: input.summary };
-      },
-    },
-  } as any, createLoopRunEvidence());
-
-  const recordMemory = tools.find((tool) => tool.name === "record_memory");
-  assert.ok(recordMemory);
-
-  await recordMemory.execute("tool-empty-summary", {
-    kind: "discovery",
-    summary: "",
-  } as any);
-
-  assert.deepEqual(recorded, { summary: "" });
 });
 
 test("locate_source rejects calls without source_file or source_tag", async () => {

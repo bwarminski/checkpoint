@@ -10,6 +10,7 @@ import { DBSpecialistExecutor } from "../src/executor.ts";
 test("executor bridges pi-agent-core events into working and completed task events", async () => {
   const events: Array<unknown> = [];
   let promptText = "";
+  let systemPrompt = "";
   let toolNames: Array<string> = [];
   const executor = new DBSpecialistExecutor(
     {
@@ -19,13 +20,10 @@ test("executor bridges pi-agent-core events into working and completed task even
         executeQuery: async () => "fingerprint\tabc",
         queryFindings: async () => [],
       },
-      memoryTool: {
-        search: async () => [],
-        record: async () => {},
-      },
     } as any,
     {
-      createAgent: ({ tools }) => {
+      createAgent: ({ systemPrompt: prompt, tools }) => {
+        systemPrompt = prompt;
         toolNames = tools.map((tool) => tool.name);
         const handlers = new Set<(event: any) => void>();
         const finalMessage = assistantMessage("analysis complete");
@@ -87,8 +85,10 @@ test("executor bridges pi-agent-core events into working and completed task even
   );
 
   assert.equal(promptText, "users report slow checkout");
+  assert.equal(/memory/i.test(systemPrompt), false);
   assert.equal(toolNames.includes("query_findings"), true);
-  assert.equal(toolNames.includes("search_memory"), true);
+  assert.equal(toolNames.includes("search_memory"), false);
+  assert.equal(toolNames.includes("record_memory"), false);
   assert.deepEqual(events, [
     { type: "working", message: "analysis started" },
     {
@@ -117,10 +117,6 @@ test("executor publishes submitted, working, and completed events on the A2A bus
         describeTable: async () => "fingerprint\tString",
         executeQuery: async () => "fingerprint\tabc",
         queryFindings: async () => [],
-      },
-      memoryTool: {
-        search: async () => [],
-        record: async () => {},
       },
     } as any,
     {
@@ -250,10 +246,6 @@ test("executor preserves structured tool outcomes in the completed payload", asy
         executeQuery: async () => "fingerprint\tabc",
         queryFindings: async () => [],
       },
-      memoryTool: {
-        search: async () => [],
-        record: async () => {},
-      },
     } as any,
     {
       createAgent: () => {
@@ -356,10 +348,6 @@ test("executor can run through the default pi-agent-core agent path with a local
         describeTable: async () => "fingerprint\tString",
         executeQuery: async () => "fingerprint\tabc",
         queryFindings: async () => [{ fingerprint: "fp-agent", severity: "high" }],
-      },
-      memoryTool: {
-        search: async () => [],
-        record: async () => {},
       },
     } as any,
     {
@@ -484,10 +472,6 @@ test("cancelTask cancels only the matching active task and publishes canceled st
         describeTable: async () => "fingerprint\tString",
         executeQuery: async () => "fingerprint\tabc",
         queryFindings: async () => [],
-      },
-      memoryTool: {
-        search: async () => [],
-        record: async () => {},
       },
     } as any,
     {
