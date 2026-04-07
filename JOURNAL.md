@@ -1,5 +1,6 @@
 # JOURNAL
 
+- 2026-04-06: Completed Task 7 by removing `LoopRunEvidence` from `agent/src/agent_tools.ts`, switching `apply_fix` and `open_pull_request` to call-time input gates, updating `agent/test/agent_tools.test.ts` to assert the new direct-input errors, and removing the stale executor loop-evidence wiring. The targeted gate tests and the full `npm test` suite in `agent/` both pass.
 - 2026-04-06: Follow-up to Task 6 review removed stale `memoryTool` stubs from the `analyze_db` and `analyze_table` integration tests, and the full `npm --prefix /home/bjw/checkpoint/agent test` suite still passes afterward.
 - 2026-04-06: Completed Task 6 by removing memory tools, memory prompt text, and the live memory runtime wiring from the agent; deleted `agent/src/tools/memory_tool.ts`, `agent/test/memory_tool.test.ts`, and `agent/memory/`, and confirmed the full agent test suite passes. `npm run typecheck` still fails on the unrelated existing `test/run_tests_script.test.ts` declaration import for `../scripts/run-tests.mjs`.
 - 2026-04-06: Task 4 completed after Phase 1 moved `collector/`, `postgres/`, `load/`, and the local ClickHouse user config into `/home/bjw/checkpoint-collector`, that sibling repo was initialized under git, and checkpoint now consumes locally built split images while validating the pinned collector schema version at startup.

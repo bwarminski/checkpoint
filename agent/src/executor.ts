@@ -6,7 +6,6 @@ import { getModel } from "@mariozechner/pi-ai";
 
 import {
   buildAgentTools,
-  createLoopRunEvidence,
   type AgentToolDependencies,
 } from "./agent_tools.ts";
 import {
@@ -100,8 +99,7 @@ export class DBSpecialistExecutor {
     eventSink: EventSink,
   ): Promise<void> {
     const userText = readUserText(requestContext) ?? "analyze_db";
-    const loopEvidence = createLoopRunEvidence();
-    const tools = buildAgentTools(this.deps, loopEvidence);
+    const tools = buildAgentTools(this.deps);
     const agent = this.createAgentImpl({
       deps: this.deps,
       llmConfig: this.llmConfig,

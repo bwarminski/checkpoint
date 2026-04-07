@@ -8,37 +8,9 @@ type ClickHouseFinding = {
   [key: string]: unknown;
 };
 
-type LoopFinding = ClickHouseFinding & {
-  sample_query?: string;
-  severity?: string;
-  source_file?: string;
-};
-
 type ApplyFixResult = {
   branchName: string;
   diff: string;
-};
-
-type ValidationDetails = {
-  validated?: boolean;
-  [key: string]: unknown;
-};
-
-type PreparationDetails = ApplyFixResult & {
-  findingFingerprint: string;
-  fix_type: string;
-  source_file?: string;
-};
-
-export type LoopRunEvidence = {
-  recordFindings(findings: Array<ClickHouseFinding>): void;
-  recordValidation(input: { sql: string; validation: ValidationDetails }): void;
-  recordPreparation(input: PreparationDetails): void;
-  recordSourceLookup(input: { source_file?: string }): void;
-  readFinding(fingerprint: string): LoopFinding | undefined;
-  readValidation(sql: string): ValidationDetails | undefined;
-  readPreparation(input: { findingFingerprint: string; fix_type: string }): PreparationDetails | undefined;
-  sawSourceLookup(source_file: string): boolean;
 };
 
 export type AgentToolDependencies = {
@@ -62,6 +34,10 @@ export type AgentToolDependencies = {
       fix: {
         fix_type: string;
         summary: string;
+      };
+      validation?: {
+        validated?: boolean;
+        [key: string]: unknown;
       };
       source: {
         content: string;
@@ -95,47 +71,8 @@ export type AgentToolDependencies = {
   };
 };
 
-export function createLoopRunEvidence(): LoopRunEvidence {
-  const findingsByFingerprint = new Map<string, LoopFinding>();
-  const validationsBySql = new Map<string, ValidationDetails>();
-  const sourceLookups = new Set<string>();
-  const preparationsByFingerprint = new Map<string, PreparationDetails>();
-
-  return {
-    recordFindings(findings: Array<ClickHouseFinding>) {
-      for (const finding of findings) {
-        findingsByFingerprint.set(finding.fingerprint, finding as LoopFinding);
-      }
-    },
-    recordValidation(input) {
-      validationsBySql.set(input.sql, input.validation);
-    },
-    recordPreparation(input) {
-      preparationsByFingerprint.set(`${input.findingFingerprint}::${input.fix_type}`, input);
-    },
-    recordSourceLookup(input) {
-      if (typeof input.source_file === "string" && input.source_file.length > 0) {
-        sourceLookups.add(input.source_file);
-      }
-    },
-    readFinding(fingerprint: string) {
-      return findingsByFingerprint.get(fingerprint);
-    },
-    readValidation(sql: string) {
-      return validationsBySql.get(sql);
-    },
-    readPreparation(input) {
-      return preparationsByFingerprint.get(`${input.findingFingerprint}::${input.fix_type}`);
-    },
-    sawSourceLookup(source_file: string) {
-      return sourceLookups.has(source_file);
-    },
-  };
-}
-
 export function buildAgentTools(
   deps: AgentToolDependencies,
-  loopRunEvidence: LoopRunEvidence = createLoopRunEvidence(),
 ): Array<AgentTool<any>> {
   const tools: Array<AgentTool<any>> = [];
 
@@ -187,7 +124,6 @@ export function buildAgentTools(
         execute: async (_id, params) => {
           const scope = readOptionalStringProperty(params, "scope");
           const findings = await deps.clickhouseTool!.queryFindings(scope);
-          loopRunEvidence.recordFindings(findings);
           return textResult(JSON.stringify(findings), findings);
         },
       },
@@ -205,11 +141,6 @@ export function buildAgentTools(
       }),
       execute: async (_id, params) => {
         const source = await deps.codeSearchTool!.locate(asLocateSourceInput(params));
-        if (isRecord(source)) {
-          loopRunEvidence.recordSourceLookup({
-            source_file: readOptionalStringProperty(source, "source_file"),
-          });
-        }
         return textResult(JSON.stringify(source), source);
       },
     });
@@ -226,12 +157,6 @@ export function buildAgentTools(
       execute: async (_id, params) => {
         const sql = readStringProperty(params, "sql");
         const result = await deps.explainTool!.analyze({ sql });
-        if (isRecord(result)) {
-          loopRunEvidence.recordValidation({
-            sql,
-            validation: result,
-          });
-        }
         return textResult(JSON.stringify(result), result);
       },
     });
@@ -252,6 +177,11 @@ export function buildAgentTools(
           fix_type: Type.String(),
           summary: Type.String(),
         }),
+        validation: Type.Optional(
+          Type.Object({
+            validated: Type.Optional(Type.Boolean()),
+          }),
+        ),
         source: Type.Object({
           content: Type.String(),
           source_file: Type.String(),
@@ -259,28 +189,16 @@ export function buildAgentTools(
       }),
       execute: async (_id, params) => {
         const input = asApplyFixInput(params);
-        const priorFinding = loopRunEvidence.readFinding(input.finding.fingerprint);
-        if (!priorFinding) {
-          throw new Error(`apply_fix requires prior finding evidence for ${input.finding.fingerprint}`);
-        }
-        if ((priorFinding.severity ?? input.finding.severity) !== "high") {
+        if (input.finding.severity !== "high") {
           throw new Error("apply_fix requires a high-severity finding");
         }
-        const sampleQuery = input.finding.sample_query ?? priorFinding.sample_query;
-        if (!sampleQuery || !loopRunEvidence.readValidation(sampleQuery)?.validated) {
-          throw new Error("apply_fix requires a validated query for the selected finding");
+        if (input.validation?.validated !== true) {
+          throw new Error("apply_fix requires validated query input");
         }
-        if (!loopRunEvidence.sawSourceLookup(input.source.source_file)) {
-          throw new Error("apply_fix requires prior source lookup evidence for the selected source");
+        if (!input.source.source_file) {
+          throw new Error("apply_fix requires source_file");
         }
         const result = await deps.demoRepoTool!.applyFix(input);
-        loopRunEvidence.recordPreparation({
-          branchName: result.branchName,
-          diff: result.diff,
-          findingFingerprint: input.finding.fingerprint,
-          fix_type: input.fix.fix_type,
-          source_file: input.source.source_file,
-        });
         return textResult(JSON.stringify(result), result);
       },
     });
@@ -307,26 +225,11 @@ export function buildAgentTools(
       }),
       execute: async (_id, params) => {
         const input = asOpenPullRequestInput(params);
-        const findingFingerprint = input.finding.fingerprint ?? "unknown";
-        const fixType = input.fix.fix_type ?? "unknown";
-        const priorFinding = loopRunEvidence.readFinding(findingFingerprint);
-        const sampleQuery = priorFinding?.sample_query;
-        if (!sampleQuery || !loopRunEvidence.readValidation(sampleQuery)?.validated) {
-          throw new Error("open_pull_request requires prior validation evidence");
+        if (!input.headRef || !input.codeDiff) {
+          throw new Error("open_pull_request requires non-empty headRef and codeDiff");
         }
-        const preparation = loopRunEvidence.readPreparation({
-          findingFingerprint,
-          fix_type: fixType,
-        });
-        if (!preparation) {
-          throw new Error("open_pull_request requires a prepared fix from the current loop run");
-        }
-        const validation = loopRunEvidence.readValidation(sampleQuery);
         const result = await deps.githubTool!.openPullRequest({
           ...input,
-          headRef: input.headRef ?? preparation.branchName,
-          codeDiff: input.codeDiff ?? preparation.diff,
-          validation: input.validation ?? validation,
         });
         return textResult(JSON.stringify(result), result);
       },
@@ -367,6 +270,10 @@ function asApplyFixInput(value: unknown): {
     fix_type: string;
     summary: string;
   };
+  validation?: {
+    validated?: boolean;
+    [key: string]: unknown;
+  };
   source: {
     content: string;
     source_file: string;
@@ -374,6 +281,7 @@ function asApplyFixInput(value: unknown): {
 } {
   const finding = readRecordProperty(value, "finding");
   const fix = readRecordProperty(value, "fix");
+  const validation = readOptionalRecordProperty(value, "validation");
   const source = readRecordProperty(value, "source");
 
   return {
@@ -386,6 +294,12 @@ function asApplyFixInput(value: unknown): {
       fix_type: readStringProperty(fix, "fix_type"),
       summary: readStringProperty(fix, "summary"),
     },
+    validation: validation
+      ? {
+          ...validation,
+          validated: validation.validated === true,
+        }
+      : undefined,
     source: {
       content: readStringProperty(source, "content"),
       source_file: readStringProperty(source, "source_file"),
