@@ -123,6 +123,114 @@ test("db-specialist extension gates open_pull_request before calling GitHubTool"
   }
 });
 
+test("db-specialist extension returns validated query output usable by apply_fix", async () => {
+  const originalApplyFix = DemoRepoTool.prototype.applyFix;
+  let capturedInput: unknown;
+  DemoRepoTool.prototype.applyFix = async function (input: unknown) {
+    capturedInput = input;
+    return { branchName: "branch", diff: "diff" };
+  };
+
+  try {
+    const tools = collectRegisteredTools();
+    const analyzeQuery = tools.get("analyze_query");
+    const applyFix = tools.get("apply_fix");
+
+    assert.ok(analyzeQuery);
+    assert.ok(applyFix);
+
+    const validation = await analyzeQuery!.execute({ sql: "SELECT 1 FROM query_events" });
+
+    assert.deepEqual(validation, {
+      plan_rows: [],
+      validated: true,
+    });
+
+    const result = await applyFix!.execute({
+      finding: { fingerprint: "fp-1", severity: "high" },
+      fix: { fix_type: "rewrite_like", summary: "summary" },
+      source: { content: "content", source_file: "app/controllers/todos_controller.rb:3" },
+      validation,
+    });
+
+    assert.deepEqual(capturedInput, {
+      finding: { fingerprint: "fp-1" },
+      fix: { fix_type: "rewrite_like", summary: "summary" },
+      source: { content: "content", source_file: "app/controllers/todos_controller.rb:3" },
+    });
+    assert.deepEqual(result, {
+      branchName: "branch",
+      codeDiff: "diff",
+      diff: "diff",
+      headRef: "branch",
+    });
+  } finally {
+    DemoRepoTool.prototype.applyFix = originalApplyFix;
+  }
+});
+
+test("db-specialist extension returns apply_fix handoff fields for open_pull_request", async () => {
+  const originalApplyFix = DemoRepoTool.prototype.applyFix;
+  const originalOpenPullRequest = GitHubTool.prototype.openPullRequest;
+  let capturedInput: unknown;
+  DemoRepoTool.prototype.applyFix = async function () {
+    return {
+      branchName: "agent/demo-fix-fp-1",
+      diff: "diff --git a/file b/file",
+    };
+  };
+  GitHubTool.prototype.openPullRequest = async function (input: unknown) {
+    capturedInput = input;
+    return { url: "local://db-specialist/pull-requests/fp-1" };
+  };
+
+  try {
+    const tools = collectRegisteredTools();
+    const applyFix = tools.get("apply_fix");
+    const openPullRequest = tools.get("open_pull_request");
+
+    assert.ok(applyFix);
+    assert.ok(openPullRequest);
+
+    const validation = {
+      plan_rows: [{ "QUERY PLAN": "Index Scan" }],
+      validated: true,
+    };
+    const fixResult = await applyFix!.execute({
+      finding: { fingerprint: "fp-1", severity: "high" },
+      fix: { fix_type: "add_index", summary: "Add index" },
+      source: { content: "content", source_file: "app/controllers/todos_controller.rb:3" },
+      validation,
+    });
+
+    assert.deepEqual(fixResult, {
+      branchName: "agent/demo-fix-fp-1",
+      codeDiff: "diff --git a/file b/file",
+      diff: "diff --git a/file b/file",
+      headRef: "agent/demo-fix-fp-1",
+    });
+
+    const result = await openPullRequest!.execute({
+      ...fixResult,
+      finding: { fingerprint: "fp-1", source_tag: "todos#index" },
+      fix: { fix_type: "add_index", summary: "Add index" },
+      validation,
+    });
+
+    assert.deepEqual(capturedInput, {
+      codeDiff: "diff --git a/file b/file",
+      finding: { fingerprint: "fp-1", source_tag: "todos#index" },
+      fix: { fix_type: "add_index", summary: "Add index" },
+      headRef: "agent/demo-fix-fp-1",
+      validation,
+    });
+    assert.deepEqual(result, { url: "local://db-specialist/pull-requests/fp-1" });
+  } finally {
+    DemoRepoTool.prototype.applyFix = originalApplyFix;
+    GitHubTool.prototype.openPullRequest = originalOpenPullRequest;
+  }
+});
+
 function collectRegisteredTools(): Map<string, { execute: (input: any) => Promise<unknown> }> {
   const tools = new Map<string, { execute: (input: any) => Promise<unknown> }>();
 

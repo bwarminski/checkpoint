@@ -46,7 +46,14 @@ export default function registerDbSpecialist(pi: PiExtension): void {
   pi.registerTool({
     name: "analyze_query",
     description: "Run the guarded query validation path for a candidate SQL statement.",
-    execute: async ({ sql }: { sql: string }) => explainTool.analyze({ sql }),
+    execute: async ({ sql }: { sql: string }) => {
+      const result = (await explainTool.analyze({ sql })) as { rows?: Array<Record<string, unknown>> };
+
+      return {
+        plan_rows: result.rows ?? [],
+        validated: true,
+      };
+    },
   });
   pi.registerTool({
     name: "locate_source",
@@ -88,7 +95,12 @@ export default function registerDbSpecialist(pi: PiExtension): void {
           content: request.source.content ?? "",
           source_file: request.source.source_file,
         },
-      });
+      }).then((result) => ({
+        branchName: result.branchName,
+        codeDiff: result.diff,
+        diff: result.diff,
+        headRef: result.branchName,
+      }));
     },
   });
   pi.registerTool({
@@ -97,17 +109,28 @@ export default function registerDbSpecialist(pi: PiExtension): void {
     execute: async (input: unknown) => {
       const request = input as {
         codeDiff?: string;
+        diff?: string;
         finding?: { fingerprint?: string; source_tag?: string };
         fix?: { fix_type?: string; summary?: string };
         headRef?: string;
+        branchName?: string;
         validation?: { plan_rows?: Array<Record<string, unknown>> };
       };
 
-      if (!request.headRef || !request.codeDiff) {
+      const headRef = request.headRef ?? request.branchName;
+      const codeDiff = request.codeDiff ?? request.diff;
+
+      if (!headRef || !codeDiff) {
         throw new Error("open_pull_request requires non-empty headRef and codeDiff");
       }
 
-      return githubTool.openPullRequest(request);
+      const { branchName, diff, ...rest } = request;
+
+      return githubTool.openPullRequest({
+        ...rest,
+        codeDiff,
+        headRef,
+      });
     },
   });
 }
