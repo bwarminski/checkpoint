@@ -56,6 +56,15 @@ def test_collector_repo_exists_as_a_sibling_git_repo():
     assert (collector_root / "docker-compose.yml").exists()
 
 
+def test_collector_repo_bootstraps_clickhouse_schema_for_local_run():
+    root = Path(__file__).resolve().parents[2]
+    collector_root = root.parent / "checkpoint-collector"
+
+    compose_text = (collector_root / "docker-compose.yml").read_text()
+
+    assert "./collector/db/clickhouse:/docker-entrypoint-initdb.d:ro" in compose_text
+
+
 def test_repo_no_longer_owns_the_collector_source_of_truth():
     root = Path(__file__).resolve().parents[2]
 

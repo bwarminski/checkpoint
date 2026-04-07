@@ -17,6 +17,7 @@ context, so set it to the local Rails demo repo path before running
 `docker compose up -d --build`:
 
 ```bash
+export DEMO_APP_ROOT='/home/bjw/db-specialist-demo'
 export DEMO_REPO='bwarminski/db-specialist-demo'
 export DEMO_BASE_REF='main'
 export GITHUB_TOKEN='...'
