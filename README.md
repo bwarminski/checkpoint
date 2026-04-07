@@ -1,12 +1,6 @@
 # Checkpoint DB Specialist
 
-This repo owns the DB-specialist orchestration stack:
-
-- Postgres
-- ClickHouse
-- collector
-- agent
-- load harness
+This repo owns the checkpoint agent runtime and orchestration glue.
 
 The collector source of truth now lives in the sibling repo at
 `/home/bjw/checkpoint-collector`. Brett can create the GitHub remote for that
@@ -74,11 +68,8 @@ docker compose up -d --build
 cd agent && npm start
 ```
 
-Then drive traffic:
-
-```bash
-ruby load/harness.rb
-```
+Use the load harness from `/home/bjw/checkpoint-collector` when you need to
+generate database traffic.
 
 ## Live Validation
 
