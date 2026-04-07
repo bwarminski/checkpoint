@@ -2,7 +2,7 @@
 // ABOUTME: Verifies the db-specialist extension is visible in pi print output.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -44,54 +44,34 @@ test("standalone pi session loads the db-specialist extension", async () => {
 });
 
 async function runPi(args: Array<string>, configDir: string): Promise<{ stdout: string }> {
-  const buildContext = await mkdtemp(join(tmpdir(), "checkpoint-pi-"));
+  await execFileAsync("docker", ["build", "-t", imageTag, "-f", dockerfilePath, repoRoot], {
+    maxBuffer: 10 * 1024 * 1024,
+  });
 
-  try {
-    await copyBuildContext(buildContext);
-    await execFileAsync(
-      "docker",
-      ["build", "-t", imageTag, "-f", dockerfilePath, buildContext],
-      {
-        maxBuffer: 10 * 1024 * 1024,
-      },
-    );
+  const result = await execFileAsync(
+    "docker",
+    [
+      "run",
+      "--rm",
+      "--add-host",
+      "host.docker.internal:host-gateway",
+      "-e",
+      "PI_CODING_AGENT_DIR=/pi-config",
+      "-v",
+      `${configDir}:/pi-config`,
+      imageTag,
+      "-e",
+      "./extensions/db-specialist.ts",
+      ...args,
+    ],
+    {
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
 
-    const result = await execFileAsync(
-      "docker",
-      [
-        "run",
-        "--rm",
-        "--add-host",
-        "host.docker.internal:host-gateway",
-        "-e",
-        "PI_CODING_AGENT_DIR=/pi-config",
-        "-v",
-        `${configDir}:/pi-config`,
-        imageTag,
-        "-e",
-        "./extensions/db-specialist.ts",
-        ...args,
-      ],
-      {
-        maxBuffer: 10 * 1024 * 1024,
-      },
-    );
-
-    return {
-      stdout: result.stdout,
-    };
-  } finally {
-    await rm(buildContext, { recursive: true, force: true });
-  }
-}
-
-async function copyBuildContext(targetDir: string): Promise<void> {
-  await cp(join(repoRoot, "package.json"), join(targetDir, "package.json"));
-  await cp(join(repoRoot, "tsconfig.json"), join(targetDir, "tsconfig.json"));
-  await cp(join(repoRoot, "README.md"), join(targetDir, "README.md"));
-  await cp(join(repoRoot, "extensions"), join(targetDir, "extensions"), { recursive: true });
-  await cp(join(repoRoot, "skills"), join(targetDir, "skills"), { recursive: true });
-  await cp(join(repoRoot, "src"), join(targetDir, "src"), { recursive: true });
+  return {
+    stdout: result.stdout,
+  };
 }
 
 async function writeModelsJson(configDir: string, baseUrl: string): Promise<void> {

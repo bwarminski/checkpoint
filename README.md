@@ -22,7 +22,8 @@ Run a standalone Pi session with the runtime environment the package expects:
 
 ```bash
 docker run --rm \
-  -e CLICKHOUSE_URL=http://127.0.0.1:8123 \
+  --add-host host.docker.internal:host-gateway \
+  -e CLICKHOUSE_URL=http://host.docker.internal:8123 \
   -e POSTGRES_URL=postgresql://... \
   -e GITHUB_TOKEN=... \
   -e DEMO_REPO=owner/db-specialist-demo \
