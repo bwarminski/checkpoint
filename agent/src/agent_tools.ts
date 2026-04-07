@@ -35,10 +35,6 @@ export type AgentToolDependencies = {
         fix_type: string;
         summary: string;
       };
-      validation?: {
-        validated?: boolean;
-        [key: string]: unknown;
-      };
       source: {
         content: string;
         source_file: string;
@@ -170,7 +166,6 @@ export function buildAgentTools(
       parameters: Type.Object({
         finding: Type.Object({
           fingerprint: Type.String(),
-          sample_query: Type.Optional(Type.String()),
           severity: Type.Optional(Type.String()),
         }),
         fix: Type.Object({
@@ -198,7 +193,13 @@ export function buildAgentTools(
         if (!input.source.source_file) {
           throw new Error("apply_fix requires source_file");
         }
-        const result = await deps.demoRepoTool!.applyFix(input);
+        const result = await deps.demoRepoTool!.applyFix({
+          finding: {
+            fingerprint: input.finding.fingerprint,
+          },
+          fix: input.fix,
+          source: input.source,
+        });
         return textResult(JSON.stringify(result), result);
       },
     });
@@ -218,7 +219,6 @@ export function buildAgentTools(
           fix_type: Type.Optional(Type.String()),
           summary: Type.Optional(Type.String()),
         }),
-        source: Type.Optional(Type.Unknown()),
         validation: Type.Optional(Type.Unknown()),
         headRef: Type.Optional(Type.String()),
         codeDiff: Type.Optional(Type.String()),
@@ -263,7 +263,6 @@ function asLocateSourceInput(value: unknown): {
 function asApplyFixInput(value: unknown): {
   finding: {
     fingerprint: string;
-    sample_query?: string;
     severity?: string;
   };
   fix: {
@@ -287,7 +286,6 @@ function asApplyFixInput(value: unknown): {
   return {
     finding: {
       fingerprint: readStringProperty(finding, "fingerprint"),
-      sample_query: readOptionalStringProperty(finding, "sample_query"),
       severity: readOptionalStringProperty(finding, "severity"),
     },
     fix: {
@@ -318,9 +316,6 @@ function asOpenPullRequestInput(value: unknown): {
     summary?: string;
   };
   headRef?: string;
-  source?: {
-    [key: string]: unknown;
-  };
   validation?: {
     [key: string]: unknown;
     plan_rows?: Array<Record<string, unknown>>;
@@ -328,7 +323,6 @@ function asOpenPullRequestInput(value: unknown): {
 } {
   const finding = readRecordProperty(value, "finding");
   const fix = readRecordProperty(value, "fix");
-  const source = readOptionalRecordProperty(value, "source");
   const validation = readOptionalRecordProperty(value, "validation");
 
   return {
@@ -342,7 +336,6 @@ function asOpenPullRequestInput(value: unknown): {
     },
     headRef: readOptionalStringProperty(value, "headRef"),
     codeDiff: readOptionalStringProperty(value, "codeDiff"),
-    source,
     validation: validation
       ? {
           ...validation,

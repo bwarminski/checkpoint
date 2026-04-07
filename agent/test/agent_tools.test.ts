@@ -103,6 +103,38 @@ test("apply_fix requires explicit high severity, validation, and source input", 
   );
 });
 
+test("apply_fix succeeds with high severity, validated input, and source_file", async () => {
+  let capturedInput: unknown;
+  const tools = buildAgentTools({
+    demoRepoTool: {
+      applyFix: async (input: unknown) => {
+        capturedInput = input;
+        return { branchName: "agent/demo-fix-fp-1", diff: "diff --git a/file b/file" };
+      },
+    },
+  } as any);
+
+  const applyFix = tools.find((tool) => tool.name === "apply_fix");
+  assert.ok(applyFix);
+
+  const result = await applyFix.execute("tool-4", {
+    finding: { fingerprint: "fp-1", severity: "high" },
+    validation: { validated: true },
+    source: { content: "body", source_file: "app/models/todo.rb:2" },
+    fix: { fix_type: "add_index", summary: "Add index" },
+  } as any);
+
+  assert.deepEqual(capturedInput, {
+    finding: { fingerprint: "fp-1" },
+    fix: { fix_type: "add_index", summary: "Add index" },
+    source: { content: "body", source_file: "app/models/todo.rb:2" },
+  });
+  assert.deepEqual(result.details, {
+    branchName: "agent/demo-fix-fp-1",
+    diff: "diff --git a/file b/file",
+  });
+});
+
 test("apply_fix rejects when finding severity is not high", async () => {
   const tools = buildAgentTools({
     clickhouseTool: {
@@ -112,7 +144,6 @@ test("apply_fix rejects when finding severity is not high", async () => {
       queryFindings: async () => [
         {
           fingerprint: "fp-medium",
-          sample_query: "SELECT * FROM todos",
           severity: "medium",
         },
       ],
@@ -134,7 +165,7 @@ test("apply_fix rejects when finding severity is not high", async () => {
   await assert.rejects(
     () =>
       applyFix.execute("tool-2", {
-        finding: { fingerprint: "fp-medium", severity: "medium", sample_query: "SELECT * FROM todos" },
+        finding: { fingerprint: "fp-medium", severity: "medium" },
         fix: { fix_type: "add_index", summary: "Add an index." },
         source: { content: "where(status: 'open')", source_file: "/app/models/todo.rb:2" },
       } as any),
@@ -160,7 +191,43 @@ test("open_pull_request requires prepared branch and diff inputs", async () => {
         finding: { fingerprint: "fp-1" },
         fix: { fix_type: "add_index", summary: "Add index" },
         validation: { validated: true },
+        source: { content: "body", source_file: "app/models/todo.rb:2" },
       } as any),
     /headRef|codeDiff/i,
   );
+});
+
+test("open_pull_request succeeds with non-empty headRef and codeDiff", async () => {
+  let capturedInput: unknown;
+  const tools = buildAgentTools({
+    githubTool: {
+      openPullRequest: async (input: unknown) => {
+        capturedInput = input;
+        return { url: "https://example.test/pr/1" };
+      },
+    },
+  } as any);
+
+  const openPullRequest = tools.find((tool) => tool.name === "open_pull_request");
+  assert.ok(openPullRequest);
+
+  const result = await openPullRequest.execute("tool-5", {
+    finding: { fingerprint: "fp-1", source_tag: "todos#index" },
+    fix: { fix_type: "add_index", summary: "Add index" },
+    validation: { validated: true, plan_rows: [{ plan: "Index Scan" }] },
+    source: { content: "body", source_file: "app/models/todo.rb:2" },
+    headRef: "agent/demo-fix-fp-1",
+    codeDiff: "diff --git a/file b/file",
+  } as any);
+
+  assert.deepEqual(capturedInput, {
+    finding: { fingerprint: "fp-1", source_tag: "todos#index" },
+    fix: { fix_type: "add_index", summary: "Add index" },
+    validation: { validated: true, plan_rows: [{ plan: "Index Scan" }] },
+    headRef: "agent/demo-fix-fp-1",
+    codeDiff: "diff --git a/file b/file",
+  });
+  assert.deepEqual(result.details, {
+    url: "https://example.test/pr/1",
+  });
 });

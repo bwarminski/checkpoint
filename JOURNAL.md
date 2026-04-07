@@ -1,5 +1,6 @@
 # JOURNAL
 
+- 2026-04-06: Task 7 follow-up tightened the stateless tool gates further by adding success-path coverage for `apply_fix` and `open_pull_request`, removing stale `sample_query` and `source` passthroughs from `agent/src/agent_tools.ts`, and confirming the full `agent` suite still passes.
 - 2026-04-06: Completed Task 7 by removing `LoopRunEvidence` from `agent/src/agent_tools.ts`, switching `apply_fix` and `open_pull_request` to call-time input gates, updating `agent/test/agent_tools.test.ts` to assert the new direct-input errors, and removing the stale executor loop-evidence wiring. The targeted gate tests and the full `npm test` suite in `agent/` both pass.
 - 2026-04-06: Follow-up to Task 6 review removed stale `memoryTool` stubs from the `analyze_db` and `analyze_table` integration tests, and the full `npm --prefix /home/bjw/checkpoint/agent test` suite still passes afterward.
 - 2026-04-06: Completed Task 6 by removing memory tools, memory prompt text, and the live memory runtime wiring from the agent; deleted `agent/src/tools/memory_tool.ts`, `agent/test/memory_tool.test.ts`, and `agent/memory/`, and confirmed the full agent test suite passes. `npm run typecheck` still fails on the unrelated existing `test/run_tests_script.test.ts` declaration import for `../scripts/run-tests.mjs`.
