@@ -18,28 +18,34 @@ Build the package image from this repo root:
 docker build -t checkpoint-db-specialist .
 ```
 
-Run a standalone Pi session with the runtime environment the package expects:
+Run a standalone Pi session with the runtime environment the package uses for
+its database and repo tools, plus an explicit Pi provider/model selection:
 
 ```bash
 docker run --rm \
   --add-host host.docker.internal:host-gateway \
+  -e OPENAI_API_KEY=... \
   -e CLICKHOUSE_URL=http://host.docker.internal:8123 \
   -e POSTGRES_URL=postgresql://... \
-  -e GITHUB_TOKEN=... \
-  -e DEMO_REPO=owner/db-specialist-demo \
   -e DEMO_BASE_REF=main \
   -e CODE_SEARCH_ROOT=/work/db-specialist-demo \
-  -e LLM_MODEL=openai/gpt-4o-mini \
   -v /path/to/db-specialist-demo:/work/db-specialist-demo \
-  checkpoint-db-specialist -e ./extensions/db-specialist.ts -p "List the available DB specialist tools."
+  checkpoint-db-specialist \
+  -e ./extensions/db-specialist.ts \
+  --provider openai \
+  --model gpt-4o-mini \
+  -p "List the available DB specialist tools."
 ```
 
 This image uses `@mariozechner/pi-coding-agent`, which provides the `pi`
 binary. `@mariozechner/pi` exposes `pi-pods` instead.
 
-The standalone runtime expects `CLICKHOUSE_URL`, `POSTGRES_URL`,
-`GITHUB_TOKEN`, `DEMO_REPO`, `DEMO_BASE_REF`, `CODE_SEARCH_ROOT`, and
-`LLM_MODEL`.
+The standalone runtime uses `CLICKHOUSE_URL`, `POSTGRES_URL`,
+`DEMO_BASE_REF`, and `CODE_SEARCH_ROOT` for its tool integrations.
+Set `GITHUB_TOKEN` and `DEMO_REPO` only when you want real GitHub pull request
+creation instead of the local fallback URL. Choose the Pi model with CLI flags
+such as `--provider openai --model gpt-4o-mini` plus the matching provider API
+key env var.
 
 ## Session Configuration
 
