@@ -66,8 +66,24 @@ Behavior:
 
 ## Local Run
 
+Build the local collector-owned images first:
+
 ```bash
-docker compose up -d --build
+cd /home/bjw/checkpoint-collector
+docker build -t checkpoint-postgres:local ./postgres
+docker build -t checkpoint-clickhouse:local .
+```
+
+Then start the checkpoint stack:
+
+```bash
+cd /home/bjw/checkpoint
+docker compose up -d
+```
+
+Then start the agent:
+
+```bash
 cd agent && npm start
 ```
 

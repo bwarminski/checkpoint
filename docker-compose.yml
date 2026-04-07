@@ -1,9 +1,8 @@
-# ABOUTME: Defines the local database specialist stack for the demo environment.
-# ABOUTME: Runs Postgres, ClickHouse, the Rails demo app, and the collector together.
+# ABOUTME: Defines the slim checkpoint database stack for local development.
+# ABOUTME: Runs Postgres and ClickHouse from the sibling collector repo images.
 services:
   postgres:
-    build:
-      context: ./postgres
+    image: checkpoint-postgres:local
     command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
     environment:
       POSTGRES_PASSWORD: postgres
@@ -13,61 +12,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
-    volumes:
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     ports: ["5432:5432"]
   clickhouse:
-    image: clickhouse/clickhouse-server:24.3
+    image: checkpoint-clickhouse:local
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1'"]
       interval: 5s
       timeout: 5s
       retries: 12
-    volumes:
-      - ./collector/db/clickhouse:/docker-entrypoint-initdb.d:ro
-      - ./clickhouse/users.d:/etc/clickhouse-server/users.d:ro
     ports: ["8123:8123", "9000:9000"]
-  redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:v24.1.9
-    command:
-      - redpanda
-      - start
-      - --overprovisioned
-      - --smp
-      - "1"
-      - --memory
-      - "512M"
-      - --reserve-memory
-      - "0M"
-      - --node-id
-      - "0"
-      - --check=false
-      - --kafka-addr
-      - PLAINTEXT://0.0.0.0:9092
-      - --advertise-kafka-addr
-      - PLAINTEXT://redpanda:9092
-    ports: ["9092:9092"]
-  demo:
-    build:
-      context: ${DEMO_APP_ROOT:?DEMO_APP_ROOT is required}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/checkpoint_demo
-    ports: ["3000:3000"]
-  collector:
-    build:
-      context: ./collector
-    command: ["bash", "-lc", "while true; do bundle exec ruby bin/collector; sleep ${COLLECTOR_INTERVAL_SECONDS:-5}; done"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-      redpanda:
-        condition: service_started
-    environment:
-      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/checkpoint_demo
-      CLICKHOUSE_URL: http://clickhouse:8123
-      REDPANDA_BROKERS: redpanda:9092
