@@ -1,7 +1,7 @@
 // ABOUTME: Verifies A2A context mappings are persisted in the session registry.
 // ABOUTME: Keeps the registry focused on simple file-backed JSON storage.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -140,6 +140,46 @@ test("SessionRegistry read waits for an in-flight write to finish", async () => 
       createdAt: "2026-04-07T00:00:00.000Z",
       lastActiveAt: "2026-04-07T00:00:00.000Z",
     });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("SessionRegistry recovers from a malformed on-disk registry", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-a2a-registry-"));
+  const registryPath = join(directory, "sessions.json");
+  const registry = new SessionRegistry(registryPath);
+
+  try {
+    await writeFile(registryPath, "{");
+
+    assert.equal(await registry.read("ctx-1"), undefined);
+
+    await registry.record("ctx-1", {
+      sessionPath: "/sessions/one",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+
+    assert.deepEqual(await registry.read("ctx-1"), {
+      sessionPath: "/sessions/one",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+    assert.equal(
+      await readFile(registryPath, "utf8"),
+      JSON.stringify(
+        {
+          "ctx-1": {
+            sessionPath: "/sessions/one",
+            createdAt: "2026-04-07T00:00:00.000Z",
+            lastActiveAt: "2026-04-07T00:00:00.000Z",
+          },
+        },
+        null,
+        2,
+      ),
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

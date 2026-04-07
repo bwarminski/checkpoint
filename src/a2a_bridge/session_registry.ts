@@ -1,7 +1,7 @@
 // ABOUTME: Stores A2A context-to-pi-session mappings in a JSON file.
 // ABOUTME: Keeps the registry small so bridge restarts can resume sessions.
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 export type SessionRecord = {
   createdAt: string;
@@ -47,7 +47,7 @@ export class SessionRegistry {
 
       return JSON.parse(contents) as SessionRecords;
     } catch (error) {
-      if (isMissingFile(error)) {
+      if (isMissingFile(error) || error instanceof SyntaxError) {
         return {};
       }
 
@@ -56,8 +56,12 @@ export class SessionRegistry {
   }
 
   private async save(records: SessionRecords): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, JSON.stringify(records, null, 2));
+    const directory = dirname(this.path);
+    const temporaryPath = join(directory, `.${basename(this.path)}.tmp`);
+
+    await mkdir(directory, { recursive: true });
+    await writeFile(temporaryPath, JSON.stringify(records, null, 2));
+    await rename(temporaryPath, this.path);
   }
 
   private async runExclusive(work: () => Promise<void>): Promise<void> {
