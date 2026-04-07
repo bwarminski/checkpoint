@@ -46,7 +46,7 @@ def test_runtime_stack_includes_demo_rackup_file():
 
 def test_collector_repo_exists_as_a_sibling_git_repo():
     root = Path(__file__).resolve().parents[2]
-    collector_root = Path("/home/bjw/checkpoint-collector")
+    collector_root = root.parent / "checkpoint-collector"
 
     assert collector_root.exists()
     assert (collector_root / ".git").exists()

@@ -11,9 +11,10 @@ repo at `/home/bjw/db-specialist-demo`.
 
 ## Session Configuration
 
-Set these variables before running the local stack or the live PR demo. The
-agent auto-detects the sibling demo repo at `/home/bjw/db-specialist-demo`;
-set `DEMO_APP_ROOT` only if you need to override that path:
+Set these variables before running the local stack or the live PR demo.
+`docker-compose.yml` reads `DEMO_APP_ROOT` directly for the `demo` build
+context, so set it to the local Rails demo repo path before running
+`docker compose up -d --build`:
 
 ```bash
 export DEMO_REPO='bwarminski/db-specialist-demo'
@@ -26,7 +27,8 @@ export OPENAI_API_KEY='...'
 What each variable does:
 
 - `DEMO_APP_ROOT`
-  - optional local filesystem override for the sibling Rails demo repo path
+  - required local filesystem path to the sibling Rails demo repo used by the
+    `demo` service build context
 - `DEMO_REPO`
   - GitHub repo slug used for real PR creation
 - `DEMO_BASE_REF`
