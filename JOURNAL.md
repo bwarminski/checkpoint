@@ -1,5 +1,6 @@
 # JOURNAL
 
+- 2026-04-06: Completed the Phase 1 reference cleanup in `README.md` so the checkpoint docs explicitly point at `/home/bjw/checkpoint-collector` for the collector pipeline, ClickHouse DDLs, demo Postgres image, and load harness while keeping the slim checkpoint stack focused on consuming locally built sibling-repo images.
 - 2026-04-03: Initialized repo skeleton plan execution journal.
 - 2026-04-03: Added the Task 1 scaffold for docker compose, Postgres bootstrap SQL, and service package files.
 - 2026-04-03: Used a minimal valid `agent/package.json` because JSON does not support comments.

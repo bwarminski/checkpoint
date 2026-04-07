@@ -3,8 +3,9 @@
 This repo owns the checkpoint agent runtime and orchestration glue.
 
 The collector source of truth now lives in the sibling repo at
-`/home/bjw/checkpoint-collector`. Brett can create the GitHub remote for that
-repo while the follow-on tasks proceed.
+`/home/bjw/checkpoint-collector`. That repo owns the collector pipeline, the
+ClickHouse DDLs, the demo Postgres image, and the load harness. Brett can
+create the GitHub remote for that repo while the follow-on tasks proceed.
 
 The Rails demo app is no longer stored here. Its source of truth is the sibling
 repo at `/home/bjw/db-specialist-demo`.
@@ -17,7 +18,7 @@ compose stack.
 
 ## Local Run
 
-Build the local collector-owned images first:
+Build the locally consumed images first from the sibling collector repo:
 
 ```bash
 cd /home/bjw/checkpoint-collector
