@@ -39,10 +39,14 @@ export class ClickHouseTool {
   }
 
   async readSchemaContract(): Promise<ClickHouseSchemaContract> {
-    const schemaVersion = (await this.transport!.query("SELECT version FROM schema_contract FORMAT TSV")).trim();
-    const tableRows = await this.transport!.query("SELECT table, columns FROM schema_contract_tables FORMAT TSV");
+    const schemaVersionRows = await this.transport!.query(
+      "SELECT version AS schema_version FROM schema_contract FORMAT TSVWithNames",
+    );
+    const tableRows = await this.transport!.query(
+      "SELECT table AS name, columns FROM schema_contract_tables FORMAT TSVWithNames",
+    );
 
-    return parseSchemaContract(schemaVersion, tableRows);
+    return parseSchemaContract(schemaVersionRows, tableRows);
   }
 
   async queryFindings(scope?: unknown): Promise<Array<TopOffender>> {
@@ -157,32 +161,41 @@ function parseOffenderRows(payload: string): Array<TopOffender> {
   });
 }
 
-function parseSchemaContract(schemaVersion: string, tableRows: string): ClickHouseSchemaContract {
-  const lines = tableRows.trim().split("\n").filter(Boolean);
+function parseSchemaContract(schemaVersionRows: string, tableRows: string): ClickHouseSchemaContract {
+  const schemaVersion = parseTsvWithNamesRows(schemaVersionRows)[0]?.schema_version ?? "";
+  const rows = parseTsvWithNamesRows(tableRows);
+
+  return {
+    schemaVersion,
+    tables: rows.map((row) => {
+      const columnsValue = String(row.columns ?? "");
+
+      return {
+        columns: columnsValue ? columnsValue.split(",").map((column) => column.trim()).filter(Boolean) : [],
+        name: String(row.name ?? ""),
+      };
+    }),
+  };
+}
+
+function parseTsvWithNamesRows(payload: string): Array<Record<string, string>> {
+  const lines = payload.trim().split("\n").filter(Boolean);
 
   if (!lines.length) {
-    return {
-      schemaVersion,
-      tables: [],
-    };
+    return [];
   }
 
   const [headerLine, ...dataLines] = lines;
   const headers = headerLine.split("\t");
 
-  return {
-    schemaVersion,
-    tables: dataLines.map((line) => {
-      const values = line.split("\t");
-      const row = Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
-      const columnsValue = String(row.columns ?? "");
+  return dataLines.map((line) => {
+    const values = line.split("\t");
 
-      return {
-        columns: columnsValue ? columnsValue.split(",").map((column) => column.trim()).filter(Boolean) : [],
-        name: String(row.table ?? ""),
-      };
-    }),
-  };
+    return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""])) as Record<
+      string,
+      string
+    >;
+  });
 }
 
 function normalizeValue(header: string, value: string | undefined): number | string | null {
