@@ -1,5 +1,5 @@
 # ABOUTME: Verifies the rendered checkpoint compose contract.
-# ABOUTME: Guards the slim split-image stack used in Task 2.
+# ABOUTME: Guards the slim split-image compose contract and repo layout after the collector split.
 import json
 from pathlib import Path
 import subprocess
@@ -26,7 +26,7 @@ def test_compose_renders_only_the_slim_split_image_services():
     assert "build" not in services["clickhouse"]
 
 
-def test_repo_no_longer_contains_collector_owned_assets():
+def test_checkpoint_repo_layout_no_longer_contains_collector_owned_assets():
     root = Path(__file__).resolve().parents[2]
 
     assert not (root / "collector").exists()

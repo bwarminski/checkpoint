@@ -1,7 +1,6 @@
 # JOURNAL
 
 - 2026-04-06: Task 4 completed after Phase 1 moved `collector/`, `postgres/`, `load/`, and the local ClickHouse user config into `/home/bjw/checkpoint-collector`, that sibling repo was initialized under git, and checkpoint now consumes locally built split images while validating the pinned collector schema version at startup.
-- 2026-04-06: Completed the Phase 1 collector split by moving `collector/`, `postgres/`, `load/`, and the local ClickHouse user config into `/home/bjw/checkpoint-collector`, initializing that sibling repo under git, and keeping checkpoint on the locally built split images with pinned collector schema-version validation at startup.
 - 2026-04-06: Completed the Phase 1 reference cleanup in `README.md` so the checkpoint docs explicitly point at `/home/bjw/checkpoint-collector` for the collector pipeline, ClickHouse DDLs, demo Postgres image, and load harness while keeping the slim checkpoint stack focused on consuming locally built sibling-repo images.
 - 2026-04-03: Initialized repo skeleton plan execution journal.
 - 2026-04-03: Added the Task 1 scaffold for docker compose, Postgres bootstrap SQL, and service package files.
