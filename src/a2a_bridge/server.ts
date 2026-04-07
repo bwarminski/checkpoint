@@ -86,5 +86,5 @@ function isMissingSessionError(error: unknown): boolean {
     return false;
   }
 
-  return /missing session|not found|enoent/i.test(error.message);
+  return /missing session|session not found|session path .* not found|enoent/i.test(error.message);
 }

@@ -17,6 +17,7 @@ export class SessionRegistry {
   constructor(private readonly path: string) {}
 
   async read(contextId: string): Promise<SessionRecord | undefined> {
+    await this.writeQueue;
     const records = await this.load();
     return records[contextId];
   }
