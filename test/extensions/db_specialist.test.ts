@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import registerDbSpecialist from "../../extensions/db-specialist.ts";
+import registerDbSpecialist, { createDbSpecialistTools } from "../../extensions/db-specialist.ts";
 import { DemoRepoTool } from "../../src/tools/demo_repo_tool.ts";
 import { GitHubTool } from "../../src/tools/github_tool.ts";
 
@@ -132,21 +132,22 @@ test("db-specialist extension returns validated query output usable by apply_fix
   };
 
   try {
-    const tools = collectRegisteredTools();
-    const analyzeQuery = tools.get("analyze_query");
-    const applyFix = tools.get("apply_fix");
+    const tools = createDbSpecialistTools({
+      explainQuery: async () => ({
+        rows: [{ "QUERY PLAN": "Seq Scan on query_events" }],
+      }),
+    });
+    const analyzeQuery = tools.find((tool) => tool.name === "analyze_query")!;
+    const applyFix = tools.find((tool) => tool.name === "apply_fix")!;
 
-    assert.ok(analyzeQuery);
-    assert.ok(applyFix);
-
-    const validation = await analyzeQuery!.execute({ sql: "SELECT 1 FROM query_events" });
+    const validation = await analyzeQuery.execute({ sql: "SELECT 1 FROM query_events" });
 
     assert.deepEqual(validation, {
-      plan_rows: [],
+      plan_rows: [{ "QUERY PLAN": "Seq Scan on query_events" }],
       validated: true,
     });
 
-    const result = await applyFix!.execute({
+    const result = await applyFix.execute({
       finding: { fingerprint: "fp-1", severity: "high" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: { content: "content", source_file: "app/controllers/todos_controller.rb:3" },
@@ -229,6 +230,27 @@ test("db-specialist extension returns apply_fix handoff fields for open_pull_req
     DemoRepoTool.prototype.applyFix = originalApplyFix;
     GitHubTool.prototype.openPullRequest = originalOpenPullRequest;
   }
+});
+
+test("db-specialist extension analyze_query uses the shared query dependency", async () => {
+  const queries: Array<string> = [];
+  const tools = createDbSpecialistTools({
+    explainQuery: async (sql: string) => {
+      queries.push(sql);
+      return { rows: [{ "QUERY PLAN": "Seq Scan on query_events" }] };
+    },
+  });
+  const analyzeQuery = tools.find((tool) => tool.name === "analyze_query")!;
+
+  const result = await analyzeQuery.execute({
+    sql: "SELECT 1 FROM query_events",
+  } as any);
+
+  assert.deepEqual(queries, ["EXPLAIN ANALYZE SELECT 1 FROM query_events"]);
+  assert.deepEqual(result, {
+    plan_rows: [{ "QUERY PLAN": "Seq Scan on query_events" }],
+    validated: true,
+  });
 });
 
 function collectRegisteredTools(): Map<string, { execute: (input: any) => Promise<unknown> }> {

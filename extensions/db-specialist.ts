@@ -1,5 +1,7 @@
 // ABOUTME: Registers the DB specialist tools with pi from the shared runtime dependencies.
 // ABOUTME: Reuses one tool instance per extension load and exposes the specialist workflow to pi sessions.
+import { Pool } from "pg";
+
 import { ClickHouseTool } from "../src/tools/clickhouse_tool.ts";
 import { CodeSearchTool } from "../src/tools/code_search_tool.ts";
 import { DemoRepoTool } from "../src/tools/demo_repo_tool.ts";
@@ -14,53 +16,78 @@ type PiExtension = {
   }): void;
 };
 
+type ExplainQuery = {
+  query(sql: string): Promise<{ rows?: Array<Record<string, unknown>> }>;
+};
+
+type DbSpecialistToolsOptions = {
+  explainQuery?: ExplainQuery["query"];
+};
+
+type RegisteredTool = {
+  description?: string;
+  execute: (...args: Array<any>) => Promise<unknown> | unknown;
+  name: string;
+};
+
+let pool: Pool | undefined;
+
 const clickhouseTool = new ClickHouseTool();
-const explainTool = new ExplainTool({
-  query: async () => ({ rows: [] }),
-});
 const codeSearchTool = new CodeSearchTool();
 const demoRepoTool = new DemoRepoTool();
 const githubTool = new GitHubTool();
+const explainTool = createSharedExplainTool();
 
 export default function registerDbSpecialist(pi: PiExtension): void {
-  pi.registerTool({
+  for (const tool of createDbSpecialistTools()) {
+    pi.registerTool(tool);
+  }
+}
+
+export function createDbSpecialistTools(options: DbSpecialistToolsOptions = {}): Array<RegisteredTool> {
+  const activeExplainTool = options.explainQuery
+    ? new ExplainTool({ query: options.explainQuery })
+    : explainTool;
+
+  return [
+    {
     name: "query_findings",
     description: "Load normalized ClickHouse findings for the current database scope.",
     execute: async (input: unknown) => clickhouseTool.queryFindings(input),
-  });
-  pi.registerTool({
+    },
+    {
     name: "list_tables",
     description: "List the supported ClickHouse tables available to the agent.",
     execute: async () => clickhouseTool.listTables(),
-  });
-  pi.registerTool({
+    },
+    {
     name: "describe_table",
     description: "Describe a supported ClickHouse table schema.",
     execute: async ({ table }: { table: string }) => clickhouseTool.describeTable(table),
-  });
-  pi.registerTool({
+    },
+    {
     name: "query_database",
     description: "Run a guarded SELECT query against the supported ClickHouse tables.",
     execute: async ({ sql }: { sql: string }) => clickhouseTool.executeQuery(sql),
-  });
-  pi.registerTool({
+    },
+    {
     name: "analyze_query",
     description: "Run the guarded query validation path for a candidate SQL statement.",
     execute: async ({ sql }: { sql: string }) => {
-      const result = (await explainTool.analyze({ sql })) as { rows?: Array<Record<string, unknown>> };
+      const result = (await activeExplainTool.analyze({ sql })) as { rows?: Array<Record<string, unknown>> };
 
       return {
         plan_rows: result.rows ?? [],
         validated: true,
       };
     },
-  });
-  pi.registerTool({
+    },
+    {
     name: "locate_source",
     description: "Load the source file context for a finding's source file or source tag.",
     execute: async (input: unknown) => codeSearchTool.locate(input as { source_file?: string | null; source_tag?: string | null }),
-  });
-  pi.registerTool({
+    },
+    {
     name: "apply_fix",
     description: "Apply a concrete fix in the demo repo for a selected finding.",
     execute: async (input: unknown) => {
@@ -102,8 +129,8 @@ export default function registerDbSpecialist(pi: PiExtension): void {
         headRef: result.branchName,
       }));
     },
-  });
-  pi.registerTool({
+    },
+    {
     name: "open_pull_request",
     description: "Open a pull request for the selected finding and prepared fix.",
     execute: async (input: unknown) => {
@@ -132,5 +159,24 @@ export default function registerDbSpecialist(pi: PiExtension): void {
         headRef,
       });
     },
+    },
+  ];
+}
+
+function createSharedExplainTool(): ExplainTool {
+  return new ExplainTool({
+    query: async (sql: string) => getPool().query(sql),
   });
+}
+
+function getPool(): Pool {
+  if (!pool) {
+    pool = new Pool({
+      connectionString:
+        process.env.POSTGRES_URL ??
+        "postgresql://postgres:postgres@127.0.0.1:5432/checkpoint_demo",
+    });
+  }
+
+  return pool;
 }
