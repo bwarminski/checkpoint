@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restructure the repo in three sequential, independently shippable phases: slim the repo down to prebuilt collector-backed infra, remove the memory system and in-run evidence object, then convert the agent into the `@checkpoint/db-specialist` pi package with a standalone extension and an A2A bridge layered on last.
+**Goal:** Restructure the repo in three sequential, independently shippable phases: move the collector into its own local git repo and slim this repo down to locally built collector-backed infra, remove the memory system and in-run evidence object, then convert the agent into the `@checkpoint/db-specialist` pi package with a standalone extension and an A2A bridge layered on last.
 
-**Architecture:** Phase 1 removes local collector ownership from this repo and pins runtime dependencies to published images plus a versioned ClickHouse schema contract that the agent validates at startup. Phase 2 deletes durable memory and replaces `LoopRunEvidence` safety gates with stateless call-time checks. Phase 3 moves the surviving domain tools into a root pi package, adds markdown skills plus a containerized runtime, then rebuilds A2A as a thin session bridge over pi.
+**Architecture:** Phase 1 creates a sibling collector repo at `/home/bjw/checkpoint-collector`, moves all collector-owned assets into it, and has this repo consume locally built Postgres and ClickHouse images plus a versioned ClickHouse schema contract that the agent validates at startup. Phase 2 deletes durable memory and replaces `LoopRunEvidence` safety gates with stateless call-time checks. Phase 3 moves the surviving domain tools into a root pi package, adds markdown skills plus a containerized runtime, then rebuilds A2A as a thin session bridge over pi.
 
 **Tech Stack:** TypeScript, Node test runner, Express, `@a2a-js/sdk`, `@mariozechner/pi-agent-core`, `@mariozechner/pi-ai`, pi extension APIs, Docker Compose, Docker, pytest
 
@@ -13,7 +13,7 @@
 ## File Structure
 
 - `docker-compose.yml`
-  Phase 1 runtime stack. Stops building local collector assets and instead pulls published images for Postgres and ClickHouse.
+  Phase 1 runtime stack. Stops building local collector assets and instead uses locally built images from the sibling collector repo for Postgres and ClickHouse.
 - `tests/smoke/test_compose_structure.py`
   Verifies the slim compose contract and rejects regressions back to local collector-owned services.
 - `README.md`
@@ -58,13 +58,115 @@
 ## Phase Boundaries
 
 - **Phase 1 ship criteria**
-  This repo no longer builds or owns collector services locally, smoke tests use published images, and agent startup rejects mismatched ClickHouse schema versions before serving requests.
+  The collector-owned files live in `/home/bjw/checkpoint-collector`, that repo is initialized as git and can build the required local images, this repo no longer owns those assets, and agent startup rejects mismatched ClickHouse schema versions before serving requests.
 - **Phase 2 ship criteria**
   Memory code and prompts are gone, the `memory-tool` preservation branch/tag exists, and risky tools enforce their requirements with call-time validation rather than `LoopRunEvidence`.
 - **Phase 3 ship criteria**
   The repo is a pi package with a working standalone extension, container tests pass, and the A2A bridge is a separate thin layer over pi sessions.
 
-### Task 1: Phase 1 Compose Slim-Down And Published-Image Pinning
+### Task 1: Phase 1 Create The Collector Repo And Move Collector-Owned Files
+
+**Files:**
+- Create: `/home/bjw/checkpoint-collector/.gitignore`
+- Create: `/home/bjw/checkpoint-collector/README.md`
+- Create: `/home/bjw/checkpoint-collector/docker-compose.yml`
+- Create: `/home/bjw/checkpoint-collector/VERSION`
+- Create: `/home/bjw/checkpoint-collector/collector/`
+- Create: `/home/bjw/checkpoint-collector/postgres/`
+- Create: `/home/bjw/checkpoint-collector/load/`
+- Create: `/home/bjw/checkpoint-collector/clickhouse/users.d/`
+- Modify: `README.md`
+- Modify: `tests/smoke/test_compose_structure.py`
+
+- [ ] **Step 1: Write the failing smoke tests**
+
+```python
+def test_collector_repo_exists_as_a_sibling_git_repo():
+    root = Path(__file__).resolve().parents[2]
+    collector_root = Path("/home/bjw/checkpoint-collector")
+
+    assert collector_root.exists()
+    assert (collector_root / ".git").exists()
+    assert (collector_root / "collector" / "Dockerfile").exists()
+    assert (collector_root / "postgres" / "Dockerfile").exists()
+    assert (collector_root / "docker-compose.yml").exists()
+
+
+def test_repo_no_longer_owns_the_collector_source_of_truth():
+    root = Path(__file__).resolve().parents[2]
+
+    assert not (root / "collector").exists()
+    assert not (root / "postgres").exists()
+    assert not (root / "load").exists()
+    assert not (root / "clickhouse" / "users.d").exists()
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd /home/bjw/checkpoint && python3 -m pytest tests/smoke/test_compose_structure.py -v`
+
+Expected: FAIL because `/home/bjw/checkpoint-collector` does not exist yet and this repo still owns the collector files.
+
+- [ ] **Step 3: Create the sibling collector repo and move the files**
+
+Run:
+
+```bash
+mkdir -p /home/bjw/checkpoint-collector
+cd /home/bjw/checkpoint-collector
+git init
+```
+
+Move:
+
+```text
+/home/bjw/checkpoint/collector -> /home/bjw/checkpoint-collector/collector
+/home/bjw/checkpoint/postgres -> /home/bjw/checkpoint-collector/postgres
+/home/bjw/checkpoint/load -> /home/bjw/checkpoint-collector/load
+/home/bjw/checkpoint/clickhouse/users.d -> /home/bjw/checkpoint-collector/clickhouse/users.d
+/home/bjw/checkpoint/VERSION -> /home/bjw/checkpoint-collector/VERSION
+```
+
+````markdown
+# Checkpoint Collector
+
+This repo owns the collector pipeline, ClickHouse DDLs, local Postgres image,
+and the load harness used to generate database traffic.
+
+## Local Build
+
+```bash
+docker build -t checkpoint-postgres:local ./postgres
+docker build -t checkpoint-clickhouse:local .
+```
+````
+
+````markdown
+This repo now expects the collector source of truth at `/home/bjw/checkpoint-collector`.
+The collector repo is initialized locally first; Brett can create the GitHub remote while
+the follow-on tasks proceed.
+````
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd /home/bjw/checkpoint && python3 -m pytest tests/smoke/test_compose_structure.py -v`
+
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/bjw/checkpoint-collector
+git add .
+git commit -m "feat: initialize collector repo from checkpoint split"
+
+cd /home/bjw/checkpoint
+git add README.md tests/smoke/test_compose_structure.py
+git add -u collector postgres load clickhouse/users.d VERSION
+git commit -m "refactor: move collector-owned files to sibling repo"
+```
+
+### Task 2: Phase 1 Build Local Images And Slim The Checkpoint Compose Stack
 
 **Files:**
 - Modify: `docker-compose.yml`
@@ -74,13 +176,14 @@
 - [ ] **Step 1: Write the failing smoke tests**
 
 ```python
-def test_compose_uses_published_postgres_and_clickhouse_images():
+def test_compose_uses_local_split_images_for_postgres_and_clickhouse():
     root = Path(__file__).resolve().parents[2]
     compose_text = (root / "docker-compose.yml").read_text()
 
-    assert "image: ghcr.io/checkpoint/checkpoint-postgres:" in compose_text
-    assert "image: ghcr.io/checkpoint/checkpoint-clickhouse:" in compose_text
-    assert "build:" not in compose_text
+    assert "image: checkpoint-postgres:local" in compose_text
+    assert "image: checkpoint-clickhouse:local" in compose_text
+    assert "./postgres" not in compose_text
+    assert "./collector" not in compose_text
 
 
 def test_compose_no_longer_defines_local_collector_pipeline_services():
@@ -96,14 +199,14 @@ def test_compose_no_longer_defines_local_collector_pipeline_services():
 
 Run: `cd /home/bjw/checkpoint && python3 -m pytest tests/smoke/test_compose_structure.py -v`
 
-Expected: FAIL because the current compose file still builds `postgres`, `demo`, and `collector`, mounts local DDLs, and defines `redpanda`.
+Expected: FAIL because the current compose file still points at in-repo build contexts and services.
 
 - [ ] **Step 3: Write the minimal compose and docs changes**
 
 ```yaml
 services:
   postgres:
-    image: ghcr.io/checkpoint/checkpoint-postgres:${CHECKPOINT_POSTGRES_IMAGE_TAG:?set CHECKPOINT_POSTGRES_IMAGE_TAG}
+    image: checkpoint-postgres:local
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d checkpoint_demo"]
       interval: 5s
@@ -112,7 +215,7 @@ services:
     ports: ["5432:5432"]
 
   clickhouse:
-    image: ghcr.io/checkpoint/checkpoint-clickhouse:${CHECKPOINT_CLICKHOUSE_IMAGE_TAG:?set CHECKPOINT_CLICKHOUSE_IMAGE_TAG}
+    image: checkpoint-clickhouse:local
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1'"]
       interval: 5s
@@ -124,10 +227,18 @@ services:
 ````markdown
 ## Local Run
 
-Before merging Phase 1, confirm the collector repo has already published the exact
-`CHECKPOINT_POSTGRES_IMAGE_TAG` and `CHECKPOINT_CLICKHOUSE_IMAGE_TAG` images.
+Build the local collector-owned images first:
 
 ```bash
+cd /home/bjw/checkpoint-collector
+docker build -t checkpoint-postgres:local ./postgres
+docker build -t checkpoint-clickhouse:local .
+```
+
+Then start the checkpoint stack:
+
+```bash
+cd /home/bjw/checkpoint
 docker compose up -d
 cd agent && npm start
 ```
@@ -143,10 +254,10 @@ Expected: PASS
 
 ```bash
 git add docker-compose.yml tests/smoke/test_compose_structure.py README.md
-git commit -m "feat: pull published database images in local compose"
+git commit -m "feat: use local split images in checkpoint compose"
 ```
 
-### Task 2: Phase 1 Startup Schema-Version Validation
+### Task 3: Phase 1 Startup Schema-Version Validation
 
 **Files:**
 - Create: `agent/src/clickhouse_schema_contract.ts`
@@ -299,13 +410,9 @@ git add agent/src/clickhouse_schema_contract.ts agent/test/clickhouse_schema_con
 git commit -m "feat: validate clickhouse schema version at startup"
 ```
 
-### Task 3: Phase 1 Remove In-Repo Collector Assets And Update References
+### Task 4: Phase 1 Remove In-Repo Collector Assets And Update References
 
 **Files:**
-- Delete: `collector/`
-- Delete: `postgres/`
-- Delete: `load/`
-- Delete: `clickhouse/users.d/`
 - Modify: `README.md`
 - Modify: `tests/smoke/test_compose_structure.py`
 - Modify: `JOURNAL.md`
@@ -326,19 +433,20 @@ def test_repo_no_longer_contains_local_collector_or_demo_stack_assets():
 
 Run: `cd /home/bjw/checkpoint && python3 -m pytest tests/smoke/test_compose_structure.py -v`
 
-Expected: FAIL because those directories still exist.
+Expected: FAIL until the move from Task 1 is complete and all references are updated.
 
 - [ ] **Step 3: Remove only the moved assets and update references**
 
 ```markdown
 The collector, ClickHouse DDLs, demo Postgres image, and load harness now live in
-the separate collector repo. This repo consumes the published images only.
+the separate collector repo at `/home/bjw/checkpoint-collector`. This repo consumes
+locally built images from that repo only.
 ```
 
 Add a journal entry:
 
 ```markdown
-- 2026-04-06: Phase 1 moved `collector/`, `postgres/`, `load/`, and local ClickHouse user config out of this repo after published images became available; this repo now validates the pinned collector schema version at startup.
+- 2026-04-06: Phase 1 moved `collector/`, `postgres/`, `load/`, and local ClickHouse user config into `/home/bjw/checkpoint-collector`, initialized that repo under git, and updated checkpoint to consume locally built split images while validating the pinned collector schema version at startup.
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -351,11 +459,10 @@ Expected: PASS
 
 ```bash
 git add README.md tests/smoke/test_compose_structure.py JOURNAL.md
-git add -u collector postgres load clickhouse/users.d
-git commit -m "refactor: remove local collector-owned assets"
+git commit -m "docs: update checkpoint references after collector repo split"
 ```
 
-### Task 4: Phase 2 Preserve The Memory Implementation Before Deletion
+### Task 5: Phase 2 Preserve The Memory Implementation Before Deletion
 
 **Files:**
 - No code changes in the main branch before the branch/tag is created.
@@ -394,7 +501,7 @@ agent/memory/events.jsonl
 git commit --allow-empty -m "chore: preserve memory tool branch point"
 ```
 
-### Task 5: Phase 2 Remove Memory Tools, Memory Prompting, And Memory Runtime Wiring
+### Task 6: Phase 2 Remove Memory Tools, Memory Prompting, And Memory Runtime Wiring
 
 **Files:**
 - Delete: `agent/src/tools/memory_tool.ts`
@@ -499,7 +606,7 @@ git add -u agent/src/tools/memory_tool.ts agent/memory agent/test/memory_tool.te
 git commit -m "refactor: remove memory runtime and prompts"
 ```
 
-### Task 6: Phase 2 Replace `LoopRunEvidence` With Lightweight Call-Time Gates
+### Task 7: Phase 2 Replace `LoopRunEvidence` With Lightweight Call-Time Gates
 
 **Files:**
 - Modify: `agent/src/agent_tools.ts`
@@ -622,7 +729,7 @@ git add agent/src/agent_tools.ts agent/test/agent_tools.test.ts
 git commit -m "refactor: replace loop evidence with stateless tool gates"
 ```
 
-### Task 7: Phase 3 Create The Root Pi Package And Register The Tools
+### Task 8: Phase 3 Create The Root Pi Package And Register The Tools
 
 **Files:**
 - Create: `package.json`
@@ -748,7 +855,7 @@ git add -u agent/src/tools
 git commit -m "feat: convert db specialist runtime into a pi package"
 ```
 
-### Task 8: Phase 3 Standalone Pi Runtime And Container Image
+### Task 9: Phase 3 Standalone Pi Runtime And Container Image
 
 **Files:**
 - Create: `Dockerfile`
@@ -826,7 +933,7 @@ git add Dockerfile test/integration/pi_session.test.ts README.md
 git commit -m "feat: add standalone pi runtime and package image"
 ```
 
-### Task 9: Phase 3 Build The Thin A2A Bridge Over Pi Sessions
+### Task 10: Phase 3 Build The Thin A2A Bridge Over Pi Sessions
 
 **Files:**
 - Create: `src/a2a_bridge/session_registry.ts`
@@ -918,16 +1025,17 @@ git commit -m "feat: add a2a bridge over pi sessions"
 
 ### Spec coverage
 
-- Phase 1 extract-collector goal: covered by Task 1 and Task 3.
-- Phase 1 hard prerequisite that published images exist before merge: covered by Task 1 README and ship criteria.
-- Phase 1 startup schema validation: covered by Task 2.
-- Phase 2 memory removal: covered by Task 4 and Task 5.
-- Phase 2 preserve-on-branch requirement: covered by Task 4.
-- Phase 2 remove `LoopRunEvidence` and use lightweight safety gates: covered by Task 6.
-- Phase 3 root pi package and single extension entrypoint: covered by Task 7.
-- Phase 3 markdown skills: covered by Task 7.
-- Phase 3 container-per-customer runtime and standalone pi first: covered by Task 8.
-- Phase 3 A2A as a thin bridge built last: covered by Task 9.
+- Phase 1 extract-collector goal: covered by Task 1 and Task 4.
+- Phase 1 collector repo setup under `/home/bjw`: covered by Task 1.
+- Phase 1 local-image workflow replacing the GHCR prerequisite during implementation: covered by Task 2.
+- Phase 1 startup schema validation: covered by Task 3.
+- Phase 2 memory removal: covered by Task 5 and Task 6.
+- Phase 2 preserve-on-branch requirement: covered by Task 5.
+- Phase 2 remove `LoopRunEvidence` and use lightweight safety gates: covered by Task 7.
+- Phase 3 root pi package and single extension entrypoint: covered by Task 8.
+- Phase 3 markdown skills: covered by Task 8.
+- Phase 3 container-per-customer runtime and standalone pi first: covered by Task 9.
+- Phase 3 A2A as a thin bridge built last: covered by Task 10.
 - Out-of-scope items from the spec are intentionally absent from this plan.
 
 ### Placeholder scan
