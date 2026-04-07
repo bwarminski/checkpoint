@@ -42,13 +42,13 @@ export class SessionRegistry {
     try {
       const contents = await readFile(this.path, "utf8");
       if (contents.trim().length === 0) {
-        return {};
+        return createSessionRecords();
       }
 
       return parseSessionRecords(JSON.parse(contents));
     } catch (error) {
       if (isMissingFile(error) || error instanceof SyntaxError) {
-        return {};
+        return createSessionRecords();
       }
 
       throw error;
@@ -93,10 +93,10 @@ function isMissingFile(error: unknown): boolean {
 
 function parseSessionRecords(value: unknown): SessionRecords {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
+    return createSessionRecords();
   }
 
-  const records: SessionRecords = {};
+  const records = createSessionRecords();
 
   for (const [contextId, record] of Object.entries(value)) {
     if (!isSessionRecord(record)) {
@@ -117,4 +117,8 @@ function isSessionRecord(value: unknown): value is SessionRecord {
     typeof (value as SessionRecord).createdAt === "string" &&
     typeof (value as SessionRecord).lastActiveAt === "string"
   );
+}
+
+function createSessionRecords(): SessionRecords {
+  return Object.create(null) as SessionRecords;
 }

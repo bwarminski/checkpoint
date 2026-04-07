@@ -244,6 +244,35 @@ test("SessionRegistry treats non-object JSON roots as empty", async () => {
   }
 });
 
+test("SessionRegistry preserves reserved contextId names", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-a2a-registry-"));
+  const registryPath = join(directory, "sessions.json");
+  const registry = new SessionRegistry(registryPath);
+
+  try {
+    await registry.record("__proto__", {
+      sessionPath: "/sessions/proto",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+
+    assert.deepEqual(await registry.read("__proto__"), {
+      sessionPath: "/sessions/proto",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+
+    const reloaded = new SessionRegistry(registryPath);
+    assert.deepEqual(await reloaded.read("__proto__"), {
+      sessionPath: "/sessions/proto",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((res) => {
