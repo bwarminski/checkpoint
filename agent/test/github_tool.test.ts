@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { GitHubTool } from "../src/tools/github_tool.ts";
+import { GitHubTool } from "../../src/tools/github_tool.ts";
 
 test("GitHubTool returns a local demo pull request url when no client is configured", async () => {
   const tool = new GitHubTool(undefined, {

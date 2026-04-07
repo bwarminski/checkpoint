@@ -99,13 +99,13 @@ export class CodeSearchTool {
 }
 
 async function createGeneratedClient(): Promise<CodeSearchClient> {
-  const generatedModulePath = `./generated/${"code-search-client"}.ts`;
+  const generatedModulePath = `../../agent/src/tools/generated/${"code-search-client"}.ts`;
   const module = (await import(generatedModulePath)) as {
     createCodeSearchClient: (input: { configPath: string }) => Promise<CodeSearchClient>;
   };
 
   return module.createCodeSearchClient({
-    configPath: fileURLToPath(new URL("../../.mcporter.json", import.meta.url)),
+    configPath: fileURLToPath(new URL("../../agent/.mcporter.json", import.meta.url)),
   });
 }
 

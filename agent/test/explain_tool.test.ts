@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ExplainTool } from "../src/tools/explain_tool.ts";
+import { ExplainTool } from "../../src/tools/explain_tool.ts";
 
 test("ExplainTool rejects destructive SQL", async () => {
   const tool = new ExplainTool({ query: async () => ({ rows: [] }) });

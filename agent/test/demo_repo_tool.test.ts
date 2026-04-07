@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { DemoRepoTool, defaultDemoAppRoot } from "../src/tools/demo_repo_tool.ts";
+import { DemoRepoTool, defaultDemoAppRoot } from "../../src/tools/demo_repo_tool.ts";
 
 test("DemoRepoTool falls back to the sibling db-specialist-demo path when DEMO_APP_ROOT is unset", () => {
   assert.equal(

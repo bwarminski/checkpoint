@@ -1,0 +1,19 @@
+{
+  "name": "@checkpoint/db-specialist",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "tsx": "4.21.0",
+    "typescript": "^6.0.2"
+  }
+}

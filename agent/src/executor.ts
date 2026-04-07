@@ -13,7 +13,7 @@ import {
   type LlmConfig,
   type QualifiedModelRef,
 } from "./llm_config.ts";
-import { ClickHouseTool } from "./tools/clickhouse_tool.ts";
+import { ClickHouseTool } from "../../src/tools/clickhouse_tool.ts";
 
 type EventQueue = {
   enqueueEvent(event: unknown): void;

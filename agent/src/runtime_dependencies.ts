@@ -4,11 +4,11 @@ import { Pool } from "pg";
 
 import { assertSchemaContractSatisfied } from "./clickhouse_schema_contract.ts";
 import { DBSpecialistExecutor } from "./executor.ts";
-import { ClickHouseTool } from "./tools/clickhouse_tool.ts";
-import { CodeSearchTool } from "./tools/code_search_tool.ts";
-import { DemoRepoTool } from "./tools/demo_repo_tool.ts";
-import { ExplainTool } from "./tools/explain_tool.ts";
-import { GitHubTool } from "./tools/github_tool.ts";
+import { ClickHouseTool } from "../../src/tools/clickhouse_tool.ts";
+import { CodeSearchTool } from "../../src/tools/code_search_tool.ts";
+import { DemoRepoTool } from "../../src/tools/demo_repo_tool.ts";
+import { ExplainTool } from "../../src/tools/explain_tool.ts";
+import { GitHubTool } from "../../src/tools/github_tool.ts";
 
 let pool: Pool | undefined;
 

@@ -47,7 +47,7 @@ type ApplyFixResult = {
 const execFileAsync = promisify(execFile);
 
 export function defaultDemoAppRoot(): string {
-  return resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../../db-specialist-demo");
+  return resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../db-specialist-demo");
 }
 
 export class DemoRepoTool {

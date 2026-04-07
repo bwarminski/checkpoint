@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ClickHouseTool } from "../src/tools/clickhouse_tool.ts";
+import { ClickHouseTool } from "../../src/tools/clickhouse_tool.ts";
 
 test("ClickHouseTool lists tables from SHOW TABLES", async () => {
   let queryCalls = 0;

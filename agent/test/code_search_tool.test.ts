@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CodeSearchTool } from "../src/tools/code_search_tool.ts";
+import { CodeSearchTool } from "../../src/tools/code_search_tool.ts";
 
 test("CodeSearchTool preserves the app path and loads surrounding file context", async () => {
   const calls: Array<{ lines?: number; path: string }> = [];
