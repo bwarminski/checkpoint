@@ -56,21 +56,58 @@ export default function registerDbSpecialist(pi: PiExtension): void {
   pi.registerTool({
     name: "apply_fix",
     description: "Apply a concrete fix in the demo repo for a selected finding.",
-    execute: async (input: unknown) => demoRepoTool.applyFix(input as {
-      finding: { fingerprint: string };
-      fix: { fix_type: string; summary: string };
-      source: { content: string; source_file: string };
-    }),
+    execute: async (input: unknown) => {
+      const request = input as {
+        finding?: { fingerprint?: string; severity?: string };
+        fix?: { fix_type?: string; summary?: string };
+        source?: { content?: string; source_file?: string };
+        validation?: { validated?: boolean };
+      };
+
+      if (request.finding?.severity !== "high") {
+        throw new Error("apply_fix requires a high-severity finding");
+      }
+
+      if (request.validation?.validated !== true) {
+        throw new Error("apply_fix requires validated query input");
+      }
+
+      if (!request.source?.source_file) {
+        throw new Error("apply_fix requires source_file");
+      }
+
+      return demoRepoTool.applyFix({
+        finding: {
+          fingerprint: request.finding.fingerprint ?? "",
+        },
+        fix: {
+          fix_type: request.fix?.fix_type ?? "",
+          summary: request.fix?.summary ?? "",
+        },
+        source: {
+          content: request.source.content ?? "",
+          source_file: request.source.source_file,
+        },
+      });
+    },
   });
   pi.registerTool({
     name: "open_pull_request",
     description: "Open a pull request for the selected finding and prepared fix.",
-    execute: async (input: unknown) => githubTool.openPullRequest(input as {
-      codeDiff?: string;
-      finding: { fingerprint?: string; source_tag?: string };
-      fix: { fix_type?: string; summary?: string };
-      headRef?: string;
-      validation?: { plan_rows?: Array<Record<string, unknown>> };
-    }),
+    execute: async (input: unknown) => {
+      const request = input as {
+        codeDiff?: string;
+        finding?: { fingerprint?: string; source_tag?: string };
+        fix?: { fix_type?: string; summary?: string };
+        headRef?: string;
+        validation?: { plan_rows?: Array<Record<string, unknown>> };
+      };
+
+      if (!request.headRef || !request.codeDiff) {
+        throw new Error("open_pull_request requires non-empty headRef and codeDiff");
+      }
+
+      return githubTool.openPullRequest(request);
+    },
   });
 }
