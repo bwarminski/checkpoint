@@ -83,10 +83,6 @@ function buildMockLoopExecutor(): DBSpecialistExecutor {
         executeQuery: async () => "fingerprint\tabc",
         queryFindings: async () => [],
       },
-      memoryTool: {
-        search: async () => [],
-        record: async () => {},
-      },
     } as any,
     {
       createAgent: () => {
