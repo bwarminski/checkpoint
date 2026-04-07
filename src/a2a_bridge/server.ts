@@ -47,6 +47,10 @@ async function createSession(
       throw error;
     }
 
+    if (!isMissingSessionError(error)) {
+      throw error;
+    }
+
     await input.registry.remove(contextId);
     return input.createAgentSession();
   }
@@ -75,4 +79,12 @@ async function runSerialized<T>(
       queues.delete(contextId);
     }
   }
+}
+
+function isMissingSessionError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /missing session|not found|enoent/i.test(error.message);
 }
