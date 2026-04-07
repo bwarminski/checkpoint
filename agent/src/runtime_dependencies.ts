@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { Pool } from "pg";
 
+import { assertSchemaContractSatisfied } from "./clickhouse_schema_contract.ts";
 import { DBSpecialistExecutor } from "./executor.ts";
 import { ClickHouseTool } from "./tools/clickhouse_tool.ts";
 import { CodeSearchTool } from "./tools/code_search_tool.ts";
@@ -56,6 +57,16 @@ export function createRuntimeExecutor(): DBSpecialistExecutor {
     githubTool: new GitHubTool(),
     memoryTool,
     demoRepoTool: new DemoRepoTool(),
+  });
+}
+
+export async function validateRuntimeSchema(clickhouseTool = new ClickHouseTool()): Promise<void> {
+  const expectedVersion = process.env.CHECKPOINT_CLICKHOUSE_SCHEMA_VERSION ?? "";
+  const introspection = await clickhouseTool.readSchemaContract();
+
+  await assertSchemaContractSatisfied({
+    expectedVersion,
+    introspection,
   });
 }
 

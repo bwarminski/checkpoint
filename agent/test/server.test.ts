@@ -51,6 +51,39 @@ test("server startup loads repo-root .env without overriding existing shell vars
   }
 });
 
+test("startServer validates the runtime schema before listening", async () => {
+  const { startServer } = await loadServerModule();
+  let validated = false;
+  let server: { close: (callback: () => void) => void } | undefined;
+
+  try {
+    await assert.rejects(
+      async () => {
+        server = await startServer({
+          host: "127.0.0.1",
+          port: 0,
+          validateRuntimeSchema: async () => {
+            validated = true;
+            throw new Error("schema mismatch");
+          },
+        } as any);
+      },
+      /schema mismatch/,
+    );
+  } finally {
+    await new Promise<void>((resolve) => {
+      if (!server) {
+        resolve();
+        return;
+      }
+
+      server.close(() => resolve());
+    });
+  }
+
+  assert.equal(validated, true);
+});
+
 async function loadServerModule() {
   return import(new URL(`../src/server.ts?${Date.now()}`, import.meta.url).href);
 }

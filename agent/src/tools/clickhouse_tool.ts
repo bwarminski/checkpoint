@@ -1,5 +1,7 @@
 // ABOUTME: Defines the ClickHouse access point used by the DB specialist agent.
 // ABOUTME: Exposes table discovery and guarded query execution for the executor.
+import type { ClickHouseSchemaContract } from "../clickhouse_schema_contract.ts";
+
 export type TopOffender = {
   fingerprint: string;
   [key: string]: unknown;
@@ -34,6 +36,13 @@ export class ClickHouseTool {
     assertSupportedQuery(sql);
 
     return this.transport!.query(sql);
+  }
+
+  async readSchemaContract(): Promise<ClickHouseSchemaContract> {
+    const schemaVersion = (await this.transport!.query("SELECT version FROM schema_contract FORMAT TSV")).trim();
+    const tableRows = await this.transport!.query("SELECT table, columns FROM schema_contract_tables FORMAT TSV");
+
+    return parseSchemaContract(schemaVersion, tableRows);
   }
 
   async queryFindings(scope?: unknown): Promise<Array<TopOffender>> {
@@ -146,6 +155,34 @@ function parseOffenderRows(payload: string): Array<TopOffender> {
       total_exec_time_ms: totalExecTimeMs,
     };
   });
+}
+
+function parseSchemaContract(schemaVersion: string, tableRows: string): ClickHouseSchemaContract {
+  const lines = tableRows.trim().split("\n").filter(Boolean);
+
+  if (!lines.length) {
+    return {
+      schemaVersion,
+      tables: [],
+    };
+  }
+
+  const [headerLine, ...dataLines] = lines;
+  const headers = headerLine.split("\t");
+
+  return {
+    schemaVersion,
+    tables: dataLines.map((line) => {
+      const values = line.split("\t");
+      const row = Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
+      const columnsValue = String(row.columns ?? "");
+
+      return {
+        columns: columnsValue ? columnsValue.split(",").map((column) => column.trim()).filter(Boolean) : [],
+        name: String(row.table ?? ""),
+      };
+    }),
+  };
 }
 
 function normalizeValue(header: string, value: string | undefined): number | string | null {
