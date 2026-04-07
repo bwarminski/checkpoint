@@ -17,6 +17,22 @@ test("buildTestCommand keeps default globs for option-only reporter invocations"
   ]);
 });
 
+test("buildTestCommand keeps default globs for test concurrency invocations", () => {
+  assert.deepEqual(buildTestCommand(["--test-concurrency", "1"]), [
+    "--test-concurrency",
+    "1",
+    ...getDefaultTestFiles(),
+  ]);
+});
+
+test("buildTestCommand keeps default globs for test shard invocations", () => {
+  assert.deepEqual(buildTestCommand(["--test-shard", "1/1"]), [
+    "--test-shard",
+    "1/1",
+    ...getDefaultTestFiles(),
+  ]);
+});
+
 test("buildTestCommand keeps file-only invocations scoped to the requested file", () => {
   assert.deepEqual(buildTestCommand(["test/server.test.ts"]), [
     "test/server.test.ts",

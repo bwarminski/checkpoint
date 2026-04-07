@@ -31,6 +31,8 @@ function containsFileTarget(args) {
     "--test-name-pattern",
     "--test-reporter",
     "--test-reporter-destination",
+    "--test-concurrency",
+    "--test-shard",
   ]);
   let skipNext = false;
 
