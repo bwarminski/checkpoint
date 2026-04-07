@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node --import tsx src/server.ts",
     "start:code-search-server": "tsx src/mcp-servers/code-search/main.ts",
-    "test": "sh -c 'if [ \"$#\" -eq 0 ]; then exec node --import tsx --test test/*.test.ts test/integration/*.test.ts; fi; has_files=0; skip_next=0; for arg do if [ \"$skip_next\" -eq 1 ]; then skip_next=0; continue; fi; case \"$arg\" in --test-name-pattern) skip_next=1 ;; -*) ;; *) has_files=1; break ;; esac; done; if [ \"$has_files\" -eq 1 ]; then exec node --import tsx --test \"$@\"; fi; exec node --import tsx --test \"$@\" test/*.test.ts test/integration/*.test.ts' sh",
+    "test": "node scripts/run-tests.mjs",
     "generate:code-search": "bun ./node_modules/mcporter/dist/cli.js emit-ts code-search --config .mcporter.json --mode client --out src/tools/generated/code-search-client.ts && bun scripts/fix-generated-code-search-client.mjs",
     "pretypecheck": "npm run generate:code-search",
     "typecheck": "tsc --noEmit",
