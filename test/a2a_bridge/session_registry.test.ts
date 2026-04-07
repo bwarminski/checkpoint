@@ -185,6 +185,65 @@ test("SessionRegistry recovers from a malformed on-disk registry", async () => {
   }
 });
 
+test("SessionRegistry drops syntactically valid entries with the wrong shape", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-a2a-registry-"));
+  const registryPath = join(directory, "sessions.json");
+  const registry = new SessionRegistry(registryPath);
+
+  try {
+    await writeFile(
+      registryPath,
+      JSON.stringify({
+        "ctx-bad": {
+          sessionPath: null,
+          createdAt: "x",
+          lastActiveAt: "y",
+        },
+        "ctx-good": {
+          sessionPath: "/sessions/good",
+          createdAt: "a",
+          lastActiveAt: "b",
+        },
+      }),
+    );
+
+    assert.equal(await registry.read("ctx-bad"), undefined);
+    assert.deepEqual(await registry.read("ctx-good"), {
+      sessionPath: "/sessions/good",
+      createdAt: "a",
+      lastActiveAt: "b",
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("SessionRegistry treats non-object JSON roots as empty", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-a2a-registry-"));
+  const registryPath = join(directory, "sessions.json");
+  const registry = new SessionRegistry(registryPath);
+
+  try {
+    await writeFile(registryPath, "[]");
+
+    assert.equal(await registry.read("ctx-1"), undefined);
+
+    await registry.record("ctx-1", {
+      sessionPath: "/sessions/one",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+
+    assert.deepEqual(await registry.read("ctx-1"), {
+      sessionPath: "/sessions/one",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((res) => {

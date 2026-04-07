@@ -45,7 +45,7 @@ export class SessionRegistry {
         return {};
       }
 
-      return JSON.parse(contents) as SessionRecords;
+      return parseSessionRecords(JSON.parse(contents));
     } catch (error) {
       if (isMissingFile(error) || error instanceof SyntaxError) {
         return {};
@@ -88,5 +88,33 @@ function isMissingFile(error: unknown): boolean {
     error !== null &&
     "code" in error &&
     (error as { code?: string }).code === "ENOENT"
+  );
+}
+
+function parseSessionRecords(value: unknown): SessionRecords {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const records: SessionRecords = {};
+
+  for (const [contextId, record] of Object.entries(value)) {
+    if (!isSessionRecord(record)) {
+      continue;
+    }
+
+    records[contextId] = record;
+  }
+
+  return records;
+}
+
+function isSessionRecord(value: unknown): value is SessionRecord {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as SessionRecord).sessionPath === "string" &&
+    typeof (value as SessionRecord).createdAt === "string" &&
+    typeof (value as SessionRecord).lastActiveAt === "string"
   );
 }
