@@ -181,6 +181,47 @@ test("createA2ABridge rethrows unrelated not found resume failures", async () =>
   }
 });
 
+test("createA2ABridge rethrows unrelated ENOENT resume failures", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-a2a-bridge-"));
+  const registryPath = join(directory, "sessions.json");
+  const registry = new SessionRegistry(registryPath);
+
+  try {
+    await registry.record("ctx-1", {
+      sessionPath: "/sessions/live",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+
+    const bridge = createA2ABridge({
+      registry,
+      createAgentSession: async (sessionPath) => {
+        if (sessionPath === "/sessions/live") {
+          throw new Error("ENOENT: no such file or directory, open /tmp/provider-config.json");
+        }
+
+        return {
+          sessionPath: sessionPath ?? "/sessions/fresh",
+          prompt: async (text) => `reply:${text}`,
+        };
+      },
+    });
+
+    await assert.rejects(
+      () => bridge.send("ctx-1", "hello"),
+      /provider-config\.json/,
+    );
+
+    assert.deepEqual(await registry.read("ctx-1"), {
+      sessionPath: "/sessions/live",
+      createdAt: "2026-04-07T00:00:00.000Z",
+      lastActiveAt: "2026-04-07T00:00:00.000Z",
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("createA2ABridge serializes concurrent sends for one context", async () => {
   const directory = await mkdtemp(join(tmpdir(), "checkpoint-a2a-bridge-"));
   const registryPath = join(directory, "sessions.json");
