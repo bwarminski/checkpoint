@@ -212,7 +212,8 @@ test("db-specialist extension returns apply_fix handoff fields for open_pull_req
     });
 
     const result = await openPullRequest!.execute({
-      ...fixResult,
+      headRef: fixResult.headRef,
+      codeDiff: fixResult.codeDiff,
       finding: { fingerprint: "fp-1", source_tag: "todos#index" },
       fix: { fix_type: "add_index", summary: "Add index" },
       validation,
@@ -228,6 +229,36 @@ test("db-specialist extension returns apply_fix handoff fields for open_pull_req
     assert.deepEqual(result, { url: "local://db-specialist/pull-requests/fp-1" });
   } finally {
     DemoRepoTool.prototype.applyFix = originalApplyFix;
+    GitHubTool.prototype.openPullRequest = originalOpenPullRequest;
+  }
+});
+
+test("db-specialist extension rejects open_pull_request aliases without headRef and codeDiff", async () => {
+  const originalOpenPullRequest = GitHubTool.prototype.openPullRequest;
+  let calls = 0;
+  GitHubTool.prototype.openPullRequest = async function () {
+    calls += 1;
+    return { url: "local://db-specialist/pull-requests/fp" };
+  };
+
+  try {
+    const tools = collectRegisteredTools();
+    const openPullRequest = tools.get("open_pull_request")!;
+
+    await assert.rejects(
+      () =>
+        openPullRequest.execute({
+          branchName: "agent/demo-fix-fp",
+          diff: "diff --git a/file b/file",
+          finding: { fingerprint: "fp-6" },
+          fix: { fix_type: "add_index", summary: "summary" },
+          validation: { validated: true },
+        }),
+      /headRef|codeDiff/i,
+    );
+
+    assert.equal(calls, 0);
+  } finally {
     GitHubTool.prototype.openPullRequest = originalOpenPullRequest;
   }
 });

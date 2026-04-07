@@ -136,27 +136,22 @@ export function createDbSpecialistTools(options: DbSpecialistToolsOptions = {}):
     execute: async (input: unknown) => {
       const request = input as {
         codeDiff?: string;
-        diff?: string;
         finding?: { fingerprint?: string; source_tag?: string };
         fix?: { fix_type?: string; summary?: string };
         headRef?: string;
-        branchName?: string;
         validation?: { plan_rows?: Array<Record<string, unknown>> };
       };
 
-      const headRef = request.headRef ?? request.branchName;
-      const codeDiff = request.codeDiff ?? request.diff;
-
-      if (!headRef || !codeDiff) {
+      if (!request.headRef || !request.codeDiff) {
         throw new Error("open_pull_request requires non-empty headRef and codeDiff");
       }
 
-      const { branchName, diff, ...rest } = request;
-
       return githubTool.openPullRequest({
-        ...rest,
-        codeDiff,
-        headRef,
+        codeDiff: request.codeDiff,
+        finding: request.finding,
+        fix: request.fix,
+        headRef: request.headRef,
+        validation: request.validation,
       });
     },
     },
