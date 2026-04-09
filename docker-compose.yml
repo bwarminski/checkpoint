@@ -22,7 +22,8 @@ services:
       retries: 12
     ports: ["8123:8123", "9000:9000"]
   demo:
-    image: ${DEMO_APP_ROOT:-/home/bjw/db-specialist-demo}
+    image: ruby:3.3
+    command: ["sleep", "infinity"]
     volumes:
       - ${DEMO_APP_ROOT:-/home/bjw/db-specialist-demo}:/app
     depends_on:

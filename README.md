@@ -10,6 +10,34 @@ create the GitHub remote for that repo while the follow-on tasks proceed.
 The Rails demo app is no longer stored here. Its source of truth is the sibling
 repo at `/home/bjw/db-specialist-demo`.
 
+## Demo setup
+
+Clone or update the sibling demo repo at `/home/bjw/db-specialist-demo` and make
+sure you have push access if you want the fix flow to open real branches and pull
+requests against it.
+
+The key demo configuration variables are:
+
+- `DEMO_APP_ROOT`
+  Optional override for the sibling demo repo path. Default:
+  `/home/bjw/db-specialist-demo`.
+- `DEMO_REPO`
+  GitHub repository slug for real pull request creation.
+- `DEMO_BASE_REF`
+  Base branch used for fix branches and pull requests.
+- `GITHUB_TOKEN`
+  Optional token for real pull request creation. Leave unset to keep the local
+  fallback URL path.
+
+If the demo repo drifts or you want a clean rerun, reset it in the sibling repo:
+
+```bash
+cd /home/bjw/db-specialist-demo
+git fetch origin
+git reset --hard origin/main
+git clean -fd
+```
+
 ## Standalone Pi Runtime
 
 Build the package image from this repo root:
@@ -46,6 +74,11 @@ Set `GITHUB_TOKEN` and `DEMO_REPO` only when you want real GitHub pull request
 creation instead of the local fallback URL. Choose the Pi model with CLI flags
 such as `--provider openai --model gpt-4o-mini` plus the matching provider API
 key env var.
+
+For the existing agent loop and manual validation harness, `LLM_MODEL` remains
+the provider-agnostic model selector. Use provider/model format such as
+`openai/gpt-4o-mini` or `anthropic/claude-sonnet-4-20250514`, and set the
+matching provider key too, for example `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
 
 ## Session Configuration
 

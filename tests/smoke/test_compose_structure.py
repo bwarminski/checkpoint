@@ -28,7 +28,7 @@ def test_compose_renders_the_split_image_services_and_demo_mount():
     assert set(services) == {"clickhouse", "demo", "postgres"}
     assert services["postgres"]["image"] == "checkpoint-postgres:local"
     assert services["clickhouse"]["image"] == "checkpoint-clickhouse:local"
-    assert services["demo"]["image"] == demo_root
+    assert services["demo"]["image"] == "ruby:3.3"
     assert services["demo"]["volumes"] == [
         {
             "type": "bind",
@@ -37,6 +37,7 @@ def test_compose_renders_the_split_image_services_and_demo_mount():
             "bind": {},
         }
     ]
+    assert services["demo"]["command"] == ["sleep", "infinity"]
     assert "build" not in services["postgres"]
     assert "build" not in services["clickhouse"]
 
