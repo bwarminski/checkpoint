@@ -3,7 +3,7 @@
 type PullRequestInput = {
   finding?: {
     fingerprint?: string;
-    source_tag?: string;
+    source_file?: string;
   };
   fix?: {
     fix_type?: string;
@@ -175,7 +175,7 @@ function buildPullRequestBody(input: PullRequestInput): string {
   return [
     "## DB Specialist Finding",
     `- fingerprint: ${input.finding?.fingerprint ?? "unknown"}`,
-    `- source_tag: ${input.finding?.source_tag ?? "unknown"}`,
+    `- source_file: ${input.finding?.source_file ?? "unknown"}`,
     `- fix_type: ${input.fix?.fix_type ?? "unknown"}`,
     `- summary: ${input.fix?.summary ?? "unknown"}`,
     "",

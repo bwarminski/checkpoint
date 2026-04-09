@@ -61,7 +61,7 @@ test("query_findings returns typed ClickHouse findings details", async () => {
   ]);
 });
 
-test("locate_source rejects calls without source_file or source_tag", async () => {
+test("locate_source rejects calls without source_file", async () => {
   const tools = buildAgentTools({
     codeSearchTool: {
       locate: async () => {
@@ -75,7 +75,7 @@ test("locate_source rejects calls without source_file or source_tag", async () =
 
   await assert.rejects(
     () => locateSource.execute("tool-2", {} as any),
-    /source_file or source_tag/i,
+    /source_file is required/i,
   );
 });
 
@@ -212,7 +212,7 @@ test("open_pull_request succeeds with non-empty headRef and codeDiff", async () 
   assert.ok(openPullRequest);
 
   const result = await openPullRequest.execute("tool-5", {
-    finding: { fingerprint: "fp-1", source_tag: "todos#index" },
+    finding: { fingerprint: "fp-1" },
     fix: { fix_type: "add_index", summary: "Add index" },
     validation: { validated: true, plan_rows: [{ plan: "Index Scan" }] },
     source: { content: "body", source_file: "app/models/todo.rb:2" },
@@ -221,7 +221,7 @@ test("open_pull_request succeeds with non-empty headRef and codeDiff", async () 
   } as any);
 
   assert.deepEqual(capturedInput, {
-    finding: { fingerprint: "fp-1", source_tag: "todos#index" },
+    finding: { fingerprint: "fp-1" },
     fix: { fix_type: "add_index", summary: "Add index" },
     validation: { validated: true, plan_rows: [{ plan: "Index Scan" }] },
     headRef: "agent/demo-fix-fp-1",
@@ -230,4 +230,22 @@ test("open_pull_request succeeds with non-empty headRef and codeDiff", async () 
   assert.deepEqual(result.details, {
     url: "https://example.test/pr/1",
   });
+});
+
+test("locate_source rejects source_tag-only input", async () => {
+  const tools = buildAgentTools({
+    codeSearchTool: {
+      locate: async () => {
+        throw new Error("should not reach code search");
+      },
+    },
+  } as any);
+
+  const locateSource = tools.find((tool) => tool.name === "locate_source");
+  assert.ok(locateSource);
+
+  await assert.rejects(
+    () => locateSource.execute("tool-6", { source_tag: "todos#index" } as any),
+    /source_file is required/i,
+  );
 });

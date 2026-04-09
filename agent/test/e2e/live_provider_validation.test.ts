@@ -116,11 +116,11 @@ async function seedLiveValidationData(): Promise<void> {
   const insertFixture = [
     "INSERT INTO query_events",
     "(",
-    "  collected_at, fingerprint, source_tag, source_file, sample_query, total_exec_count, mean_exec_time_ms,",
+    "  collected_at, fingerprint, source_file, sample_query, total_exec_count, mean_exec_time_ms,",
     "  rows_returned_or_affected, shared_blks_hit, shared_blks_read, local_blks_hit, local_blks_read,",
     "  temp_blks_read, temp_blks_written, total_block_accesses, mean_block_accesses_per_call",
     ") VALUES (",
-    "  now(), 'fp-live-provider', 'todos#index', '/app/controllers/todos_controller.rb:12',",
+    "  now(), 'fp-live-provider', '/app/controllers/todos_controller.rb:12',",
     "  'SELECT * FROM todos', 7, 125.5, 20, 100, 40, 0, 0, 3, 2, 145, 20.714285714285715",
     ")",
   ].join(" ");

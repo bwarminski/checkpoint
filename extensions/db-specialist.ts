@@ -84,8 +84,8 @@ export function createDbSpecialistTools(options: DbSpecialistToolsOptions = {}):
     },
     {
     name: "locate_source",
-    description: "Load the source file context for a finding's source file or source tag.",
-    execute: async (input: unknown) => codeSearchTool.locate(input as { source_file?: string | null; source_tag?: string | null }),
+    description: "Load the source file context for a finding's source file.",
+    execute: async (input: unknown) => codeSearchTool.locate(input as { source_file?: string | null }),
     },
     {
     name: "apply_fix",
@@ -136,7 +136,7 @@ export function createDbSpecialistTools(options: DbSpecialistToolsOptions = {}):
     execute: async (input: unknown) => {
       const request = input as {
         codeDiff?: string;
-        finding?: { fingerprint?: string; source_tag?: string };
+        finding?: { fingerprint?: string; source_file?: string };
         fix?: { fix_type?: string; summary?: string };
         headRef?: string;
         validation?: { plan_rows?: Array<Record<string, unknown>> };

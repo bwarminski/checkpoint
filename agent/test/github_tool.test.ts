@@ -47,7 +47,7 @@ test("GitHubTool posts a real pull request when token and repo config are presen
   const result = await tool.openPullRequest({
     finding: {
       fingerprint: "fp-real",
-      source_tag: "todos#index",
+      source_file: "app/controllers/todos_controller.rb:12",
     },
     fix: {
       fix_type: "rewrite_like",
@@ -65,7 +65,8 @@ test("GitHubTool posts a real pull request when token and repo config are presen
   assert.equal(requests[0]?.url, "https://api.github.com/repos/brett/db-specialist-demo/pulls");
   assert.match(requests[0]?.headers.get("authorization") ?? "", /^Bearer secret-token$/);
   assert.match(requests[0]?.body ?? "", /fp-real/);
-  assert.match(requests[0]?.body ?? "", /todos#index/);
+  assert.match(requests[0]?.body ?? "", /app\/controllers\/todos_controller\.rb:12/);
+  assert.doesNotMatch(requests[0]?.body ?? "", /source_tag/);
   assert.match(requests[0]?.body ?? "", /rewrite_like/);
   assert.match(requests[0]?.body ?? "", /## Code Change/);
   assert.match(requests[0]?.body ?? "", /```diff/);
@@ -152,7 +153,7 @@ test("GitHubTool returns an existing pull request url when GitHub reports one al
   });
 
   const result = await tool.openPullRequest({
-    finding: { fingerprint: "fp-existing", source_tag: "todos#status" },
+    finding: { fingerprint: "fp-existing", source_file: "app/models/todo.rb:5" },
     fix: { fix_type: "add_index", summary: "Add an index for status." },
     validation: { validated: true },
     headRef: "agent/demo-fix/fp-existing",

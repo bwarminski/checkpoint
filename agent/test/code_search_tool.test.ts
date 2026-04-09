@@ -27,36 +27,12 @@ test("CodeSearchTool preserves the app path and loads surrounding file context",
   });
 });
 
-test("CodeSearchTool derives a controller file when source_tag is present", async () => {
-  const calls: Array<{ lines?: number; path: string }> = [];
-  const searches: Array<{ glob?: string; pattern: string }> = [];
+test("CodeSearchTool requires source_file input", async () => {
   const tool = new CodeSearchTool({
-    read_file: async (path: string, lines?: number) => {
-      calls.push({ lines, path });
-      return "8:   def index";
-    },
-    search_code: async (pattern: string, glob?: string) => {
-      searches.push({ glob, pattern });
-      return JSON.stringify([
-        { line: 8, path: "app/controllers/todos_controller.rb", preview: "  def index" },
-      ]);
-    },
+    read_file: async () => "unused",
   });
 
-  const result = await tool.locate({
-    source_tag: "todos#index",
-  });
-
-  assert.deepEqual(searches, [
-    { glob: "app/controllers/**/*_controller.rb", pattern: "def index" },
-  ]);
-  assert.deepEqual(calls, [
-    { lines: 3, path: "app/controllers/todos_controller.rb:8" },
-  ]);
-  assert.deepEqual(result, {
-    content: "8:   def index",
-    source_file: "app/controllers/todos_controller.rb:8",
-  });
+  await assert.rejects(() => tool.locate({}), /source_file is required/i);
 });
 
 test("CodeSearchTool rejects absolute paths outside the /app mount", async () => {

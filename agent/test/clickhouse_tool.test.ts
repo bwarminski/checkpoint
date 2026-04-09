@@ -56,8 +56,8 @@ test("ClickHouseTool reads the schema contract from TSVWithNames output", async 
         if (sql.includes("schema_contract_tables")) {
           return [
             "name\tcolumns",
-            "query_events\tfingerprint,collected_at,source_tag",
-            "query_fingerprints\tfingerprint,source_tag,representative_state",
+            "query_events\tfingerprint,collected_at,source_file",
+            "query_fingerprints\tfingerprint,representative_state",
           ].join("\n");
         }
 
@@ -70,11 +70,11 @@ test("ClickHouseTool reads the schema contract from TSVWithNames output", async 
     schemaVersion: "2",
     tables: [
       {
-        columns: ["fingerprint", "collected_at", "source_tag"],
+        columns: ["fingerprint", "collected_at", "source_file"],
         name: "query_events",
       },
       {
-        columns: ["fingerprint", "source_tag", "representative_state"],
+        columns: ["fingerprint", "representative_state"],
         name: "query_fingerprints",
       },
     ],
@@ -119,15 +119,15 @@ test("ClickHouseTool rejects raw queries against unsupported tables", async () =
   );
 });
 
-test("ClickHouseTool queries typed findings from source-tag-aware output", async () => {
+test("ClickHouseTool queries typed findings without source_tag output", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool({
     transport: {
       query: async (sql: string) => {
         queries.push(sql);
         return [
-          "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
-          "fp-1\ttodos#index\t/app/controllers/todos_controller.rb:12\tSELECT 1\t7\t50.5\t12",
+          "fingerprint\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
+          "fp-1\t/app/controllers/todos_controller.rb:12\tSELECT 1\t7\t50.5\t12",
         ].join("\n");
       },
     },
@@ -140,12 +140,12 @@ test("ClickHouseTool queries typed findings from source-tag-aware output", async
       sample_query: "SELECT 1",
       severity: "medium",
       source_file: "/app/controllers/todos_controller.rb:12",
-      source_tag: "todos#index",
       total_exec_count: 7,
       total_exec_time_ms: 50.5,
     },
   ]);
   assert.match(queries[0] ?? "", /FROM query_events/);
+  assert.doesNotMatch(queries[0] ?? "", /source_tag/);
 });
 
 test("ClickHouseTool queries all-time findings from the fingerprint table", async () => {
@@ -155,8 +155,8 @@ test("ClickHouseTool queries all-time findings from the fingerprint table", asyn
       query: async (sql: string) => {
         queries.push(sql);
         return [
-          "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
-          "fp-2\ttodos#status\t/app/models/todo.rb:5\tSELECT 2\t9\t100.0\t200",
+          "fingerprint\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
+          "fp-2\t/app/models/todo.rb:5\tSELECT 2\t9\t100.0\t200",
         ].join("\n");
       },
     },
@@ -165,7 +165,8 @@ test("ClickHouseTool queries all-time findings from the fingerprint table", asyn
   await tool.queryFindings("analyze_table todos all");
 
   assert.match(queries[0] ?? "", /FROM query_fingerprints/);
-  assert.match(queries[0] ?? "", /source_tag ILIKE 'todos#%'/);
+  assert.doesNotMatch(queries[0] ?? "", /source_tag/);
+  assert.match(queries[0] ?? "", /GROUP BY fingerprint/);
 });
 
 test("ClickHouseTool rejects describeTable for unsupported table", async () => {

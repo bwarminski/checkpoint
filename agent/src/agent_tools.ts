@@ -23,7 +23,6 @@ export type AgentToolDependencies = {
   codeSearchTool?: {
     locate(input: {
       source_file?: string;
-      source_tag?: string;
     }): Promise<unknown>;
   };
   demoRepoTool?: {
@@ -49,7 +48,7 @@ export type AgentToolDependencies = {
       codeDiff?: string;
       finding: {
         fingerprint?: string;
-        source_tag?: string;
+        source_file?: string;
       };
       fix: {
         fix_type?: string;
@@ -132,8 +131,7 @@ export function buildAgentTools(
       label: "Locate Source",
       description: "Load the source file context for a finding's source file or source tag.",
       parameters: Type.Object({
-        source_file: Type.Optional(Type.String()),
-        source_tag: Type.Optional(Type.String()),
+        source_file: Type.String(),
       }),
       execute: async (_id, params) => {
         const source = await deps.codeSearchTool!.locate(asLocateSourceInput(params));
@@ -213,7 +211,7 @@ export function buildAgentTools(
       parameters: Type.Object({
         finding: Type.Object({
           fingerprint: Type.Optional(Type.String()),
-          source_tag: Type.Optional(Type.String()),
+          source_file: Type.Optional(Type.String()),
         }),
         fix: Type.Object({
           fix_type: Type.Optional(Type.String()),
@@ -247,17 +245,9 @@ function textResult<TDetails>(text: string, details: TDetails): AgentToolResult<
 }
 
 function asLocateSourceInput(value: unknown): {
-  source_file?: string;
-  source_tag?: string;
+  source_file: string;
 } {
-  const source_file = readOptionalStringProperty(value, "source_file");
-  const source_tag = readOptionalStringProperty(value, "source_tag");
-
-  if (!source_file && !source_tag) {
-    throw new Error("locate_source requires source_file or source_tag");
-  }
-
-  return { source_file, source_tag };
+  return { source_file: readStringProperty(value, "source_file") };
 }
 
 function asApplyFixInput(value: unknown): {
@@ -309,7 +299,7 @@ function asOpenPullRequestInput(value: unknown): {
   codeDiff?: string;
   finding: {
     fingerprint?: string;
-    source_tag?: string;
+    source_file?: string;
   };
   fix: {
     fix_type?: string;
@@ -324,12 +314,22 @@ function asOpenPullRequestInput(value: unknown): {
   const finding = readRecordProperty(value, "finding");
   const fix = readRecordProperty(value, "fix");
   const validation = readOptionalRecordProperty(value, "validation");
+  const fingerprint = readOptionalStringProperty(finding, "fingerprint");
+  const source_file = readOptionalStringProperty(finding, "source_file");
+  const findingInput: {
+    fingerprint?: string;
+    source_file?: string;
+  } = {};
+
+  if (fingerprint !== undefined) {
+    findingInput.fingerprint = fingerprint;
+  }
+  if (source_file !== undefined) {
+    findingInput.source_file = source_file;
+  }
 
   return {
-    finding: {
-      fingerprint: readOptionalStringProperty(finding, "fingerprint"),
-      source_tag: readOptionalStringProperty(finding, "source_tag"),
-    },
+    finding: findingInput,
     fix: {
       fix_type: readOptionalStringProperty(fix, "fix_type"),
       summary: readOptionalStringProperty(fix, "summary"),

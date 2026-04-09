@@ -214,14 +214,14 @@ test("db-specialist extension returns apply_fix handoff fields for open_pull_req
     const result = await openPullRequest!.execute({
       headRef: fixResult.headRef,
       codeDiff: fixResult.codeDiff,
-      finding: { fingerprint: "fp-1", source_tag: "todos#index" },
+      finding: { fingerprint: "fp-1", source_file: "app/controllers/todos_controller.rb:3" },
       fix: { fix_type: "add_index", summary: "Add index" },
       validation,
     });
 
     assert.deepEqual(capturedInput, {
       codeDiff: "diff --git a/file b/file",
-      finding: { fingerprint: "fp-1", source_tag: "todos#index" },
+      finding: { fingerprint: "fp-1", source_file: "app/controllers/todos_controller.rb:3" },
       fix: { fix_type: "add_index", summary: "Add index" },
       headRef: "agent/demo-fix-fp-1",
       validation,

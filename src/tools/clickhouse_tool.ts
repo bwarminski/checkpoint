@@ -60,24 +60,16 @@ function buildOffenderQuery(scope?: unknown): string {
     return buildWindowedQuery(request);
   }
 
-  const conditions = ["source_tag IS NOT NULL"];
-
-  if (request.tableName) {
-    conditions.push(`source_tag ILIKE '${escapeSqlLike(request.tableName)}#%'`);
-  }
-
   return [
     "SELECT",
     "  fingerprint,",
-    "  source_tag,",
     "  tupleElement(argMaxMerge(representative_state), 1) AS source_file,",
     "  tupleElement(argMaxMerge(representative_state), 2) AS sample_query,",
     "  sumMerge(total_exec_count_state) AS total_exec_count,",
     "  sumMerge(total_exec_time_ms_state) AS total_exec_time_ms,",
     "  round(quantileMerge(0.95)(p95_exec_time_state), 2) AS p95_exec_time_ms",
     "FROM query_fingerprints",
-    `WHERE ${conditions.join(" AND ")}`,
-    "GROUP BY fingerprint, source_tag",
+    "GROUP BY fingerprint",
     "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
     "FORMAT TSVWithNames",
@@ -85,26 +77,17 @@ function buildOffenderQuery(scope?: unknown): string {
 }
 
 function buildWindowedQuery(request: ScopeRequest): string {
-  const conditions = [
-    `collected_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
-    "source_tag IS NOT NULL",
-  ];
-  if (request.tableName) {
-    conditions.push(`source_tag ILIKE '${escapeSqlLike(request.tableName)}#%'`);
-  }
-
   return [
     "SELECT",
     "  fingerprint,",
-    "  source_tag,",
     "  tupleElement(argMax((source_file, sample_query), collected_at), 1) AS source_file,",
     "  tupleElement(argMax((source_file, sample_query), collected_at), 2) AS sample_query,",
     "  sum(total_exec_count) AS call_count,",
     "  round(sum(total_exec_count * mean_exec_time_ms), 2) AS total_exec_time_ms,",
     "  round(quantile(0.95)(mean_exec_time_ms), 2) AS p95_exec_time_ms",
     "FROM query_events",
-    `WHERE ${conditions.join(" AND ")}`,
-    "GROUP BY fingerprint, source_tag",
+    `WHERE collected_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
+    "GROUP BY fingerprint",
     "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
     "FORMAT TSVWithNames",
@@ -154,7 +137,6 @@ function parseOffenderRows(payload: string): Array<TopOffender> {
       sample_query: row.sample_query,
       severity: p95ExecTimeMs >= 100 ? "high" : "medium",
       source_file: row.source_file,
-      source_tag: row.source_tag,
       total_exec_count: totalExecCount,
       total_exec_time_ms: totalExecTimeMs,
     };
