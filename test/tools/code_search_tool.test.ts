@@ -87,6 +87,15 @@ test("CodeSearchTool default client falls back to DEMO_APP_ROOT when CODE_SEARCH
   }
 });
 
+test("CodeSearchTool requires source_file input", async () => {
+  const tool = new CodeSearchTool();
+
+  await assert.rejects(
+    () => tool.locate({}),
+    /source_file is required/,
+  );
+});
+
 test("CodeSearchTool source does not reference the agent package", async () => {
   const source = await readFile(new URL("../../src/tools/code_search_tool.ts", import.meta.url), "utf8");
 
