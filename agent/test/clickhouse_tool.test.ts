@@ -46,43 +46,6 @@ test("ClickHouseTool describes a table with TSV output", async () => {
   assert.equal(sql, "DESCRIBE TABLE query_events FORMAT TSV");
 });
 
-test("ClickHouseTool reads the schema contract from TSVWithNames output", async () => {
-  const queries: Array<string> = [];
-  const tool = new ClickHouseTool({
-    transport: {
-      query: async (sql: string) => {
-        queries.push(sql);
-
-        if (sql.includes("schema_contract_tables")) {
-          return [
-            "name\tcolumns",
-            "query_events\tfingerprint,collected_at,source_file",
-            "query_fingerprints\tfingerprint,representative_state",
-          ].join("\n");
-        }
-
-        return ["schema_version", "2"].join("\n");
-      },
-    },
-  });
-
-  assert.deepEqual(await tool.readSchemaContract(), {
-    schemaVersion: "2",
-    tables: [
-      {
-        columns: ["fingerprint", "collected_at", "source_file"],
-        name: "query_events",
-      },
-      {
-        columns: ["fingerprint", "representative_state"],
-        name: "query_fingerprints",
-      },
-    ],
-  });
-  assert.match(queries[0] ?? "", /schema_contract FORMAT TSVWithNames/);
-  assert.match(queries[1] ?? "", /schema_contract_tables FORMAT TSVWithNames/);
-});
-
 test("ClickHouseTool rejects non-SELECT queries", async () => {
   const tool = new ClickHouseTool({
     transport: {

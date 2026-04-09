@@ -2,7 +2,6 @@
 // ABOUTME: Wires ClickHouse, Postgres validation, code search, and demo PR handling together.
 import { Pool } from "pg";
 
-import { assertSchemaContractSatisfied } from "../../src/clickhouse_schema_contract.ts";
 import { DBSpecialistExecutor } from "./executor.ts";
 import { ClickHouseTool } from "../../src/tools/clickhouse_tool.ts";
 import { CodeSearchTool } from "../../src/tools/code_search_tool.ts";
@@ -46,16 +45,6 @@ export function createRuntimeExecutor(): DBSpecialistExecutor {
     },
     githubTool: new GitHubTool(),
     demoRepoTool: new DemoRepoTool(),
-  });
-}
-
-export async function validateRuntimeSchema(clickhouseTool = new ClickHouseTool()): Promise<void> {
-  const expectedVersion = process.env.CHECKPOINT_CLICKHOUSE_SCHEMA_VERSION ?? "";
-  const introspection = await clickhouseTool.readSchemaContract();
-
-  await assertSchemaContractSatisfied({
-    expectedVersion,
-    introspection,
   });
 }
 

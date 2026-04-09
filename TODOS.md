@@ -220,3 +220,17 @@ whether `runSerialized` in `src/a2a_bridge/server.ts` is correct behavior.
 **Where:** Check pi-mono's `createAgentSession` API and `session.prompt()` behavior.
 Update `runSerialized` or remove it based on findings. Add a concurrency test
 asserting the correct model.
+
+---
+
+## ClickHouse schema version validation at agent startup
+
+**What:** Reintroduce startup schema version validation once there is a real
+DDL-backed `schema_contract` design.
+
+**Why:** The previous validation path depended on `schema_contract` and
+`schema_contract_tables`, but those tables do not exist in the current DDL.
+The feature was removed so startup no longer blocks on an incomplete contract.
+
+**Where:** `agent/src/runtime_dependencies.ts` and `agent/src/server.ts` once the
+collector repo owns and boots a real schema contract table.

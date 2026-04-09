@@ -16,10 +16,7 @@ import {
 } from "@a2a-js/sdk/server/express";
 
 import { DBSpecialistExecutor } from "./executor.ts";
-import {
-  createRuntimeExecutor,
-  validateRuntimeSchema as validateClickHouseRuntimeSchema,
-} from "./runtime_dependencies.ts";
+import { createRuntimeExecutor } from "./runtime_dependencies.ts";
 
 loadDotenv({
   path: resolve(fileURLToPath(new URL(".", import.meta.url)), "../../.env"),
@@ -32,7 +29,6 @@ type ServerOptions = {
   executor?: DBSpecialistExecutor;
   host?: string;
   port?: number;
-  validateRuntimeSchema?: () => Promise<void>;
 };
 
 export function createServer(options: ServerOptions = {}): {
@@ -69,12 +65,6 @@ export function createServer(options: ServerOptions = {}): {
 }
 
 export async function startServer(options: ServerOptions = {}) {
-  const validate = options.validateRuntimeSchema ?? validateClickHouseRuntimeSchema;
-
-  if (!options.executor) {
-    await validate();
-  }
-
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 3001;
   const server = createServer({ ...options, port });

@@ -3,7 +3,10 @@
 import assert from "node:assert/strict";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+let serverModuleVersion = 0;
 
 test("createServer advertises analyze_db and analyze_table skills", async () => {
   const { createServer } = await loadServerModule();
@@ -26,7 +29,7 @@ test("createServer uses a provider-qualified default LLM model", async () => {
 });
 
 test("server startup loads repo-root .env without overriding existing shell vars", async () => {
-  const repoRoot = resolve(process.cwd(), "..");
+  const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
   const envPath = resolve(repoRoot, ".env");
   const originalDemoRepo = process.env.DEMO_REPO;
   const originalEnv = await readExistingEnv(envPath);
@@ -51,41 +54,28 @@ test("server startup loads repo-root .env without overriding existing shell vars
   }
 });
 
-test("startServer validates the runtime schema before listening", async () => {
+test("startServer does not validate the runtime schema before listening", async () => {
   const { startServer } = await loadServerModule();
-  let validated = false;
-  let server: { close: (callback: () => void) => void } | undefined;
+  const server = await startServer({
+    host: "127.0.0.1",
+    port: 0,
+    validateRuntimeSchema: async () => {
+      throw new Error("schema mismatch");
+    },
+  } as any);
 
   try {
-    await assert.rejects(
-      async () => {
-        server = await startServer({
-          host: "127.0.0.1",
-          port: 0,
-          validateRuntimeSchema: async () => {
-            validated = true;
-            throw new Error("schema mismatch");
-          },
-        } as any);
-      },
-      /schema mismatch/,
-    );
+    assert.ok(server);
   } finally {
     await new Promise<void>((resolve) => {
-      if (!server) {
-        resolve();
-        return;
-      }
-
       server.close(() => resolve());
     });
   }
-
-  assert.equal(validated, true);
 });
 
 async function loadServerModule() {
-  return import(new URL(`../src/server.ts?${Date.now()}`, import.meta.url).href);
+  serverModuleVersion += 1;
+  return import(new URL(`../src/server.ts?${serverModuleVersion}`, import.meta.url).href);
 }
 
 async function readExistingEnv(envPath: string): Promise<string | undefined> {

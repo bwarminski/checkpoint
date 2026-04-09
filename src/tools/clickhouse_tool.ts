@@ -1,6 +1,5 @@
 // ABOUTME: Defines the ClickHouse access point used by the DB specialist agent.
 // ABOUTME: Exposes table discovery and guarded query execution for the executor.
-import type { ClickHouseSchemaContract } from "../clickhouse_schema_contract.ts";
 
 export type TopOffender = {
   fingerprint: string;
@@ -36,17 +35,6 @@ export class ClickHouseTool {
     assertSupportedQuery(sql);
 
     return this.transport!.query(sql);
-  }
-
-  async readSchemaContract(): Promise<ClickHouseSchemaContract> {
-    const schemaVersionRows = await this.transport!.query(
-      "SELECT version AS schema_version FROM schema_contract FORMAT TSVWithNames",
-    );
-    const tableRows = await this.transport!.query(
-      "SELECT table AS name, columns FROM schema_contract_tables FORMAT TSVWithNames",
-    );
-
-    return parseSchemaContract(schemaVersionRows, tableRows);
   }
 
   async queryFindings(scope?: unknown): Promise<Array<TopOffender>> {
@@ -140,43 +128,6 @@ function parseOffenderRows(payload: string): Array<TopOffender> {
       total_exec_count: totalExecCount,
       total_exec_time_ms: totalExecTimeMs,
     };
-  });
-}
-
-function parseSchemaContract(schemaVersionRows: string, tableRows: string): ClickHouseSchemaContract {
-  const schemaVersion = parseTsvWithNamesRows(schemaVersionRows)[0]?.schema_version ?? "";
-  const rows = parseTsvWithNamesRows(tableRows);
-
-  return {
-    schemaVersion,
-    tables: rows.map((row) => {
-      const columnsValue = String(row.columns ?? "");
-
-      return {
-        columns: columnsValue ? columnsValue.split(",").map((column) => column.trim()).filter(Boolean) : [],
-        name: String(row.name ?? ""),
-      };
-    }),
-  };
-}
-
-function parseTsvWithNamesRows(payload: string): Array<Record<string, string>> {
-  const lines = payload.trim().split("\n").filter(Boolean);
-
-  if (!lines.length) {
-    return [];
-  }
-
-  const [headerLine, ...dataLines] = lines;
-  const headers = headerLine.split("\t");
-
-  return dataLines.map((line) => {
-    const values = line.split("\t");
-
-    return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""])) as Record<
-      string,
-      string
-    >;
   });
 }
 

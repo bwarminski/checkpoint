@@ -6,11 +6,13 @@ import test from "node:test";
 
 import { ClickHouseTool } from "../../src/tools/clickhouse_tool.ts";
 
-test("clickhouse_tool.ts does not reference agent internals", async () => {
+test("clickhouse_tool.ts does not reference agent internals or schema contract helpers", async () => {
   const source = await readFile(new URL("../../src/tools/clickhouse_tool.ts", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /agent\/src\/clickhouse_schema_contract\.ts/);
   assert.doesNotMatch(source, /agent\//);
+  assert.doesNotMatch(source, /readSchemaContract/);
+  assert.doesNotMatch(source, /clickhouse_schema_contract/);
 });
 
 test("queryFindings groups by fingerprint only", async () => {
