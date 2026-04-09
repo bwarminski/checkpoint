@@ -129,7 +129,7 @@ export function buildAgentTools(
     tools.push({
       name: "locate_source",
       label: "Locate Source",
-      description: "Load the source file context for a finding's source file or source tag.",
+      description: "Load the source file context for a finding's source file.",
       parameters: Type.Object({
         source_file: Type.String(),
       }),
