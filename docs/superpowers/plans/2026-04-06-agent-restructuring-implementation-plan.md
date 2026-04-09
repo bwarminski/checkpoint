@@ -63,6 +63,8 @@
   Memory code and prompts are gone, the `memory-tool` preservation branch/tag exists, and risky tools enforce their requirements with call-time validation rather than `LoopRunEvidence`.
 - **Phase 3 ship criteria**
   The repo is a pi package with a working standalone extension, container tests pass, and the A2A bridge is a separate thin layer over pi sessions.
+- **agent/ retirement ship criteria**
+  The `agent/` package and `agent/package.json` are deleted when the pi A2A bridge passes all tests currently in `agent/test/integration/` without importing any `agent/src/` code directly. This is a follow-on task tracked in TODOS.md.
 
 ### Task 1: Phase 1 Create The Collector Repo And Move Collector-Owned Files
 

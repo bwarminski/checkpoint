@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertSchemaContractSatisfied } from "../src/clickhouse_schema_contract.ts";
+import { assertSchemaContractSatisfied } from "../../src/clickhouse_schema_contract.ts";
 
 test("assertSchemaContractSatisfied rejects a mismatched schema version", async () => {
   await assert.rejects(

@@ -21,3 +21,10 @@ services:
       timeout: 5s
       retries: 12
     ports: ["8123:8123", "9000:9000"]
+  demo:
+    image: ${DEMO_APP_ROOT:-/home/bjw/db-specialist-demo}
+    volumes:
+      - ${DEMO_APP_ROOT:-/home/bjw/db-specialist-demo}:/app
+    depends_on:
+      postgres:
+        condition: service_healthy

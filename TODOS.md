@@ -75,39 +75,6 @@ Default window: 60 minutes.
 
 ---
 
-## db_name identifier in memory schema
-
-**What:** The `findings` and `suggestions` tables have no database identity column.
-Fingerprints are normalized SQL patterns that can match across different databases.
-
-**Why deferred:** Single-demo Docker Compose setup — no risk of cross-database
-fingerprint collision. Becomes important for multi-tenant or multi-database deployments.
-
-**Fix:** Add `db_name TEXT NOT NULL` to `findings` and `suggestions`, populate from
-`DB_NAME` env var, scope all memory queries with `WHERE db_name = $1`.
-
-**Where:** `agent/db/001_memory_schema.sql`, `agent/src/tools/memory_tool.ts`.
-
----
-
-## Concurrent task deduplication
-
-**What:** If two A2A tasks run concurrently and both hit the same fingerprint, both
-will read "no pending suggestion" and both will open PRs. The fix is a partial unique
-index on `suggestions`:
-
-```sql
-CREATE UNIQUE INDEX suggestions_pending_unique
-  ON suggestions (fingerprint, fix_type)
-  WHERE status = 'pending';
-```
-
-Then use `INSERT ... ON CONFLICT DO NOTHING` in MemoryTool.
-
-**Why deferred:** The demo is single-threaded. This is the production correctness fix.
-
----
-
 ## LLM-based fix classification (Phase 2 agent capability)
 
 **What:** Replace the deterministic pattern-matching in `buildFixProposal()` with an
@@ -209,3 +176,47 @@ a Percona-packaged Postgres image (or manual extension build) and changes the
 collector query surface.
 
 **When to revisit:** After the demo proves the vertical slice works end-to-end.
+
+---
+
+## Session registry: 24h TTL cleanup
+
+**What:** Sessions older than 24h should be eligible for cleanup. On startup (or via
+a background interval), prune `sessions.json` entries where `lastActiveAt` is older
+than 24 hours.
+
+**Why:** The current registry accumulates entries indefinitely. For long-running
+deployments this is a slow leak.
+
+**Where:** `src/a2a_bridge/session_registry.ts` — add a `prune(maxAgeMs)` method.
+Call from the bridge factory or on a 6h interval.
+
+---
+
+## agent/ package retirement
+
+**What:** The `agent/` package (A2A executor via pi-agent-core) should be retired
+once the pi A2A bridge in `src/a2a_bridge/` passes the existing agent integration
+tests.
+
+**Why:** Two manifests and two runtimes coexist right now. The exit condition needs
+to be explicit so it doesn't drift into permanent coexistence.
+
+**Retirement gate:** `agent/test/integration/` tests must pass against the pi bridge
+path without `agent/src/` in scope.
+
+---
+
+## A2A bridge concurrency model: clarify pi session behavior
+
+**What:** Clarify whether pi sessions accept concurrent messages to a running
+session (like a streaming agent) or process one prompt at a time. This determines
+whether `runSerialized` in `src/a2a_bridge/server.ts` is correct behavior.
+
+**Current assumption:** Second send to same context waits for first to complete.
+
+**Alternative:** Route second send to the in-flight session instead of blocking.
+
+**Where:** Check pi-mono's `createAgentSession` API and `session.prompt()` behavior.
+Update `runSerialized` or remove it based on findings. Add a concurrency test
+asserting the correct model.

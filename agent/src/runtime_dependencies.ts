@@ -2,7 +2,7 @@
 // ABOUTME: Wires ClickHouse, Postgres validation, code search, and demo PR handling together.
 import { Pool } from "pg";
 
-import { assertSchemaContractSatisfied } from "./clickhouse_schema_contract.ts";
+import { assertSchemaContractSatisfied } from "../../src/clickhouse_schema_contract.ts";
 import { DBSpecialistExecutor } from "./executor.ts";
 import { ClickHouseTool } from "../../src/tools/clickhouse_tool.ts";
 import { CodeSearchTool } from "../../src/tools/code_search_tool.ts";
