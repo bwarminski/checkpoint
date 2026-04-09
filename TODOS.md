@@ -223,7 +223,7 @@ asserting the correct model.
 
 ---
 
-## ClickHouse schema version validation at agent startup
+## ClickHouse schema version validation at agent startup (removed pending DDL design for schema_contract table)
 
 **What:** Reintroduce startup schema version validation once there is a real
 DDL-backed `schema_contract` design.
