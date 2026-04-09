@@ -6,11 +6,18 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import express from "express";
+
+import { DBSpecialistExecutor } from "../src/executor.ts";
+
 let serverModuleVersion = 0;
 
 test("createServer advertises analyze_db and analyze_table skills", async () => {
   const { createServer } = await loadServerModule();
-  const server = createServer({ baseUrl: "http://127.0.0.1:3001" });
+  const server = createServer({
+    baseUrl: "http://127.0.0.1:3001",
+    executor: new DBSpecialistExecutor(),
+  });
 
   assert.deepEqual(
     server.agentCard.skills.map((skill: { id: string }) => skill.id),
@@ -20,7 +27,10 @@ test("createServer advertises analyze_db and analyze_table skills", async () => 
 
 test("createServer uses a provider-qualified default LLM model", async () => {
   const { createServer } = await loadServerModule();
-  const server = createServer({ baseUrl: "http://127.0.0.1:3001" });
+  const server = createServer({
+    baseUrl: "http://127.0.0.1:3001",
+    executor: new DBSpecialistExecutor(),
+  });
 
   assert.deepEqual(server.executor.llmConfig.primary, {
     provider: "openai",
@@ -56,20 +66,35 @@ test("server startup loads repo-root .env without overriding existing shell vars
 
 test("startServer does not validate the runtime schema before listening", async () => {
   const { startServer } = await loadServerModule();
-  const server = await startServer({
-    host: "127.0.0.1",
-    port: 0,
-    validateRuntimeSchema: async () => {
-      throw new Error("schema mismatch");
-    },
-  } as any);
+  const originalListen = express.application.listen;
+  let listened = false;
+
+  express.application.listen = function listen() {
+    listened = true;
+    return {
+      close(callback?: () => void) {
+        callback?.();
+      },
+    } as any;
+  };
 
   try {
+    const server = await startServer({
+      executor: new DBSpecialistExecutor(),
+      host: "127.0.0.1",
+      port: 0,
+      validateRuntimeSchema: async () => {
+        throw new Error("schema mismatch");
+      },
+    } as any);
+
     assert.ok(server);
-  } finally {
+    assert.equal(listened, true);
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
+  } finally {
+    express.application.listen = originalListen;
   }
 });
 
