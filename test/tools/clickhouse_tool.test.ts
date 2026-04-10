@@ -53,6 +53,30 @@ test("queryFindings reads all-time findings from query_intervals", async () => {
   assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
 });
 
+test("queryFindings uses non-conflicting aliases to avoid ClickHouse cyclic alias errors", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return ["fingerprint\tString", "fp-1"].join("\n");
+      },
+    },
+  });
+
+  await tool.queryFindings();
+  await tool.queryFindings("all");
+
+  for (const sql of queries) {
+    assert.match(sql, /sum\(total_exec_count\) AS call_count/);
+    assert.doesNotMatch(sql, /sum\(total_exec_count\) AS total_exec_count/);
+    assert.match(sql, /AS top_source_file/);
+    assert.match(sql, /AS top_sample_query/);
+    assert.doesNotMatch(sql, /\) AS source_file/);
+    assert.doesNotMatch(sql, /\) AS sample_query/);
+  }
+});
+
 test("listTables returns exactly the supported checkpoint schema tables", async () => {
   const tool = new ClickHouseTool({
     transport: {

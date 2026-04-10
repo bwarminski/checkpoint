@@ -53,9 +53,9 @@ function buildOffenderQuery(scope?: unknown): string {
   return [
     "SELECT",
     "  fingerprint,",
-    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS source_file,",
-    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS sample_query,",
-    "  sum(total_exec_count) AS total_exec_count,",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,",
+    "  sum(total_exec_count) AS call_count,",
     "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
     `  round(quantile(0.95)(${INTERVAL_MEAN_EXEC_TIME_SQL}), 2) AS p95_exec_time_ms`,
     "FROM query_intervals",
@@ -70,9 +70,9 @@ function buildWindowedQuery(request: ScopeRequest): string {
   return [
     "SELECT",
     "  fingerprint,",
-    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS source_file,",
-    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS sample_query,",
-    "  sum(total_exec_count) AS total_exec_count,",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,",
+    "  sum(total_exec_count) AS call_count,",
     "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
     `  round(quantile(0.95)(${INTERVAL_MEAN_EXEC_TIME_SQL}), 2) AS p95_exec_time_ms`,
     "FROM query_intervals",
@@ -126,9 +126,9 @@ function parseOffenderRows(payload: string): Array<TopOffender> {
     return {
       fingerprint: String(row.fingerprint ?? ""),
       p95_exec_time_ms: p95ExecTimeMs,
-      sample_query: row.sample_query,
+      sample_query: row.top_sample_query ?? row.sample_query,
       severity: p95ExecTimeMs >= 100 ? "high" : "medium",
-      source_file: row.source_file,
+      source_file: row.top_source_file ?? row.source_file,
       total_exec_count: totalExecCount,
       total_exec_time_ms: totalExecTimeMs,
     };
