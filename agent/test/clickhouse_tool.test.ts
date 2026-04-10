@@ -109,6 +109,8 @@ test("ClickHouseTool queries typed findings without source_tag output", async ()
   ]);
   assert.match(queries[0] ?? "", /FROM query_intervals/);
   assert.match(queries[0] ?? "", /interval_duration_ms <= 3600000/);
+  assert.match(queries[0] ?? "", /interval_started_at > now\(\) - INTERVAL 60 MINUTE/);
+  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
 });
 
@@ -129,6 +131,7 @@ test("ClickHouseTool queries all-time findings from query_intervals", async () =
   await tool.queryFindings("analyze_table todos all");
 
   assert.match(queries[0] ?? "", /FROM query_intervals/);
+  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
   assert.match(queries[0] ?? "", /GROUP BY fingerprint/);
 });

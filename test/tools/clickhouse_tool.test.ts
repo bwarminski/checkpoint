@@ -32,6 +32,8 @@ test("queryFindings groups by fingerprint only", async () => {
   assert.match(queries[0] ?? "", /GROUP BY fingerprint/);
   assert.match(queries[0] ?? "", /FROM query_intervals/);
   assert.match(queries[0] ?? "", /interval_duration_ms <= 3600000/);
+  assert.match(queries[0] ?? "", /interval_started_at > now\(\) - INTERVAL 60 MINUTE/);
+  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
 });
 
 test("queryFindings reads all-time findings from query_intervals", async () => {
@@ -48,6 +50,7 @@ test("queryFindings reads all-time findings from query_intervals", async () => {
   await tool.queryFindings("analyze_table todos all");
 
   assert.match(queries[0] ?? "", /FROM query_intervals/);
+  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
 });
 
 test("listTables returns exactly the supported checkpoint schema tables", async () => {

@@ -42,6 +42,8 @@ export class ClickHouseTool {
   }
 }
 
+const INTERVAL_MEAN_EXEC_TIME_SQL = "if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)";
+
 function buildOffenderQuery(scope?: unknown): string {
   const request = parseScope(scope);
   if (!request.allTime) {
@@ -55,7 +57,7 @@ function buildOffenderQuery(scope?: unknown): string {
     "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS sample_query,",
     "  sum(total_exec_count) AS total_exec_count,",
     "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
-    "  round(quantile(0.95)(delta_exec_time_ms), 2) AS p95_exec_time_ms",
+    `  round(quantile(0.95)(${INTERVAL_MEAN_EXEC_TIME_SQL}), 2) AS p95_exec_time_ms`,
     "FROM query_intervals",
     "GROUP BY fingerprint",
     "ORDER BY total_exec_time_ms DESC",
@@ -72,9 +74,10 @@ function buildWindowedQuery(request: ScopeRequest): string {
     "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS sample_query,",
     "  sum(total_exec_count) AS total_exec_count,",
     "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
-    "  round(quantile(0.95)(delta_exec_time_ms), 2) AS p95_exec_time_ms",
+    `  round(quantile(0.95)(${INTERVAL_MEAN_EXEC_TIME_SQL}), 2) AS p95_exec_time_ms`,
     "FROM query_intervals",
-    `WHERE interval_ended_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
+    `WHERE interval_started_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
+    `  AND interval_ended_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
     `  AND interval_duration_ms <= ${request.timeWindowMinutes * 60 * 1000}`,
     "GROUP BY fingerprint",
     "ORDER BY total_exec_time_ms DESC",

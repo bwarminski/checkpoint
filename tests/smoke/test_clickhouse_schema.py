@@ -73,5 +73,14 @@ def test_clickhouse_image_boots_and_loads_counter_schema():
         assert "query_events" in tables
         assert "collector_state" in tables
         assert "query_intervals" in tables
+
+        interval_query = subprocess.run(
+            ["docker", "compose", "exec", "-T", "clickhouse", "clickhouse-client", "--query", "SELECT count() FROM query_intervals"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert interval_query.stdout.strip() == "0"
     finally:
         subprocess.run(["docker", "compose", "down"], cwd=root, check=True)
