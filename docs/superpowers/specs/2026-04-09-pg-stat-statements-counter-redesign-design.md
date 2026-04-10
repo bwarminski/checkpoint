@@ -14,8 +14,8 @@ This design covers both repos:
 - `/home/bjw/checkpoint`
 
 The work includes the collector query shape, raw ClickHouse schema, raw
-`pg_stat_statements_info` capture, delta-based ClickHouse read model, reset SQL,
-and checkpoint-side fixture/smoke updates needed to keep the end-to-end contract
+`pg_stat_statements_info` capture, a read-time interval layer, reset SQL, and
+checkpoint-side fixture/smoke updates needed to keep the end-to-end contract
 green.
 
 The work does not introduce backward compatibility for the old schema. Brett
@@ -41,11 +41,11 @@ distinct rows per `(dbid, userid, queryid, toplevel)` combination. The
 collector still stores a `fingerprint` field derived from `queryid` so the
 checkpoint consumer contract stays stable.
 
-ClickHouse owns interval reasoning. Raw snapshots are stored unchanged as
-cumulative values. A derived delta layer compares each snapshot to the previous
-snapshot for the same key within the same `stats_reset` window. Valid monotonic
-growth emits interval deltas. A reset boundary emits no delta and instead
-establishes a new baseline.
+ClickHouse owns interval reasoning, but only at query time in this slice. Raw
+snapshots are stored unchanged as cumulative values. A read-time interval layer
+compares each snapshot to the previous snapshot for the same key within the same
+`stats_reset` window. Valid monotonic growth emits interval deltas. A reset
+boundary emits no delta and instead establishes a new baseline.
 
 Checkpoint continues to consume ranked findings with the current contract:
 
@@ -57,7 +57,7 @@ Checkpoint continues to consume ranked findings with the current contract:
 - `p95_exec_time_ms`
 
 Those fields are still present, but they are now produced from correct
-delta-based aggregation instead of `calls * mean_exec_time`.
+read-time delta aggregation instead of `calls * mean_exec_time`.
 
 ## Raw Data Model
 
@@ -103,16 +103,16 @@ It stores:
 This table is the source of truth for detecting global stats resets and
 providing evidence when row disappearance may be caused by eviction pressure.
 
-## Read Model
+## Read Path
 
-The ClickHouse read side splits into two layers.
+The ClickHouse read side in this slice has one interval-oriented layer.
 
-### Statement Delta Layer
+### Statement Interval Layer
 
-A statement delta layer computes per-interval deltas from successive rows in
+A statement interval layer computes per-interval deltas from successive rows in
 `query_events` for the same `(dbid, userid, toplevel, queryid)` key.
 
-Each delta row carries:
+Each interval row carries:
 
 - `interval_started_at`
 - `interval_ended_at`
@@ -131,10 +131,9 @@ transition also emits no delta row when:
 This keeps host restarts and extension resets honest. They are modeled as new
 baselines instead of synthetic negative activity.
 
-### Checkpoint Findings Layer
-
-The checkpoint-facing findings table stays keyed by `fingerprint`. It aggregates
-delta rows into the current consumer-facing fields:
+Checkpoint reads recent and all-time findings from this interval layer directly.
+There is no live `AggregatingMergeTree` findings table in this slice. The raw
+interval query still computes the current consumer-facing fields:
 
 - `total_exec_count`
 - `total_exec_time_ms`
@@ -142,8 +141,8 @@ delta rows into the current consumer-facing fields:
 - `source_file`
 - `sample_query`
 
-It also stores aggregate states for the additional counters so the data is
-available for future ranking and diagnostics without another collector rewrite:
+The interval query also carries the additional counters so they remain available
+for future ranking and diagnostics without another collector rewrite:
 
 - row counts
 - block hit counters
@@ -152,6 +151,14 @@ available for future ranking and diagnostics without another collector rewrite:
 - execution shape metrics where aggregation is still meaningful
 
 Checkpoint does not surface those additional fields yet.
+
+The live `AggregatingMergeTree` experiment is explicitly deferred. During
+implementation we reproduced two blockers: the first interval materialization
+SQL was not portable to the project's ClickHouse 24.3 runtime, and a
+materialized view fed from a joined/windowed view did not preserve
+late-arriving `collector_state` rows needed for reset-aware live aggregation.
+That experiment is tracked in `TODOS.md` for a follow-on pass after end-to-end
+correctness is restored.
 
 ## Reset And Gap Handling
 
@@ -165,7 +172,7 @@ snapshot. That delta is kept because it is honest, but it includes
 
 Recent/ranked findings apply a freshness cap. Oversized intervals are excluded
 from the recent window so a long outage does not dominate short-window ranking.
-Those same interval rows remain eligible for all-time aggregation.
+Those same interval rows remain eligible for all-time interval queries.
 
 If a row disappears entirely, the system does not fabricate a negative event.
 Disappearance may mean the statement went idle, the extension evicted it under
@@ -219,8 +226,8 @@ Tests should pin:
 - baseline-only behavior for first observation
 - reset behavior when `stats_reset` changes
 - regression behavior when counters move backward
-- the DDL contract for `query_events`, `collector_state`, and the delta/read
-  model objects
+- the DDL contract for `query_events`, `collector_state`, and the interval-layer
+  objects
 - compose-level proof that the stack boots, schema loads, and a real polling
   cycle writes rows
 
@@ -242,7 +249,8 @@ Tests should prove:
 Implementation should proceed in this order:
 
 1. update the collector query and raw payload tests
-2. replace the ClickHouse DDLs and reset SQL for the new raw/state/delta model
+2. replace the ClickHouse DDLs and reset SQL for the new raw/state/interval
+   model
 3. update collector-side runtime and verification
 4. update checkpoint-side fixture seeding and smoke assertions
 5. run both repos' suites plus compose-level validation
@@ -252,3 +260,4 @@ Implementation should proceed in this order:
 - no backward compatibility layer for the old schema
 - no collector-side durable state for previous snapshots
 - no expansion of the checkpoint findings contract in this pass
+- no live `AggregatingMergeTree` experiment in this slice

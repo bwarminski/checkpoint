@@ -179,6 +179,27 @@ collector query surface.
 
 ---
 
+## ClickHouse live AggregatingMergeTree experiment revisit
+
+**What:** Revisit the original plan to maintain live query findings through an
+`AggregatingMergeTree` pipeline fed by reset-aware interval data.
+
+**Why:** The current redesign slice is intentionally dropping the live aggregate
+path in favor of raw snapshots plus read-time interval queries. During
+implementation we reproduced two concrete blockers: the interval materialization
+SQL was not portable to the project's ClickHouse 24.3 runtime, and a
+materialized view fed from a joined/windowed view did not preserve the
+late-arriving `collector_state` data needed for reset-aware live aggregation.
+
+**When to revisit:** After the raw-snapshot + read-time interval path is working
+end-to-end in both `checkpoint-collector` and `checkpoint`.
+
+**Where:** Re-evaluate `collector/db/clickhouse/003_query_intervals.sql` and the
+checkpoint `ClickHouseTool` query strategy together. If we bring the experiment
+back, it likely needs a different source shape than `top_offenders_mv <- view`.
+
+---
+
 ## Session registry: 24h TTL cleanup
 
 **What:** Sessions older than 24h should be eligible for cleanup. On startup (or via
