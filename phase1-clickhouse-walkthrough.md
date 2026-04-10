@@ -886,30 +886,210 @@ The math checks out for queryid `8809102542184958349`:
 
 The LIKE search query (`-3384221525701929072`) shows `calls_in_interval = 0` for the second interval — the counter was unchanged because no matching load was sent in round 3. The row still appears because the filter only rejects counter *regressions*, not zero deltas.
 
-### Step 5: queryFindings — the agent's view
+### Step 5: buildOffenderQuery — from scope string to SQL
 
-This is what the agent sees when it calls `queryFindings()`. The tool runs the offender query against `query_intervals`, aggregates by fingerprint, and returns the top 5 by total execution time.
-
-### Step 5: queryFindings — the agent's view
-
-This is what the agent sees when it calls `queryFindings('all')`. The TypeScript tool issues the offender query against `query_intervals`, parses the TSV response, and returns structured findings ordered by total execution time.
+When the agent calls `queryFindings`, the first thing that happens is `buildOffenderQuery(scope)` builds the SQL string. There are two variants: all-time (no time filter) and windowed (default 60 minutes). Here is the exact SQL each produces.
 
 ```bash
-CLICKHOUSE_URL=http://localhost:8123 npx tsx --tsconfig /home/bjw/checkpoint/tsconfig.json -e "
-import { ClickHouseTool } from '/home/bjw/checkpoint/src/tools/clickhouse_tool.ts';
-const tool = new ClickHouseTool();
-tool.queryFindings('all').then(r => {
-  console.log(JSON.stringify(r, null, 2));
-}).catch(e => console.error('ERROR:', e.message));
-" 2>&1
+npx tsx /tmp/show_sql.mts
 ```
 
 ```output
+-- all-time variant (scope = 'all'):
+SELECT
+  fingerprint,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,
+  sum(total_exec_count) AS call_count,
+  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,
+  round(quantile(0.95)(if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)), 2) AS p95_exec_time_ms
+FROM query_intervals
+GROUP BY fingerprint
+ORDER BY total_exec_time_ms DESC
+LIMIT 5
+FORMAT TSVWithNames
+
+-- windowed variant (scope = undefined, default 60 minutes):
+SELECT
+  fingerprint,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,
+  sum(total_exec_count) AS call_count,
+  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,
+  round(quantile(0.95)(if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)), 2) AS p95_exec_time_ms
+FROM query_intervals
+WHERE interval_started_at > now() - INTERVAL 60 MINUTE
+  AND interval_ended_at > now() - INTERVAL 60 MINUTE
+  AND interval_duration_ms <= 3600000
+GROUP BY fingerprint
+ORDER BY total_exec_time_ms DESC
+LIMIT 5
+FORMAT TSVWithNames
 ```
 
-The top result is the SampleQueryLookup query (fingerprint `-4675886988266314286`) — the collector's own `SELECT query FROM pg_stat_activity` call. It shows up in `pg_stat_statements` because it runs during every poll cycle. In a production deployment this would be filtered or excluded.
+The two variants differ only in the WHERE clause. The windowed query adds three conditions — both interval endpoints must fall within the window, and the interval duration must not exceed the window length (which would indicate a stale or anomalous interval).
 
-The four application queries follow. Notice:
-- `source_file` is null for all — the Rails queries finish in microseconds, so `pg_stat_activity` never captures them live during the collector's sampling window
-- `p95_exec_time_ms` is 0 for most — the per-interval mean times are all sub-millisecond, so the P95 rounds to 0
-- `severity` is `medium` for everything — the threshold is 100 ms P95, and this demo workload runs on an idle local database with tiny tables
+Key columns in the SELECT:
+- `tupleElement(argMax(...), 1)` — picks `source_file` from the interval with the latest `interval_ended_at`, so newer (potentially enriched) samples win over older ones
+- `sum(total_exec_count) AS call_count` — total calls across all intervals (alias avoids ClickHouse cyclic alias with the view's own `total_exec_count` column)
+- `quantile(0.95)(if(...))` — P95 of per-interval mean exec time; the `if(... = 0, 0, ...)\ guard avoids divide-by-zero on zero-call intervals
+
+### Step 6: Raw ClickHouse TSV response
+
+Before `parseOffenderRows` processes it, ClickHouse returns a raw TSV string. Here is what the wire format looks like for both variants.
+
+```bash
+curl -s 'http://localhost:8123/?allow_experimental_analyzer=0' --data 'SELECT
+  fingerprint,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,
+  sum(total_exec_count) AS call_count,
+  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,
+  round(quantile(0.95)(if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)), 2) AS p95_exec_time_ms
+FROM query_intervals
+GROUP BY fingerprint
+ORDER BY total_exec_time_ms DESC
+LIMIT 5
+FORMAT TSVWithNames'
+```
+
+```output
+fingerprint	top_source_file	top_sample_query	call_count	total_exec_time_ms	p95_exec_time_ms
+-4675886988266314286	\N	SELECT query FROM pg_stat_activity WHERE query_id = $1 LIMIT 1	12	0.47	0.04
+8809102542184958349	\N	\N	90	0.26	0
+-1891428409369833436	\N	\N	45	0.2	0
+5274116089881997307	\N	\N	65	0.18	0
+4552656009507366904	\N	\N	1	0.15	0.15
+```
+
+The first line is always the header. `\N` is ClickHouse's representation of NULL. The windowed variant produces the same rows since this data was collected within the last hour — the WHERE clause on `interval_started_at > now() - INTERVAL 60 MINUTE` passes.
+
+```bash
+curl -s 'http://localhost:8123/?allow_experimental_analyzer=0' --data "SELECT
+  fingerprint,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,
+  sum(total_exec_count) AS call_count,
+  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,
+  round(quantile(0.95)(if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)), 2) AS p95_exec_time_ms
+FROM query_intervals
+WHERE interval_started_at > now() - INTERVAL 60 MINUTE
+  AND interval_ended_at > now() - INTERVAL 60 MINUTE
+  AND interval_duration_ms <= 3600000
+GROUP BY fingerprint
+ORDER BY total_exec_time_ms DESC
+LIMIT 5
+FORMAT TSVWithNames"
+```
+
+```output
+fingerprint	top_source_file	top_sample_query	call_count	total_exec_time_ms	p95_exec_time_ms
+-4675886988266314286	\N	SELECT query FROM pg_stat_activity WHERE query_id = $1 LIMIT 1	12	0.47	0.04
+8809102542184958349	\N	\N	90	0.26	0
+-1891428409369833436	\N	\N	45	0.2	0
+5274116089881997307	\N	\N	65	0.18	0
+4552656009507366904	\N	\N	1	0.15	0.15
+```
+
+### Step 7: parseOffenderRows — TSV to TopOffender objects
+
+`parseOffenderRows` splits the TSV header and data lines, maps each row to a `TopOffender` object, and assigns severity based on P95 exec time.
+
+```bash
+sed -n '/^function parseOffenderRows/,/^}/p' /home/bjw/checkpoint/src/tools/clickhouse_tool.ts
+```
+
+```output
+function parseOffenderRows(payload: string): Array<TopOffender> {
+  const [headerLine, ...dataLines] = payload.trim().split("\n").filter(Boolean);
+  if (!headerLine) {
+    return [];
+  }
+
+  const headers = headerLine.split("\t");
+  return dataLines.map((line) => {
+    const values = line.split("\t");
+    const row = Object.fromEntries(
+      headers.map((header, index) => [header, normalizeValue(header, values[index])]),
+    );
+    const totalExecCount = Number(row.call_count ?? row.total_exec_count ?? 0);
+    const p95ExecTimeMs = Number(row.p95_exec_time_ms ?? 0);
+    const totalExecTimeMs = Number(row.total_exec_time_ms ?? 0);
+
+    return {
+      fingerprint: String(row.fingerprint ?? ""),
+      p95_exec_time_ms: p95ExecTimeMs,
+      sample_query: row.top_sample_query ?? row.sample_query,
+      severity: p95ExecTimeMs >= 100 ? "high" : "medium",
+      source_file: row.top_source_file ?? row.source_file,
+      total_exec_count: totalExecCount,
+      total_exec_time_ms: totalExecTimeMs,
+    };
+  });
+}
+```
+
+The parsing steps:
+
+1. Split on `\n`, drop empty lines — guards against trailing newlines in ClickHouse output
+2. First line is the header; remaining are data rows
+3. `normalizeValue` converts `\N` to null, coerces numeric-looking strings to numbers (except `fingerprint`, which must stay a string even though it looks like an integer)
+4. `call_count ?? total_exec_count` — handles both the new column alias and the old one for backward compat
+5. `severity: p95ExecTimeMs >= 100 ? 'high' : 'medium'` — the agent's threshold for triggering automated fix attempts
+
+### Step 8: Final queryFindings output
+
+Here is the complete end-to-end call through the TypeScript layer, running against the live data.
+
+```bash
+CLICKHOUSE_URL=http://localhost:8123 npx tsx /tmp/demo_query.mts
+```
+
+```output
+[
+  {
+    "fingerprint": "-4675886988266314286",
+    "p95_exec_time_ms": 0.04,
+    "sample_query": "SELECT query FROM pg_stat_activity WHERE query_id = $1 LIMIT 1",
+    "severity": "medium",
+    "total_exec_count": 12,
+    "total_exec_time_ms": 0.47
+  },
+  {
+    "fingerprint": "8809102542184958349",
+    "p95_exec_time_ms": 0,
+    "severity": "medium",
+    "total_exec_count": 90,
+    "total_exec_time_ms": 0.26
+  },
+  {
+    "fingerprint": "-1891428409369833436",
+    "p95_exec_time_ms": 0,
+    "severity": "medium",
+    "total_exec_count": 45,
+    "total_exec_time_ms": 0.2
+  },
+  {
+    "fingerprint": "5274116089881997307",
+    "p95_exec_time_ms": 0,
+    "severity": "medium",
+    "total_exec_count": 65,
+    "total_exec_time_ms": 0.18
+  },
+  {
+    "fingerprint": "4552656009507366904",
+    "p95_exec_time_ms": 0.15,
+    "severity": "medium",
+    "total_exec_count": 1,
+    "total_exec_time_ms": 0.15
+  }
+]
+```
+
+Reading the findings:
+
+- **Fingerprint `-4675886988266314286`** (collector's own `SampleQueryLookup` query): 12 calls, 0.47 ms total. Has a `sample_query` because this query runs longer than the others and gets captured live in `pg_stat_activity` occasionally.
+- **Fingerprint `8809102542184958349`** (`SELECT * FROM todos`): 90 calls across the two intervals, 0.26 ms total — the busiest application query by call volume but fast.
+- **Fingerprints `-1891428409369833436` and `5274116089881997307`** (group-by stats, status filter): both `null` for `source_file` and `sample_query` — these finished too quickly to be captured in `pg_stat_activity` during any collector pass.
+
+In a production workload with slower queries (even a few milliseconds), `source_file` would populate reliably and P95 would surface genuine outliers. The severity threshold of 100 ms is calibrated for production tail latency, not a demo on an idle local database.
