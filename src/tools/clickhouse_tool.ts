@@ -51,12 +51,12 @@ function buildOffenderQuery(scope?: unknown): string {
   return [
     "SELECT",
     "  fingerprint,",
-    "  tupleElement(argMaxMerge(representative_state), 1) AS source_file,",
-    "  tupleElement(argMaxMerge(representative_state), 2) AS sample_query,",
-    "  sumMerge(total_exec_count_state) AS total_exec_count,",
-    "  sumMerge(total_exec_time_ms_state) AS total_exec_time_ms,",
-    "  round(quantileMerge(0.95)(p95_exec_time_state), 2) AS p95_exec_time_ms",
-    "FROM query_fingerprints",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS source_file,",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS sample_query,",
+    "  sum(total_exec_count) AS total_exec_count,",
+    "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
+    "  round(quantile(0.95)(delta_exec_time_ms), 2) AS p95_exec_time_ms",
+    "FROM query_intervals",
     "GROUP BY fingerprint",
     "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
@@ -68,13 +68,14 @@ function buildWindowedQuery(request: ScopeRequest): string {
   return [
     "SELECT",
     "  fingerprint,",
-    "  tupleElement(argMax((source_file, sample_query), collected_at), 1) AS source_file,",
-    "  tupleElement(argMax((source_file, sample_query), collected_at), 2) AS sample_query,",
-    "  sum(total_exec_count) AS call_count,",
-    "  round(sum(total_exec_count * mean_exec_time_ms), 2) AS total_exec_time_ms,",
-    "  round(quantile(0.95)(mean_exec_time_ms), 2) AS p95_exec_time_ms",
-    "FROM query_events",
-    `WHERE collected_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS source_file,",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS sample_query,",
+    "  sum(total_exec_count) AS total_exec_count,",
+    "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
+    "  round(quantile(0.95)(delta_exec_time_ms), 2) AS p95_exec_time_ms",
+    "FROM query_intervals",
+    `WHERE interval_ended_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
+    `  AND interval_duration_ms <= ${request.timeWindowMinutes * 60 * 1000}`,
     "GROUP BY fingerprint",
     "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
@@ -213,4 +214,4 @@ function createHttpTransport(): ClickHouseTransport {
   };
 }
 
-const SUPPORTED_TABLES = new Set(["query_events", "query_fingerprints"]);
+const SUPPORTED_TABLES = new Set(["query_events", "collector_state", "query_intervals"]);

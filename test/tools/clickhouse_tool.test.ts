@@ -30,4 +30,32 @@ test("queryFindings groups by fingerprint only", async () => {
 
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
   assert.match(queries[0] ?? "", /GROUP BY fingerprint/);
+  assert.match(queries[0] ?? "", /FROM query_intervals/);
+  assert.match(queries[0] ?? "", /interval_duration_ms <= 3600000/);
+});
+
+test("queryFindings reads all-time findings from query_intervals", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return ["fingerprint\tString", "fp-1"].join("\n");
+      },
+    },
+  });
+
+  await tool.queryFindings("analyze_table todos all");
+
+  assert.match(queries[0] ?? "", /FROM query_intervals/);
+});
+
+test("listTables returns exactly the supported checkpoint schema tables", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "unused",
+    },
+  });
+
+  assert.deepEqual(await tool.listTables(), ["query_events", "collector_state", "query_intervals"]);
 });

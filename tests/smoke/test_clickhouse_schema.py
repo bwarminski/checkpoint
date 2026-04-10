@@ -18,7 +18,7 @@ def image_exists(image: str) -> bool:
     return result.returncode == 0
 
 
-def test_clickhouse_image_boots_and_loads_schema():
+def test_clickhouse_image_boots_and_loads_counter_schema():
     if not image_exists("checkpoint-clickhouse:local"):
         pytest.skip("checkpoint-clickhouse:local is not built")
 
@@ -71,6 +71,7 @@ def test_clickhouse_image_boots_and_loads_schema():
         ).stdout.splitlines()
 
         assert "query_events" in tables
-        assert "query_fingerprints" in tables
+        assert "collector_state" in tables
+        assert "query_intervals" in tables
     finally:
         subprocess.run(["docker", "compose", "down"], cwd=root, check=True)

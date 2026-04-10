@@ -46,8 +46,9 @@ run_clickhouse_query() {
 
 seed_clickhouse_fixture() {
   run_clickhouse_query "TRUNCATE TABLE query_events"
-  run_clickhouse_query "TRUNCATE TABLE query_fingerprints"
-  run_clickhouse_query "INSERT INTO query_events (collected_at, fingerprint, source_tag, source_file, sample_query, total_exec_count, mean_exec_time_ms, rows_returned_or_affected, shared_blks_hit, shared_blks_read, local_blks_hit, local_blks_read, temp_blks_read, temp_blks_written, total_block_accesses, mean_block_accesses_per_call) VALUES (now(), 'fp-live-provider', 'todos#index', '/app/controllers/todos_controller.rb:12', 'SELECT * FROM todos', 7, 125.5, 20, 100, 40, 0, 0, 3, 2, 145, 20.714285714285715)"
+  run_clickhouse_query "TRUNCATE TABLE collector_state"
+  run_clickhouse_query "INSERT INTO query_events (collected_at, dbid, userid, toplevel, queryid, fingerprint, source_file, sample_query, total_exec_count, total_exec_time_ms, rows_returned_or_affected, shared_blks_hit, shared_blks_read, local_blks_hit, local_blks_read, temp_blks_read, temp_blks_written, total_block_accesses, min_exec_time_ms, max_exec_time_ms, mean_exec_time_ms, stddev_exec_time_ms) VALUES (toDateTime64(now() - INTERVAL 1 MINUTE, 3), 1, 1, true, '101', 'fp-live-provider', '/app/controllers/todos_controller.rb:12', 'SELECT * FROM todos', 5, 450, 10, 80, 20, 0, 0, 0, 0, 100, 70, 120, 90, 10), (toDateTime64(now(), 3), 1, 1, true, '101', 'fp-live-provider', '/app/controllers/todos_controller.rb:12', 'SELECT * FROM todos', 7, 700, 15, 120, 30, 0, 0, 0, 0, 150, 80, 140, 110, 12)"
+  run_clickhouse_query "INSERT INTO collector_state (collected_at, dealloc, stats_reset) SELECT collected_at, 0, now() - INTERVAL 10 MINUTE FROM query_events WHERE fingerprint = 'fp-live-provider'"
 }
 
 wait_for_health() {

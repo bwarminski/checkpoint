@@ -11,23 +11,23 @@ test("ClickHouseTool lists tables from SHOW TABLES", async () => {
     transport: {
       query: async () => {
         queryCalls += 1;
-        return "query_events\nquery_fingerprints\nsystem.tables\n";
+        return "query_events\ncollector_state\nquery_intervals\nsystem.tables\n";
       },
     },
   });
 
-  assert.deepEqual(await tool.listTables(), ["query_events", "query_fingerprints"]);
+  assert.deepEqual(await tool.listTables(), ["query_events", "collector_state", "query_intervals"]);
   assert.equal(queryCalls, 0);
 });
 
 test("ClickHouseTool hides unsupported tables from discovery", async () => {
   const tool = new ClickHouseTool({
     transport: {
-      query: async () => "query_events\nquery_fingerprints\ntop_offenders_mv\nsystem.tables\n",
+      query: async () => "query_events\ncollector_state\nquery_intervals\ntop_offenders_mv\nsystem.tables\n",
     },
   });
 
-  assert.deepEqual(await tool.listTables(), ["query_events", "query_fingerprints"]);
+  assert.deepEqual(await tool.listTables(), ["query_events", "collector_state", "query_intervals"]);
 });
 
 test("ClickHouseTool describes a table with TSV output", async () => {
@@ -64,7 +64,7 @@ test("ClickHouseTool rejects multi-statement raw queries", async () => {
   });
 
   await assert.rejects(
-    () => tool.executeQuery("SELECT * FROM query_events; SELECT * FROM query_fingerprints"),
+    () => tool.executeQuery("SELECT * FROM query_events; SELECT * FROM query_intervals"),
     /single statement/i,
   );
 });
@@ -107,11 +107,12 @@ test("ClickHouseTool queries typed findings without source_tag output", async ()
       total_exec_time_ms: 50.5,
     },
   ]);
-  assert.match(queries[0] ?? "", /FROM query_events/);
+  assert.match(queries[0] ?? "", /FROM query_intervals/);
+  assert.match(queries[0] ?? "", /interval_duration_ms <= 3600000/);
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
 });
 
-test("ClickHouseTool queries all-time findings from the fingerprint table", async () => {
+test("ClickHouseTool queries all-time findings from query_intervals", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool({
     transport: {
@@ -127,7 +128,7 @@ test("ClickHouseTool queries all-time findings from the fingerprint table", asyn
 
   await tool.queryFindings("analyze_table todos all");
 
-  assert.match(queries[0] ?? "", /FROM query_fingerprints/);
+  assert.match(queries[0] ?? "", /FROM query_intervals/);
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
   assert.match(queries[0] ?? "", /GROUP BY fingerprint/);
 });
