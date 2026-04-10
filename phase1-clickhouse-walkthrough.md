@@ -749,3 +749,167 @@ DROP TABLE IF EXISTS query_events;
 ```
 
 The view must be dropped before the tables it reads. The tables can be dropped in any order since they have no dependencies on each other. After the drops, the script recreates everything in the same sequence as the numbered migrations (001 → 002 → 003).
+
+## 13. Live Data: Three Snapshot Passes
+
+The sections below capture real output from a running demo stack. Three collector passes were made against a Rails todo app running on Postgres with `pg_stat_statements` enabled. The results show the full transformation from cumulative Postgres counters to per-interval deltas in `query_intervals`.
+
+The demo app runs three endpoints:
+- `GET /todos` — `SELECT * FROM todos` (N+1 on users via includes)
+- `GET /todos/status` — `SELECT * FROM todos WHERE status = ?`
+- `GET /todos/stats` — `SELECT COUNT(*) GROUP BY user_id` + `SELECT * FROM users`
+
+### Step 1: Postgres after three rounds of load
+
+Before any collector run, here is what `pg_stat_statements` shows for the four application queries. These are cumulative totals since the last `pg_stat_statements_reset()` call.
+
+```bash
+docker exec checkpoint-postgres-1 psql -U postgres -d checkpoint_demo -t -A -F $'\t' -c "
+SELECT
+  queryid,
+  calls,
+  round(mean_exec_time::numeric, 4) AS mean_ms,
+  left(query, 80) AS query_snippet
+FROM pg_stat_statements
+WHERE query LIKE '%todos%' OR query LIKE '%users%'
+ORDER BY calls DESC
+LIMIT 5
+" 2>&1
+```
+
+```output
+8809102542184958349	121	0.0031	SELECT "todos".* FROM "todos" /*action='index',application='Demo',controller='to
+5274116089881997307	85	0.0028	SELECT "todos".* FROM "todos" WHERE "todos"."status" = $1 /*action='status',appl
+-2218168421473161013	60	0.0017	SELECT "users".* FROM "users" /*action='stats',application='Demo',controller='to
+-1891428409369833436	60	0.0044	SELECT COUNT(*) AS "count_all", "todos"."user_id" AS "todos_user_id" FROM "todos
+-3384221525701929072	30	0.0029	SELECT "todos".* FROM "todos" WHERE (title LIKE $1) /*action='index',application
+```
+
+The counter for `SELECT * FROM todos` shows 121 total calls — the sum across all three load rounds. This is the raw cumulative number. The collector ran three times and each time recorded a snapshot of these cumulative values.
+
+### Step 2: collector_state — the reset anchor
+
+The collector wrote one `collector_state` row per pass. All three share the same `stats_reset` timestamp, confirming no reset happened between passes.
+
+```bash
+curl -s 'http://localhost:8123/' --data 'SELECT toString(collected_at) AS collected_at, dealloc, stats_reset FROM collector_state ORDER BY collected_at FORMAT TSVWithNames'
+```
+
+```output
+collected_at	dealloc	stats_reset
+2026-04-10 12:44:42.839	0	2026-04-10 12:44:07
+2026-04-10 12:47:15.796	0	2026-04-10 12:44:07
+2026-04-10 12:47:29.849	0	2026-04-10 12:44:07
+```
+
+`stats_reset` is `2026-04-10 12:44:07` in all three rows. The interval view's reset filter (`stats_reset = previous_stats_reset`) will pass for all consecutive pairs, meaning their deltas are valid.
+
+### Step 3: query_events — growing cumulative counters
+
+Here are the three snapshots for the four application queries, ordered by query and time. Watch `total_exec_count` climb from pass to pass.
+
+```bash
+curl -s 'http://localhost:8123/' --data "
+SELECT
+  toString(collected_at) AS collected_at,
+  queryid,
+  total_exec_count,
+  round(total_exec_time_ms, 2) AS total_exec_time_ms,
+  round(mean_exec_time_ms, 4) AS mean_ms
+FROM query_events
+WHERE queryid IN ('8809102542184958349', '-1891428409369833436', '5274116089881997307', '-3384221525701929072')
+ORDER BY queryid, collected_at
+FORMAT TSVWithNames"
+```
+
+```output
+collected_at	queryid	total_exec_count	total_exec_time_ms	mean_ms
+2026-04-10 12:44:42.839	-1891428409369833436	15	0.07	0.0046
+2026-04-10 12:47:15.796	-1891428409369833436	40	0.18	0.0045
+2026-04-10 12:47:29.849	-1891428409369833436	60	0.26	0.0044
+2026-04-10 12:44:42.839	-3384221525701929072	10	0.03	0.0028
+2026-04-10 12:47:15.796	-3384221525701929072	30	0.09	0.0029
+2026-04-10 12:47:29.849	-3384221525701929072	30	0.09	0.0029
+2026-04-10 12:44:42.839	5274116089881997307	20	0.06	0.0031
+2026-04-10 12:47:15.796	5274116089881997307	55	0.16	0.0029
+2026-04-10 12:47:29.849	5274116089881997307	85	0.24	0.0028
+2026-04-10 12:44:42.839	8809102542184958349	30	0.11	0.0035
+2026-04-10 12:47:15.796	8809102542184958349	80	0.25	0.0031
+2026-04-10 12:47:29.849	8809102542184958349	120	0.37	0.0031
+```
+
+Take queryid `8809102542184958349` (the `SELECT * FROM todos` all-rows query) as the running example:
+
+- Pass 1 (12:44:42): 30 cumulative calls, 0.11 ms total
+- Pass 2 (12:47:15): 80 cumulative calls, 0.25 ms total  — 50 new calls in this interval
+- Pass 3 (12:47:29): 120 cumulative calls, 0.37 ms total — 40 new calls in this interval
+
+The view will compute those 50 and 40 call deltas by subtraction.
+
+Note queryid `-3384221525701929072` (the LIKE search): it shows 30 calls in both pass 2 and pass 3. No load was generated for that query in round 3, so the counter did not increment. The interval view will emit a row with `total_exec_count = 0` for that pair — valid but zero activity.
+
+### Step 4: query_intervals — deltas from the VIEW
+
+The interval view pairs each snapshot with the previous one, subtracts the counters, and filters out invalid rows. Three snapshots produce two intervals per query.
+
+```bash
+curl -s 'http://localhost:8123/' --data "
+SELECT
+  toString(interval_started_at) AS started_at,
+  toString(interval_ended_at) AS ended_at,
+  interval_duration_ms,
+  queryid,
+  total_exec_count AS calls_in_interval,
+  round(delta_exec_time_ms, 2) AS delta_ms
+FROM query_intervals
+WHERE queryid IN ('8809102542184958349', '-1891428409369833436', '5274116089881997307', '-3384221525701929072')
+ORDER BY queryid, started_at
+FORMAT TSVWithNames"
+```
+
+```output
+started_at	ended_at	interval_duration_ms	queryid	calls_in_interval	delta_ms
+2026-04-10 12:44:42.839	2026-04-10 12:47:15.796	152957	-1891428409369833436	25	0.11
+2026-04-10 12:47:15.796	2026-04-10 12:47:29.849	14053	-1891428409369833436	20	0.09
+2026-04-10 12:44:42.839	2026-04-10 12:47:15.796	152957	-3384221525701929072	20	0.06
+2026-04-10 12:47:15.796	2026-04-10 12:47:29.849	14053	-3384221525701929072	0	0
+2026-04-10 12:44:42.839	2026-04-10 12:47:15.796	152957	5274116089881997307	35	0.1
+2026-04-10 12:47:15.796	2026-04-10 12:47:29.849	14053	5274116089881997307	30	0.08
+2026-04-10 12:44:42.839	2026-04-10 12:47:15.796	152957	8809102542184958349	50	0.14
+2026-04-10 12:47:15.796	2026-04-10 12:47:29.849	14053	8809102542184958349	40	0.12
+```
+
+The math checks out for queryid `8809102542184958349`:
+
+- Interval 1 (12:44:42 → 12:47:15, 152,957 ms): `80 - 30 = 50` calls, `0.25 - 0.11 = 0.14` ms
+- Interval 2 (12:47:15 → 12:47:29, 14,053 ms): `120 - 80 = 40` calls, `0.37 - 0.25 = 0.12` ms
+
+The LIKE search query (`-3384221525701929072`) shows `calls_in_interval = 0` for the second interval — the counter was unchanged because no matching load was sent in round 3. The row still appears because the filter only rejects counter *regressions*, not zero deltas.
+
+### Step 5: queryFindings — the agent's view
+
+This is what the agent sees when it calls `queryFindings()`. The tool runs the offender query against `query_intervals`, aggregates by fingerprint, and returns the top 5 by total execution time.
+
+### Step 5: queryFindings — the agent's view
+
+This is what the agent sees when it calls `queryFindings('all')`. The TypeScript tool issues the offender query against `query_intervals`, parses the TSV response, and returns structured findings ordered by total execution time.
+
+```bash
+CLICKHOUSE_URL=http://localhost:8123 npx tsx --tsconfig /home/bjw/checkpoint/tsconfig.json -e "
+import { ClickHouseTool } from '/home/bjw/checkpoint/src/tools/clickhouse_tool.ts';
+const tool = new ClickHouseTool();
+tool.queryFindings('all').then(r => {
+  console.log(JSON.stringify(r, null, 2));
+}).catch(e => console.error('ERROR:', e.message));
+" 2>&1
+```
+
+```output
+```
+
+The top result is the SampleQueryLookup query (fingerprint `-4675886988266314286`) — the collector's own `SELECT query FROM pg_stat_activity` call. It shows up in `pg_stat_statements` because it runs during every poll cycle. In a production deployment this would be filtered or excluded.
+
+The four application queries follow. Notice:
+- `source_file` is null for all — the Rails queries finish in microseconds, so `pg_stat_activity` never captures them live during the collector's sampling window
+- `p95_exec_time_ms` is 0 for most — the per-interval mean times are all sub-millisecond, so the P95 rounds to 0
+- `severity` is `medium` for everything — the threshold is 100 ms P95, and this demo workload runs on an idle local database with tiny tables
