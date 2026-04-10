@@ -43,38 +43,6 @@ The HypoPG Postgres image is already built (`postgres/Dockerfile`).
 
 ---
 
-## ClickHouse time window: query query_events directly
-
-**What:** The `time_window_minutes` task parameter is accepted but not applied.
-`ClickHouseTool.topOffenders()` reads from `query_fingerprints` (AggregatingMergeTree),
-which has no time column post-aggregation. Time filtering cannot be applied there.
-
-**Fix:** For time-windowed queries, query `query_events` (MergeTree) directly with
-`WHERE collected_at > now() - INTERVAL {minutes} MINUTE`, then aggregate inline:
-
-```sql
-SELECT
-  fingerprint,
-  argMax((source_tag, source_file, sample_query), collected_at) AS representative,
-  sum(total_exec_count) AS total_exec_count,
-  quantile(0.95)(mean_exec_time_ms) AS p95_exec_time_ms
-FROM query_events
-WHERE collected_at > now() - INTERVAL 60 MINUTE
-GROUP BY fingerprint
-HAVING tupleElement(representative, 1) IS NOT NULL
-ORDER BY total_exec_count DESC
-LIMIT 5
-FORMAT TSVWithNames
-```
-
-Use `query_fingerprints` only for all-time aggregates (when no time window is given).
-Default window: 60 minutes.
-
-**Where:** `agent/src/tools/clickhouse_tool.ts` — `buildTopOffendersQuery()`. Parse
-`time_window_minutes` from scope text (e.g. "analyze_db 30" or via structured params).
-
----
-
 ## LLM-based fix classification (Phase 2 agent capability)
 
 **What:** Replace the deterministic pattern-matching in `buildFixProposal()` with an
