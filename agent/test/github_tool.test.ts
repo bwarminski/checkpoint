@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { GitHubTool } from "../src/tools/github_tool.ts";
+import { GitHubTool } from "../../src/tools/github_tool.ts";
 
 test("GitHubTool returns a local demo pull request url when no client is configured", async () => {
   const tool = new GitHubTool(undefined, {
@@ -24,7 +24,6 @@ test("GitHubTool posts a real pull request when token and repo config are presen
   const tool = new GitHubTool(undefined, {
     env: {
       DEMO_BASE_REF: "main",
-      DEMO_HEAD_REF: "agent/demo-fix",
       DEMO_REPO: "brett/db-specialist-demo",
       GITHUB_TOKEN: "secret-token",
     },
@@ -48,7 +47,7 @@ test("GitHubTool posts a real pull request when token and repo config are presen
   const result = await tool.openPullRequest({
     finding: {
       fingerprint: "fp-real",
-      source_tag: "todos#index",
+      source_file: "app/controllers/todos_controller.rb:12",
     },
     fix: {
       fix_type: "rewrite_like",
@@ -66,7 +65,8 @@ test("GitHubTool posts a real pull request when token and repo config are presen
   assert.equal(requests[0]?.url, "https://api.github.com/repos/brett/db-specialist-demo/pulls");
   assert.match(requests[0]?.headers.get("authorization") ?? "", /^Bearer secret-token$/);
   assert.match(requests[0]?.body ?? "", /fp-real/);
-  assert.match(requests[0]?.body ?? "", /todos#index/);
+  assert.match(requests[0]?.body ?? "", /app\/controllers\/todos_controller\.rb:12/);
+  assert.doesNotMatch(requests[0]?.body ?? "", /source_tag/);
   assert.match(requests[0]?.body ?? "", /rewrite_like/);
   assert.match(requests[0]?.body ?? "", /## Code Change/);
   assert.match(requests[0]?.body ?? "", /```diff/);
@@ -78,7 +78,6 @@ test("GitHubTool posts a real pull request when token and repo config are presen
 test("GitHubTool throws when token is set without DEMO_REPO", async () => {
   const tool = new GitHubTool(undefined, {
     env: {
-      DEMO_HEAD_REF: "agent/demo-fix",
       GITHUB_TOKEN: "secret-token",
     },
     fetchImpl: async () =>
@@ -98,11 +97,34 @@ test("GitHubTool throws when token is set without DEMO_REPO", async () => {
   );
 });
 
+test("GitHubTool requires a headRef when token and repo config are present", async () => {
+  const tool = new GitHubTool(undefined, {
+    env: {
+      DEMO_BASE_REF: "main",
+      DEMO_REPO: "brett/db-specialist-demo",
+      GITHUB_TOKEN: "secret-token",
+    },
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ html_url: "https://example.test/pr/ignored" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  await assert.rejects(
+    tool.openPullRequest({
+      finding: { fingerprint: "fp-missing-head" },
+      fix: { fix_type: "add_index", summary: "Add an index." },
+      validation: { validated: true },
+    } as any),
+    /headRef/,
+  );
+});
+
 test("GitHubTool returns an existing pull request url when GitHub reports one already exists", async () => {
   const tool = new GitHubTool(undefined, {
     env: {
       DEMO_BASE_REF: "main",
-      DEMO_HEAD_REF: "agent/demo-fix",
       DEMO_REPO: "brett/db-specialist-demo",
       GITHUB_TOKEN: "secret-token",
     },
@@ -131,9 +153,10 @@ test("GitHubTool returns an existing pull request url when GitHub reports one al
   });
 
   const result = await tool.openPullRequest({
-    finding: { fingerprint: "fp-existing", source_tag: "todos#status" },
+    finding: { fingerprint: "fp-existing", source_file: "app/models/todo.rb:5" },
     fix: { fix_type: "add_index", summary: "Add an index for status." },
     validation: { validated: true },
+    headRef: "agent/demo-fix/fp-existing",
   } as any);
 
   assert.equal(result.url, "https://github.com/brett/db-specialist-demo/pull/15");

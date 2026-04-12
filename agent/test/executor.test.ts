@@ -1,20 +1,82 @@
-// ABOUTME: Verifies the executor emits the minimal lifecycle events for Gate A.
-// ABOUTME: Keeps the agent scaffold honest before later orchestration is added.
+// ABOUTME: Verifies the executor bridges pi-agent-core loop events onto the A2A lifecycle.
+// ABOUTME: Keeps the executor transport-agnostic while preserving submitted, working, and completed events.
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+
 import { DBSpecialistExecutor } from "../src/executor.ts";
 
-test("DBSpecialistExecutor emits working and completed events", async () => {
+test("executor bridges pi-agent-core events into working and completed task events", async () => {
   const events: Array<unknown> = [];
-  const executor = new DBSpecialistExecutor({
-    clickhouseTool: {
-      topOffenders: async () => [],
+  let promptText = "";
+  let systemPrompt = "";
+  let toolNames: Array<string> = [];
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => ["query_events"],
+        describeTable: async () => "fingerprint\tString",
+        executeQuery: async () => "fingerprint\tabc",
+        queryFindings: async () => [],
+      },
+    } as any,
+    {
+      createAgent: ({ systemPrompt: prompt, tools }) => {
+        systemPrompt = prompt;
+        toolNames = tools.map((tool) => tool.name);
+        const handlers = new Set<(event: any) => void>();
+        const finalMessage = assistantMessage("analysis complete");
+
+        return {
+          subscribe(handler: (event: any) => void) {
+            handlers.add(handler);
+            return () => {
+              handlers.delete(handler);
+            };
+          },
+          async prompt(input: string) {
+            promptText = input;
+
+            for (const handler of handlers) {
+              handler({
+                type: "tool_execution_end",
+                toolCallId: "tool-1",
+                toolName: "query_findings",
+                isError: false,
+                result: {
+                  content: [{ type: "text", text: "[]" }],
+                  details: [{ fingerprint: "fp-1", severity: "high" }],
+                },
+              });
+              handler({
+                type: "message_update",
+                message: finalMessage,
+                assistantMessageEvent: {
+                  type: "text_delta",
+                  contentIndex: 0,
+                  delta: "analysis complete",
+                  partial: finalMessage,
+                },
+              });
+              handler({
+                type: "message_end",
+                message: finalMessage,
+              });
+              handler({
+                type: "agent_end",
+                messages: [finalMessage],
+              });
+            }
+          },
+          async waitForIdle() {},
+        };
+      },
     },
-  } as any);
+  );
 
   await executor.execute(
-    { userMessage: { text: "analyze_db" } } as any,
+    { userMessage: { text: "users report slow checkout" } } as any,
     {
       enqueueEvent(event: unknown) {
         events.push(event);
@@ -22,42 +84,80 @@ test("DBSpecialistExecutor emits working and completed events", async () => {
     },
   );
 
+  assert.equal(promptText, "users report slow checkout");
+  assert.equal(/memory/i.test(systemPrompt), false);
+  assert.equal(toolNames.includes("query_findings"), true);
+  assert.equal(toolNames.includes("search_memory"), false);
+  assert.equal(toolNames.includes("record_memory"), false);
   assert.deepEqual(events, [
     { type: "working", message: "analysis started" },
-    { type: "completed", result: { findings: [] } },
+    {
+      type: "completed",
+      result: {
+        findings: [{ fingerprint: "fp-1", severity: "high" }],
+        response: "analysis complete",
+        toolResults: [
+          {
+            toolName: "query_findings",
+            details: [{ fingerprint: "fp-1", severity: "high" }],
+          },
+        ],
+      },
+    },
   ]);
 });
 
-test("DBSpecialistExecutor publishes findings on the A2A event bus", async () => {
+test("executor publishes submitted, working, and completed events on the A2A bus", async () => {
   const events: Array<any> = [];
   let finished = false;
-  const executor = new DBSpecialistExecutor({
-    clickhouseTool: {
-      topOffenders: async () => [
-        {
-          fingerprint: "fp-a2a",
-          sample_query: "SELECT * FROM todos WHERE user_id = 7",
-          severity: "high",
-          source_file: "/app/controllers/todos_controller.rb:12",
-        },
-      ],
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => ["query_events"],
+        describeTable: async () => "fingerprint\tString",
+        executeQuery: async () => "fingerprint\tabc",
+        queryFindings: async () => [],
+      },
+    } as any,
+    {
+      createAgent: () => {
+        const handlers = new Set<(event: any) => void>();
+        const finalMessage = assistantMessage("loop finished");
+
+        return {
+          subscribe(handler: (event: any) => void) {
+            handlers.add(handler);
+            return () => {
+              handlers.delete(handler);
+            };
+          },
+          async prompt() {
+            for (const handler of handlers) {
+              handler({
+                type: "message_update",
+                message: finalMessage,
+                assistantMessageEvent: {
+                  type: "text_delta",
+                  contentIndex: 0,
+                  delta: "loop finished",
+                  partial: finalMessage,
+                },
+              });
+              handler({
+                type: "message_end",
+                message: finalMessage,
+              });
+              handler({
+                type: "agent_end",
+                messages: [finalMessage],
+              });
+            }
+          },
+          async waitForIdle() {},
+        };
+      },
     },
-    codeSearchTool: {
-      locate: async ({ source_file }: { source_file: string }) => ({
-        content: "12: Todo.where(user_id: 7)",
-        source_file,
-      }),
-    },
-    explainTool: {
-      analyze: async () => ({ validated: true }),
-    },
-    memoryTool: {
-      shouldSuggest: async () => true,
-    },
-    githubTool: {
-      openPullRequest: async () => ({ url: "https://example.test/pr/1" }),
-    },
-  } as any);
+  );
 
   await executor.execute(
     {
@@ -123,24 +223,9 @@ test("DBSpecialistExecutor publishes findings on the A2A event bus", async () =>
             {
               kind: "data",
               data: {
-                findings: [
-                  {
-                    decision: "opened",
-                    fingerprint: "fp-a2a",
-                    fix: {
-                      fix_type: "add_index",
-                      summary:
-                        "Add an index for the user_id filter used at /app/controllers/todos_controller.rb:12.",
-                    },
-                    pr: { url: "https://example.test/pr/1" },
-                    severity: "high",
-                    source: {
-                      content: "12: Todo.where(user_id: 7)",
-                      source_file: "/app/controllers/todos_controller.rb:12",
-                    },
-                    validation: { validated: true },
-                  },
-                ],
+                findings: [],
+                response: "loop finished",
+                toolResults: [],
               },
             },
           ],
@@ -151,40 +236,77 @@ test("DBSpecialistExecutor publishes findings on the A2A event bus", async () =>
   ]);
 });
 
-test("DBSpecialistExecutor passes source_tag to code search when source_file is missing", async () => {
-  const locateCalls: Array<{ source_file?: string | null; source_tag?: string | null }> = [];
-  const executor = new DBSpecialistExecutor({
-    clickhouseTool: {
-      topOffenders: async () => [
-        {
-          fingerprint: "fp-tagged",
-          sample_query: "SELECT * FROM todos WHERE status = 'open'",
-          severity: "high",
-          source_tag: "todos#status",
-        },
-      ],
-    },
-    codeSearchTool: {
-      locate: async (input: { source_file?: string | null; source_tag?: string | null }) => {
-        locateCalls.push(input);
+test("executor preserves structured tool outcomes in the completed payload", async () => {
+  const events: Array<unknown> = [];
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => ["query_events"],
+        describeTable: async () => "fingerprint\tString",
+        executeQuery: async () => "fingerprint\tabc",
+        queryFindings: async () => [],
+      },
+    } as any,
+    {
+      createAgent: () => {
+        const handlers = new Set<(event: any) => void>();
+        const finalMessage = assistantMessage("loop finished");
+
         return {
-          content: "1: class TodosController < ApplicationController",
-          source_file: "app/controllers/todos_controller.rb:1",
+          subscribe(handler: (event: any) => void) {
+            handlers.add(handler);
+            return () => {
+              handlers.delete(handler);
+            };
+          },
+          async prompt() {
+            for (const handler of handlers) {
+              handler({
+                type: "tool_execution_end",
+                toolCallId: "tool-1",
+                toolName: "analyze_query",
+                isError: false,
+                result: {
+                  content: [{ type: "text", text: "{\"validated\":true}" }],
+                  details: { validated: true, plan_rows: [{ "QUERY PLAN": "Index Scan" }] },
+                },
+              });
+              handler({
+                type: "tool_execution_end",
+                toolCallId: "tool-2",
+                toolName: "apply_fix",
+                isError: false,
+                result: {
+                  content: [{ type: "text", text: "{\"branchName\":\"agent/demo-fix-fp-1\"}" }],
+                  details: { branchName: "agent/demo-fix-fp-1", diff: "diff --git a/file b/file" },
+                },
+              });
+              handler({
+                type: "tool_execution_end",
+                toolCallId: "tool-3",
+                toolName: "open_pull_request",
+                isError: false,
+                result: {
+                  content: [{ type: "text", text: "{\"url\":\"https://example.test/pr/1\"}" }],
+                  details: { url: "https://example.test/pr/1" },
+                },
+              });
+              handler({
+                type: "message_end",
+                message: finalMessage,
+              });
+              handler({
+                type: "agent_end",
+                messages: [finalMessage],
+              });
+            }
+          },
+          async waitForIdle() {},
         };
       },
     },
-    explainTool: {
-      analyze: async () => ({ validated: true }),
-    },
-    memoryTool: {
-      shouldSuggest: async () => true,
-    },
-    githubTool: {
-      openPullRequest: async () => ({ url: "https://example.test/pr/2" }),
-    },
-  } as any);
+  );
 
-  const events: Array<any> = [];
   await executor.execute(
     { userMessage: { text: "analyze_db" } } as any,
     {
@@ -194,206 +316,311 @@ test("DBSpecialistExecutor passes source_tag to code search when source_file is 
     },
   );
 
-  assert.deepEqual(locateCalls, [{ source_file: undefined, source_tag: "todos#status" }]);
-  assert.equal(
-    events[1]?.result?.findings?.[0]?.source?.source_file,
-    "app/controllers/todos_controller.rb:1",
-  );
-});
-
-test("DBSpecialistExecutor classifies multiple fix types from traced source content", async () => {
-  const executor = new DBSpecialistExecutor({
-    clickhouseTool: {
-      topOffenders: async () => [
+  assert.deepEqual(events.at(-1), {
+    type: "completed",
+    result: {
+      findings: [],
+      response: "loop finished",
+      toolResults: [
         {
-          fingerprint: "fp-like",
-          sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
-          severity: "medium",
-          source_file: "/app/controllers/todos_controller.rb:4",
+          toolName: "analyze_query",
+          details: { validated: true, plan_rows: [{ "QUERY PLAN": "Index Scan" }] },
         },
         {
-          fingerprint: "fp-count",
-          sample_query: "SELECT COUNT(*) FROM todos WHERE user_id = 1",
-          severity: "medium",
-          source_file: "/app/controllers/todos_controller.rb:12",
+          toolName: "apply_fix",
+          details: { branchName: "agent/demo-fix-fp-1", diff: "diff --git a/file b/file" },
         },
         {
-          fingerprint: "fp-includes",
-          sample_query: "SELECT * FROM todos JOIN users ON users.id = todos.user_id",
-          severity: "medium",
-          source_file: "/app/controllers/todos_controller.rb:3",
+          toolName: "open_pull_request",
+          details: { url: "https://example.test/pr/1" },
         },
       ],
     },
-    codeSearchTool: {
-      locate: async ({ source_file }: { source_file?: string | null }) => {
-        if (source_file?.includes(":4")) {
-          return {
-            content: "4: todos = params[:q].present? ? Todo.where(\"title LIKE ?\", \"%#{params[:q]}%\") : Todo.all",
-            source_file,
-          };
-        }
-
-        if (source_file?.includes(":3")) {
-          return {
-            content:
-              "3: todos = params[:q].present? ? Todo.where(...) : Todo.all\n4: todos.each { |t| t.user.name }",
-            source_file,
-          };
-        }
-
-        return {
-          content: "12: render json: User.all.index_with { |user| user.todos.count }",
-          source_file: source_file ?? "app/controllers/todos_controller.rb:12",
-        };
-      },
-    },
-    explainTool: {
-      analyze: async () => ({ validated: true }),
-    },
-    memoryTool: {
-      shouldSuggest: async () => true,
-    },
-  } as any);
-
-  const events: Array<any> = [];
-  await executor.execute(
-    { userMessage: { text: "analyze_db" } } as any,
-    {
-      enqueueEvent(event: unknown) {
-        events.push(event);
-      },
-    },
-  );
-
-  assert.deepEqual(
-    events[1]?.result?.findings?.map((finding: any) => finding.fix.fix_type),
-    ["rewrite_like", "rewrite_count", "add_includes"],
-  );
-});
-
-test("DBSpecialistExecutor passes demo repo branch and diff metadata to GitHubTool", async () => {
-  const openPullRequestCalls: Array<any> = [];
-  const applyFixCalls: Array<any> = [];
-  const executor = new DBSpecialistExecutor({
-    clickhouseTool: {
-      topOffenders: async () => [
-        {
-          fingerprint: "fp-pr",
-          sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
-          severity: "high",
-          source_file: "/app/controllers/todos_controller.rb:4",
-        },
-      ],
-    },
-    codeSearchTool: {
-      locate: async ({ source_file }: { source_file?: string | null }) => ({
-        content:
-          "4: todos = params[:q].present? ? Todo.where(\"title LIKE ?\", \"%#{params[:q]}%\") : Todo.all",
-        source_file: source_file ?? "app/controllers/todos_controller.rb:4",
-      }),
-    },
-    explainTool: {
-      analyze: async () => ({ validated: true }),
-    },
-    memoryTool: {
-      shouldSuggest: async () => true,
-    },
-    demoRepoTool: {
-      applyFix: async (input: any) => {
-        applyFixCalls.push(input);
-        return {
-          branchName: "agent/demo-fix-fp-pr",
-          diff: "diff --git a/app/controllers/todos_controller.rb b/app/controllers/todos_controller.rb",
-        };
-      },
-    },
-    githubTool: {
-      openPullRequest: async (input: any) => {
-        openPullRequestCalls.push(input);
-        return { url: "https://example.test/pr/3" };
-      },
-    },
-  } as any);
-
-  const events: Array<any> = [];
-  await executor.execute(
-    { userMessage: { text: "analyze_db" } } as any,
-    {
-      enqueueEvent(event: unknown) {
-        events.push(event);
-      },
-    },
-  );
-
-  assert.equal(applyFixCalls.length, 1);
-  assert.deepEqual(openPullRequestCalls[0], {
-    finding: {
-      fingerprint: "fp-pr",
-      sample_query: "SELECT * FROM todos WHERE title LIKE '%foo%'",
-      severity: "high",
-      source_file: "/app/controllers/todos_controller.rb:4",
-    },
-    fix: {
-      fix_type: "rewrite_like",
-      summary: "Replace the leading-wildcard LIKE search with a searchable alternative.",
-    },
-    source: {
-      content:
-        "4: todos = params[:q].present? ? Todo.where(\"title LIKE ?\", \"%#{params[:q]}%\") : Todo.all",
-      source_file: "/app/controllers/todos_controller.rb:4",
-    },
-    validation: { validated: true },
-    headRef: "agent/demo-fix-fp-pr",
-    codeDiff: "diff --git a/app/controllers/todos_controller.rb b/app/controllers/todos_controller.rb",
   });
 });
 
-test("DBSpecialistExecutor prepares the demo repo branch before opening a PR", async () => {
-  const callOrder: Array<string> = [];
-  const executor = new DBSpecialistExecutor({
-    clickhouseTool: {
-      topOffenders: async () => [
-        {
-          fingerprint: "fp-pr",
-          sample_query: "SELECT * FROM todos WHERE status = 'open'",
-          severity: "high",
-          source_file: "/app/controllers/todos_controller.rb:9",
-          source_tag: "todos#status",
-        },
-      ],
-    },
-    codeSearchTool: {
-      locate: async ({ source_file }: { source_file?: string | null }) => ({
-        content: "9:   def status\n10:     render json: Todo.where(status: params.fetch(:status, \"open\"))\n11:   end",
-        source_file: source_file ?? "app/controllers/todos_controller.rb:9",
-      }),
-    },
-    explainTool: {
-      analyze: async () => ({ validated: true }),
-    },
-    memoryTool: {
-      shouldSuggest: async () => true,
-    },
-    demoRepoTool: {
-      applyFix: async () => {
-        callOrder.push("prepare");
+test("executor can run through the default pi-agent-core agent path with a local streamFn", async () => {
+  const events: Array<unknown> = [];
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => ["query_events"],
+        describeTable: async () => "fingerprint\tString",
+        executeQuery: async () => "fingerprint\tabc",
+        queryFindings: async () => [{ fingerprint: "fp-agent", severity: "high" }],
+      },
+    } as any,
+    {
+      env: { LLM_MODEL: "openai/gpt-4o-mini" },
+      streamFn: async (_model, context) => {
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => {
+          const toolResultSeen = context.messages.some(
+            (message) => message.role === "toolResult" && message.toolName === "query_findings",
+          );
+          if (!toolResultSeen) {
+            const partial = assistantMessage("");
+            const toolCall = {
+              type: "toolCall" as const,
+              id: "tool-1",
+              name: "query_findings",
+              arguments: { scope: "analyze_db" },
+            };
+            const message = {
+              ...assistantMessage(""),
+              content: [toolCall],
+              stopReason: "toolUse" as const,
+            };
+            stream.push({ type: "start", partial });
+            stream.push({ type: "toolcall_start", contentIndex: 0, partial });
+            stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: message });
+            stream.push({ type: "done", reason: "toolUse", message });
+            return;
+          }
+
+          const partial = assistantMessage("");
+          const message = assistantMessage("agent path complete");
+          stream.push({ type: "start", partial });
+          stream.push({ type: "text_start", contentIndex: 0, partial });
+          stream.push({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "agent path complete",
+            partial: message,
+          });
+          stream.push({
+            type: "text_end",
+            contentIndex: 0,
+            content: "agent path complete",
+            partial: message,
+          });
+          stream.push({ type: "done", reason: "stop", message });
+        });
+        return stream;
       },
     },
-    githubTool: {
-      openPullRequest: async () => {
-        callOrder.push("open");
-        return { url: "https://example.test/pr/99" };
-      },
-    },
-  } as any);
+  );
 
   await executor.execute(
     { userMessage: { text: "analyze_db" } } as any,
     {
-      enqueueEvent() {},
+      enqueueEvent(event: unknown) {
+        events.push(event);
+      },
     },
   );
 
-  assert.deepEqual(callOrder, ["prepare", "open"]);
+  assert.deepEqual(events.at(-1), {
+    type: "completed",
+    result: {
+      findings: [{ fingerprint: "fp-agent", severity: "high" }],
+      response: "agent path complete",
+      toolResults: [
+        {
+          toolName: "query_findings",
+          details: [{ fingerprint: "fp-agent", severity: "high" }],
+        },
+      ],
+    },
+  });
 });
+
+test("executor publishes failed status and closes stream when agent.prompt throws", async () => {
+  const events: Array<unknown> = [];
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => [],
+        describeTable: async () => "",
+        executeQuery: async () => "",
+        queryFindings: async () => [],
+      },
+    } as any,
+    {
+      createAgent: () => ({
+        subscribe: () => () => {},
+        prompt: async () => {
+          throw new Error("LLM provider unavailable");
+        },
+        waitForIdle: async () => {},
+      }),
+    },
+  );
+
+  await executor.execute(
+    { userMessage: { text: "analyze_db" } } as any,
+    {
+      enqueueEvent(event: unknown) {
+        events.push(event);
+      },
+    },
+  );
+
+  assert.deepEqual(events, [
+    { type: "working", message: "analysis started" },
+    { type: "failed", error: "Error: LLM provider unavailable" },
+  ]);
+});
+
+test("cancelTask cancels only the matching active task and publishes canceled status", async () => {
+  const aborts: Array<string> = [];
+  const releases = new Map<string, () => void>();
+  const executor = new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => ["query_events"],
+        describeTable: async () => "fingerprint\tString",
+        executeQuery: async () => "fingerprint\tabc",
+        queryFindings: async () => [],
+      },
+    } as any,
+    {
+      createAgent: () => {
+        const handlers = new Set<(event: any) => void>();
+        let promptText = "";
+
+        return {
+          subscribe(handler: (event: any) => void) {
+            handlers.add(handler);
+            return () => {
+              handlers.delete(handler);
+            };
+          },
+          async prompt(input: string) {
+            promptText = input;
+            await new Promise<void>((resolve) => {
+              releases.set(input, resolve);
+            });
+            for (const handler of handlers) {
+              handler({ type: "agent_end", messages: [] });
+            }
+          },
+          abort() {
+            aborts.push(promptText);
+          },
+          async waitForIdle() {},
+        };
+      },
+    },
+  );
+
+  const first = executor.execute(
+    {
+      taskId: "task-1",
+      contextId: "context-1",
+      userMessage: { text: "first task" },
+    } as any,
+    {
+      publish() {},
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      once() {
+        return this;
+      },
+      removeAllListeners() {
+        return this;
+      },
+      finished() {},
+    } as any,
+  );
+  const second = executor.execute(
+    {
+      taskId: "task-2",
+      contextId: "context-2",
+      userMessage: { text: "second task" },
+    } as any,
+    {
+      publish() {},
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      once() {
+        return this;
+      },
+      removeAllListeners() {
+        return this;
+      },
+      finished() {},
+    } as any,
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const cancelEvents: Array<any> = [];
+  let finished = false;
+  await executor.cancelTask(
+    "task-2",
+    {
+      publish(event: unknown) {
+        cancelEvents.push(event);
+      },
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+      once() {
+        return this;
+      },
+      removeAllListeners() {
+        return this;
+      },
+      finished() {
+        finished = true;
+      },
+    } as any,
+  );
+
+  releases.get("first task")?.();
+  releases.get("second task")?.();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(aborts, ["second task"]);
+  assert.equal(finished, true);
+  assert.deepEqual(cancelEvents, [
+    {
+      kind: "status-update",
+      taskId: "task-2",
+      contextId: "context-2",
+      status: {
+        state: "canceled",
+        timestamp: cancelEvents[0]?.status?.timestamp,
+      },
+      final: true,
+    },
+  ]);
+});
+
+function assistantMessage(text: string) {
+  return {
+    role: "assistant" as const,
+    api: "openai-responses",
+    provider: "openai",
+    model: "gpt-4o-mini",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "stop" as const,
+    timestamp: Date.now(),
+    content: [{ type: "text" as const, text }],
+  };
+}

@@ -1,72 +1,25 @@
-// ABOUTME: Runs the DB specialist task lifecycle for the agent service.
-// ABOUTME: Bridges the plan's simple test queue with the A2A SDK event bus.
+// ABOUTME: Bridges the DB specialist A2A lifecycle onto a pi-agent-core agent session.
+// ABOUTME: Keeps transport concerns in A2A while the loop uses provider-agnostic model config and agent tools.
 import type { ExecutionEventBus, RequestContext } from "@a2a-js/sdk/server";
+import { Agent, type AgentEvent, type AgentTool, type StreamFn } from "@mariozechner/pi-agent-core";
+import { getModel } from "@mariozechner/pi-ai";
 
-import { ClickHouseTool, type TopOffender } from "./tools/clickhouse_tool.ts";
+import {
+  buildAgentTools,
+  type AgentToolDependencies,
+} from "./agent_tools.ts";
+import {
+  parseLlmConfig,
+  type LlmConfig,
+  type QualifiedModelRef,
+} from "./llm_config.ts";
+import { ClickHouseTool } from "../../src/tools/clickhouse_tool.ts";
 
 type EventQueue = {
   enqueueEvent(event: unknown): void;
 };
 
 type EventSink = ExecutionEventBus | EventQueue;
-
-type LocatedSource = {
-  content: string;
-  source_file: string;
-};
-
-type FixProposal = {
-  fix_type: string;
-  summary: string;
-};
-
-type ValidationResult = {
-  validated: boolean;
-  [key: string]: unknown;
-};
-
-type PullRequestResult = {
-  url?: string;
-  [key: string]: unknown;
-} | null;
-
-type ExecutorDependencies = {
-  clickhouseTool?: {
-    topOffenders(scope?: unknown): Promise<Array<TopOffender>>;
-  };
-  codeSearchTool?: {
-    locate(input: {
-      source_file?: string | null;
-      source_tag?: string | null;
-    }): Promise<LocatedSource>;
-  };
-  explainTool?: {
-    analyze(input: { sql: string }): Promise<unknown>;
-  };
-  githubTool?: {
-    openPullRequest(input: {
-      finding: TopOffender;
-      fix: FixProposal;
-      source: LocatedSource;
-      validation: ValidationResult;
-      headRef?: string;
-      codeDiff?: string;
-    }): Promise<PullRequestResult>;
-  };
-  demoRepoTool?: {
-    applyFix(input: {
-      finding: TopOffender;
-      fix: FixProposal;
-      source: LocatedSource;
-    }): Promise<{
-      branchName: string;
-      diff: string;
-    }>;
-  };
-  memoryTool?: {
-    shouldSuggest(input: { fingerprint: string; fixType: string }): Promise<boolean>;
-  };
-};
 
 type QueueRequestContext = Partial<RequestContext> & {
   userMessage?: {
@@ -75,25 +28,125 @@ type QueueRequestContext = Partial<RequestContext> & {
   };
 };
 
+type ExecutorOptions = {
+  createAgent?: (input: CreateAgentInput) => LoopAgent;
+  env?: {
+    LLM_MODEL?: string;
+  };
+  now?: () => Date;
+  systemPrompt?: string;
+  streamFn?: StreamFn;
+};
+
+type CreateAgentInput = {
+  deps: AgentToolDependencies;
+  llmConfig: LlmConfig;
+  systemPrompt: string;
+  streamFn?: StreamFn;
+  tools: Array<AgentTool>;
+};
+
+type LoopAgent = {
+  abort?: () => void;
+  prompt(input: string): Promise<void>;
+  subscribe(listener: (event: AgentEvent) => void | Promise<void>): () => void;
+  waitForIdle(): Promise<void>;
+};
+
+type LoopRunResult = {
+  findings: Array<unknown>;
+  response: string;
+  toolResults: Array<{
+    details: unknown;
+    toolName: string;
+  }>;
+};
+
+const FALLBACK_TASK_ID = "gate-a-task";
+const FALLBACK_CONTEXT_ID = "gate-a-context";
+
+const DEFAULT_SYSTEM_PROMPT = [
+  "You are the DB specialist agent.",
+  "Investigate database issues by using the available tools instead of inventing data.",
+  "Use query_findings for normalized ClickHouse findings and query_database only for guarded follow-up queries.",
+  "Finish with a concise response that explains what you found and what should happen next.",
+].join("\n");
+
 export class DBSpecialistExecutor {
+  readonly llmConfig: LlmConfig;
+
+  private readonly createAgentImpl: (input: CreateAgentInput) => LoopAgent;
+  private readonly now: () => Date;
+  private readonly systemPrompt: string;
+  private readonly streamFn?: StreamFn;
+  private readonly activeTasks = new Map<string, { agent: LoopAgent; contextId: string }>();
+
   constructor(
-    private readonly deps: ExecutorDependencies = {
+    private readonly deps: AgentToolDependencies = {
       clickhouseTool: new ClickHouseTool(),
     },
-  ) {}
+    options: ExecutorOptions = {},
+  ) {
+    this.llmConfig = parseLlmConfig(options.env ?? process.env);
+    this.createAgentImpl = options.createAgent ?? createAgent;
+    this.now = options.now ?? (() => new Date());
+    this.systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.streamFn = options.streamFn;
+  }
 
   async execute(
     requestContext: QueueRequestContext,
     eventSink: EventSink,
   ): Promise<void> {
-    const scope = readUserText(requestContext);
-    this.publishSubmittedTask(requestContext, eventSink);
-    this.publishWorking(requestContext, eventSink);
-    const findings = await this.analyzeTopOffenders(scope);
-    this.publishCompleted(requestContext, eventSink, findings);
+    const userText = readUserText(requestContext) ?? "analyze_db";
+    const tools = buildAgentTools(this.deps);
+    const agent = this.createAgentImpl({
+      deps: this.deps,
+      llmConfig: this.llmConfig,
+      systemPrompt: this.systemPrompt,
+      streamFn: this.streamFn,
+      tools,
+    });
+    const runResult: LoopRunResult = {
+      findings: [],
+      response: "",
+      toolResults: [],
+    };
+
+    const taskId = requestContext.taskId ?? FALLBACK_TASK_ID;
+    const contextId = requestContext.contextId ?? FALLBACK_CONTEXT_ID;
+    this.activeTasks.set(taskId, { agent, contextId });
+    const unsubscribe = agent.subscribe((event) => {
+      applyLoopEvent(runResult, event);
+    });
+
+    try {
+      this.publishSubmittedTask(requestContext, eventSink);
+      this.publishWorking(requestContext, eventSink);
+      await agent.prompt(userText);
+      await agent.waitForIdle();
+      this.publishCompleted(requestContext, eventSink, runResult);
+    } catch (err) {
+      this.publishFailed(requestContext, eventSink, err);
+    } finally {
+      unsubscribe();
+      const activeTask = this.activeTasks.get(taskId);
+      if (activeTask?.agent === agent) {
+        this.activeTasks.delete(taskId);
+      }
+    }
   }
 
-  async cancelTask(_taskId: string, eventBus: ExecutionEventBus): Promise<void> {
+  async cancelTask(taskId: string, eventBus: ExecutionEventBus): Promise<void> {
+    const activeTask = this.activeTasks.get(taskId);
+    activeTask?.agent.abort?.();
+    eventBus.publish({
+      kind: "status-update",
+      taskId,
+      contextId: activeTask?.contextId ?? FALLBACK_CONTEXT_ID,
+      status: { state: "canceled", timestamp: this.timestamp() },
+      final: true,
+    });
     eventBus.finished();
   }
 
@@ -108,9 +161,9 @@ export class DBSpecialistExecutor {
 
     eventSink.publish({
       kind: "status-update",
-      taskId: requestContext.taskId ?? "gate-a-task",
-      contextId: requestContext.contextId ?? "gate-a-context",
-      status: { state: "working", timestamp: new Date().toISOString() },
+      taskId: requestContext.taskId ?? FALLBACK_TASK_ID,
+      contextId: requestContext.contextId ?? FALLBACK_CONTEXT_ID,
+      status: { state: "working", timestamp: this.timestamp() },
       final: false,
     });
   }
@@ -125,9 +178,9 @@ export class DBSpecialistExecutor {
 
     eventSink.publish({
       kind: "task",
-      id: requestContext.taskId ?? "gate-a-task",
-      contextId: requestContext.contextId ?? "gate-a-context",
-      status: { state: "submitted", timestamp: new Date().toISOString() },
+      id: requestContext.taskId ?? FALLBACK_TASK_ID,
+      contextId: requestContext.contextId ?? FALLBACK_CONTEXT_ID,
+      status: { state: "submitted", timestamp: this.timestamp() },
       history: toTaskHistory(requestContext.userMessage),
     });
   }
@@ -135,162 +188,120 @@ export class DBSpecialistExecutor {
   private publishCompleted(
     requestContext: Partial<RequestContext>,
     eventSink: EventSink,
-    findings: Array<unknown>,
+    runResult: LoopRunResult,
   ): void {
     if ("enqueueEvent" in eventSink) {
-      eventSink.enqueueEvent({ type: "completed", result: { findings } });
+      eventSink.enqueueEvent({ type: "completed", result: runResult });
       return;
     }
 
     eventSink.publish({
       kind: "status-update",
-      taskId: requestContext.taskId ?? "gate-a-task",
-      contextId: requestContext.contextId ?? "gate-a-context",
+      taskId: requestContext.taskId ?? FALLBACK_TASK_ID,
+      contextId: requestContext.contextId ?? FALLBACK_CONTEXT_ID,
       status: {
         state: "completed",
-        timestamp: new Date().toISOString(),
-        message: buildCompletedMessage(requestContext, findings),
+        timestamp: this.timestamp(),
+        message: buildCompletedMessage(requestContext, runResult),
       },
       final: true,
     });
     eventSink.finished();
   }
 
-  private async analyzeTopOffenders(scope?: string): Promise<Array<unknown>> {
-    const findings = await this.deps.clickhouseTool?.topOffenders(scope);
-
-    if (!findings?.length) {
-      return [];
+  private publishFailed(
+    requestContext: Partial<RequestContext>,
+    eventSink: EventSink,
+    err: unknown,
+  ): void {
+    if ("enqueueEvent" in eventSink) {
+      eventSink.enqueueEvent({ type: "failed", error: String(err) });
+      return;
     }
 
-    const completed: Array<unknown> = [];
-    for (const finding of findings) {
-      completed.push(await this.analyzeFinding(finding));
-    }
-
-    return completed;
-  }
-
-  private async analyzeFinding(finding: TopOffender): Promise<unknown> {
-    const source = await this.locateSource(finding);
-    const fix = buildFixProposal(finding, source);
-    const validation = await this.validateFinding(finding);
-    const allowed = await this.deps.memoryTool?.shouldSuggest({
-      fingerprint: finding.fingerprint,
-      fixType: fix.fix_type,
+    eventSink.publish({
+      kind: "status-update",
+      taskId: requestContext.taskId ?? FALLBACK_TASK_ID,
+      contextId: requestContext.contextId ?? FALLBACK_CONTEXT_ID,
+      status: { state: "failed", timestamp: this.timestamp() },
+      final: true,
     });
-    const mayOpenPr =
-      allowed !== false &&
-      finding.severity === "high" &&
-      validation.validated &&
-      this.deps.githubTool;
-    let pr: PullRequestResult = null;
-    if (mayOpenPr) {
-      const demoRepoResult = await this.deps.demoRepoTool?.applyFix({
-        finding,
-        fix,
-        source,
-      });
-      pr = await this.deps.githubTool!.openPullRequest({
-        finding,
-        fix,
-        source,
-        validation,
-        headRef: demoRepoResult?.branchName,
-        codeDiff: demoRepoResult?.diff,
-      });
-    }
-
-    return {
-      decision: allowed === false ? "blocked" : pr ? "opened" : "reported",
-      fingerprint: finding.fingerprint,
-      fix,
-      pr,
-      severity: finding.severity ?? "unknown",
-      source,
-      validation,
-    };
+    eventSink.finished();
   }
 
-  private async locateSource(finding: TopOffender): Promise<LocatedSource> {
-    if (
-      !this.deps.codeSearchTool ||
-      (typeof finding.source_file !== "string" && typeof finding.source_tag !== "string")
-    ) {
-      return {
-        content: "",
-        source_file: typeof finding.source_file === "string" ? finding.source_file : "",
-      };
-    }
-
-    return this.deps.codeSearchTool.locate({
-      source_file: typeof finding.source_file === "string" ? finding.source_file : undefined,
-      source_tag: typeof finding.source_tag === "string" ? finding.source_tag : undefined,
-    });
+  private timestamp(): string {
+    return this.now().toISOString();
   }
+}
 
-  private async validateFinding(finding: TopOffender): Promise<ValidationResult> {
-    if (!this.deps.explainTool || typeof finding.sample_query !== "string") {
-      return { validated: false };
-    }
+function createAgent(input: CreateAgentInput): LoopAgent {
+  return new Agent({
+    initialState: {
+      model: resolveModel(input.llmConfig.primary),
+      systemPrompt: input.systemPrompt,
+      tools: input.tools,
+    },
+    streamFn: input.streamFn,
+  });
+}
 
-    return normalizeValidationResult(
-      await this.deps.explainTool.analyze({ sql: finding.sample_query }),
+function resolveModel(modelRef: QualifiedModelRef) {
+  try {
+    return getModel(modelRef.provider as any, modelRef.model as never);
+  } catch {
+    throw new Error(
+      `Unsupported LLM provider/model for the current runtime: ${modelRef.provider}/${modelRef.model}`,
     );
   }
 }
 
-function buildFixProposal(finding: TopOffender, source: LocatedSource): FixProposal {
-  const content = source.content;
-  const normalized = content.toLowerCase();
-
-  if (/\bcount\b/.test(normalized) && /\b(each|index_with|map)\b/.test(normalized)) {
-    return {
-      fix_type: "rewrite_count",
-      summary: "Move the count query out of the loop and precompute the totals.",
-    };
+function applyLoopEvent(runResult: LoopRunResult, event: AgentEvent): void {
+  if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+    runResult.response += event.assistantMessageEvent.delta;
+    return;
   }
 
-  if (/like\s*\?/.test(normalized) || /like\s+'%/.test(normalized) || /%#\{/.test(content)) {
-    return {
-      fix_type: "rewrite_like",
-      summary: "Replace the leading-wildcard LIKE search with a searchable alternative.",
-    };
+  if (event.type === "message_end" && event.message.role === "assistant") {
+    const text = extractAssistantText(event.message);
+    if (text.length > 0) {
+      runResult.response = text;
+    }
+    return;
   }
 
   if (
-    /\.\w+\.\w+/.test(content) ||
-    (/\b(each|map|index_with)\b/.test(normalized) && /\.(user|todos|posts|comments)\b/.test(content))
+    event.type === "tool_execution_end" &&
+    typeof event.toolName === "string"
   ) {
-    return {
-      fix_type: "add_includes",
-      summary: "Eager load the accessed association to avoid an N+1 query pattern.",
-    };
+    runResult.toolResults.push({
+      details: event.result?.details,
+      toolName: event.toolName,
+    });
+
+    if (
+      !event.isError &&
+      event.toolName === "query_findings" &&
+      Array.isArray(event.result?.details)
+    ) {
+      runResult.findings = event.result.details;
+    }
   }
-
-  const rubyWhereColumn = content.match(/where\((\w+):/i)?.[1];
-  const sqlWhereColumn = content.match(/\bwhere\s+["\w.]+\.(\w+)\s*=\s*/i)?.[1];
-  const column = rubyWhereColumn ?? sqlWhereColumn;
-  const sourceFile =
-    typeof finding.source_file === "string" ? finding.source_file : finding.fingerprint;
-
-  return {
-    fix_type: "add_index",
-    summary: column
-      ? `Add an index for the ${column} filter used at ${sourceFile}.`
-      : `Add an index for the equality filter used at ${sourceFile}.`,
-  };
 }
 
-function normalizeValidationResult(result: unknown): ValidationResult {
-  if (isObject(result) && typeof result.validated === "boolean") {
-    return {
-      ...result,
-      validated: result.validated,
-    };
+function extractAssistantText(
+  message: Extract<AgentEvent, { type: "message_end" }>["message"],
+): string {
+  if (message.role !== "assistant") {
+    return "";
   }
 
-  return { validated: false };
+  return message.content
+    .filter(
+      (part): part is { text: string; type: "text" } =>
+        part.type === "text" && typeof part.text === "string",
+    )
+    .map((part) => part.text)
+    .join("");
 }
 
 function readUserText(requestContext: QueueRequestContext): string | undefined {
@@ -320,17 +331,17 @@ function toTaskHistory(userMessage: unknown): Array<RequestContext["userMessage"
 
 function buildCompletedMessage(
   requestContext: Partial<RequestContext>,
-  findings: Array<unknown>,
+  runResult: LoopRunResult,
 ): {
   contextId: string;
   kind: "message";
   messageId: string;
-  parts: Array<{ data: { findings: Array<unknown> }; kind: "data" }>;
+  parts: Array<{ data: LoopRunResult; kind: "data" }>;
   role: "agent";
   taskId: string;
 } {
-  const taskId = requestContext.taskId ?? "gate-a-task";
-  const contextId = requestContext.contextId ?? "gate-a-context";
+  const taskId = requestContext.taskId ?? FALLBACK_TASK_ID;
+  const contextId = requestContext.contextId ?? FALLBACK_CONTEXT_ID;
 
   return {
     contextId,
@@ -339,7 +350,7 @@ function buildCompletedMessage(
     parts: [
       {
         kind: "data",
-        data: { findings },
+        data: runResult,
       },
     ],
     role: "agent",

@@ -43,71 +43,6 @@ The HypoPG Postgres image is already built (`postgres/Dockerfile`).
 
 ---
 
-## ClickHouse time window: query query_events directly
-
-**What:** The `time_window_minutes` task parameter is accepted but not applied.
-`ClickHouseTool.topOffenders()` reads from `query_fingerprints` (AggregatingMergeTree),
-which has no time column post-aggregation. Time filtering cannot be applied there.
-
-**Fix:** For time-windowed queries, query `query_events` (MergeTree) directly with
-`WHERE collected_at > now() - INTERVAL {minutes} MINUTE`, then aggregate inline:
-
-```sql
-SELECT
-  fingerprint,
-  argMax((source_tag, source_file, sample_query), collected_at) AS representative,
-  sum(total_exec_count) AS total_exec_count,
-  quantile(0.95)(mean_exec_time_ms) AS p95_exec_time_ms
-FROM query_events
-WHERE collected_at > now() - INTERVAL 60 MINUTE
-GROUP BY fingerprint
-HAVING tupleElement(representative, 1) IS NOT NULL
-ORDER BY total_exec_count DESC
-LIMIT 5
-FORMAT TSVWithNames
-```
-
-Use `query_fingerprints` only for all-time aggregates (when no time window is given).
-Default window: 60 minutes.
-
-**Where:** `agent/src/tools/clickhouse_tool.ts` — `buildTopOffendersQuery()`. Parse
-`time_window_minutes` from scope text (e.g. "analyze_db 30" or via structured params).
-
----
-
-## db_name identifier in memory schema
-
-**What:** The `findings` and `suggestions` tables have no database identity column.
-Fingerprints are normalized SQL patterns that can match across different databases.
-
-**Why deferred:** Single-demo Docker Compose setup — no risk of cross-database
-fingerprint collision. Becomes important for multi-tenant or multi-database deployments.
-
-**Fix:** Add `db_name TEXT NOT NULL` to `findings` and `suggestions`, populate from
-`DB_NAME` env var, scope all memory queries with `WHERE db_name = $1`.
-
-**Where:** `agent/db/001_memory_schema.sql`, `agent/src/tools/memory_tool.ts`.
-
----
-
-## Concurrent task deduplication
-
-**What:** If two A2A tasks run concurrently and both hit the same fingerprint, both
-will read "no pending suggestion" and both will open PRs. The fix is a partial unique
-index on `suggestions`:
-
-```sql
-CREATE UNIQUE INDEX suggestions_pending_unique
-  ON suggestions (fingerprint, fix_type)
-  WHERE status = 'pending';
-```
-
-Then use `INSERT ... ON CONFLICT DO NOTHING` in MemoryTool.
-
-**Why deferred:** The demo is single-threaded. This is the production correctness fix.
-
----
-
 ## LLM-based fix classification (Phase 2 agent capability)
 
 **What:** Replace the deterministic pattern-matching in `buildFixProposal()` with an
@@ -178,6 +113,27 @@ Confirmed by `/cso` audit 2026-04-05.
 
 ---
 
+## Agent loop timeout and max-turn limit
+
+**What:** The pi-agent-core loop has no timeout or maximum turn cap. A runaway scenario
+(bad tool, LLM retry loop, infinite tool call cycle) blocks the A2A task indefinitely
+and holds the active-task slot in `DBSpecialistExecutor` forever.
+
+**Fix options:**
+- Wall-clock timeout: pass an `AbortSignal` to `agent.prompt()` and reject after N seconds
+- Max-turn limit: count `agent_end` events and abort after N iterations
+- Both combined: abort on whichever comes first
+
+**Why deferred:** The correct limit values depend on observed demo run times, which we
+don't have yet. The mechanism (AbortSignal vs turn counter) also needs validation
+against pi-agent-core's abort contract.
+
+**Where:** `agent/src/executor.ts` — `execute()` method. Wrap `agent.prompt()` with a
+`Promise.race([agent.prompt(...), timeoutPromise])` or wire `AbortSignal` into
+`createAgent`.
+
+---
+
 ## pg_stat_monitor upgrade path
 
 **What:** Evaluate `pg_stat_monitor` (Percona) as a drop-in replacement for
@@ -188,3 +144,82 @@ a Percona-packaged Postgres image (or manual extension build) and changes the
 collector query surface.
 
 **When to revisit:** After the demo proves the vertical slice works end-to-end.
+
+---
+
+## ClickHouse live AggregatingMergeTree experiment revisit
+
+**What:** Revisit the original plan to maintain live query findings through an
+`AggregatingMergeTree` pipeline fed by reset-aware interval data.
+
+**Why:** The current redesign slice is intentionally dropping the live aggregate
+path in favor of raw snapshots plus read-time interval queries. During
+implementation we reproduced two concrete blockers: the interval materialization
+SQL was not portable to the project's ClickHouse 24.3 runtime, and a
+materialized view fed from a joined/windowed view did not preserve the
+late-arriving `collector_state` data needed for reset-aware live aggregation.
+
+**When to revisit:** After the raw-snapshot + read-time interval path is working
+end-to-end in both `checkpoint-collector` and `checkpoint`.
+
+**Where:** Re-evaluate `collector/db/clickhouse/003_query_intervals.sql` and the
+checkpoint `ClickHouseTool` query strategy together. If we bring the experiment
+back, it likely needs a different source shape than `top_offenders_mv <- view`.
+
+---
+
+## Session registry: 24h TTL cleanup
+
+**What:** Sessions older than 24h should be eligible for cleanup. On startup (or via
+a background interval), prune `sessions.json` entries where `lastActiveAt` is older
+than 24 hours.
+
+**Why:** The current registry accumulates entries indefinitely. For long-running
+deployments this is a slow leak.
+
+**Where:** `src/a2a_bridge/session_registry.ts` — add a `prune(maxAgeMs)` method.
+Call from the bridge factory or on a 6h interval.
+
+---
+
+## agent/ package retirement
+
+**What:** The `agent/` package (A2A executor via pi-agent-core) should be retired
+once the pi A2A bridge in `src/a2a_bridge/` passes the existing agent integration
+tests.
+
+**Why:** Two manifests and two runtimes coexist right now. The exit condition needs
+to be explicit so it doesn't drift into permanent coexistence.
+
+**Retirement gate:** `agent/test/integration/` tests must pass against the pi bridge
+path without `agent/src/` in scope.
+
+---
+
+## A2A bridge concurrency model: clarify pi session behavior
+
+**What:** Clarify whether pi sessions accept concurrent messages to a running
+session (like a streaming agent) or process one prompt at a time. This determines
+whether `runSerialized` in `src/a2a_bridge/server.ts` is correct behavior.
+
+**Current assumption:** Second send to same context waits for first to complete.
+
+**Alternative:** Route second send to the in-flight session instead of blocking.
+
+**Where:** Check pi-mono's `createAgentSession` API and `session.prompt()` behavior.
+Update `runSerialized` or remove it based on findings. Add a concurrency test
+asserting the correct model.
+
+---
+
+## ClickHouse schema version validation at agent startup (removed pending DDL design for schema_contract table)
+
+**What:** Reintroduce startup schema version validation once there is a real
+DDL-backed `schema_contract` design.
+
+**Why:** The previous validation path depended on `schema_contract` and
+`schema_contract_tables`, but those tables do not exist in the current DDL.
+The feature was removed so startup no longer blocks on an incomplete contract.
+
+**Where:** `agent/src/runtime_dependencies.ts` and `agent/src/server.ts` once the
+collector repo owns and boots a real schema contract table.

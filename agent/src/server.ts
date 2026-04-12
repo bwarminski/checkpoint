@@ -1,7 +1,10 @@
 // ABOUTME: Wires the DB specialist executor into an Express-hosted A2A service.
 // ABOUTME: Exposes health, agent card, JSON-RPC, and REST endpoints for local use.
 import express, { type Express } from "express";
+import { config as loadDotenv } from "dotenv";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { AGENT_CARD_PATH, type AgentCard } from "@a2a-js/sdk";
 import { DefaultRequestHandler, InMemoryTaskStore } from "@a2a-js/sdk/server";
@@ -14,6 +17,12 @@ import {
 
 import { DBSpecialistExecutor } from "./executor.ts";
 import { createRuntimeExecutor } from "./runtime_dependencies.ts";
+
+loadDotenv({
+  path: resolve(fileURLToPath(new URL(".", import.meta.url)), "../../.env"),
+  override: false,
+  quiet: true,
+});
 
 type ServerOptions = {
   baseUrl?: string;
@@ -55,7 +64,7 @@ export function createServer(options: ServerOptions = {}): {
   return { agentCard: buildAgentCard(baseUrl), app, executor, requestHandler };
 }
 
-export function startServer(options: ServerOptions = {}) {
+export async function startServer(options: ServerOptions = {}) {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 3001;
   const server = createServer({ ...options, port });
@@ -98,7 +107,7 @@ function buildAgentCard(baseUrl: string): AgentCard {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startServer({
+  void startServer({
     host: process.env.HOST ?? "127.0.0.1",
     port: Number(process.env.PORT ?? "3001"),
   });

@@ -1,157 +1,160 @@
-// ABOUTME: Verifies ClickHouseTool reads and normalizes offender rows from ClickHouse results.
-// ABOUTME: Keeps the real query boundary focused on source-tagged application findings.
+// ABOUTME: Verifies ClickHouseTool exposes table discovery and guarded query execution.
+// ABOUTME: Keeps the ClickHouse boundary limited to discovery and SELECT-only access.
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ClickHouseTool } from "../src/tools/clickhouse_tool.ts";
+import { ClickHouseTool } from "../../src/tools/clickhouse_tool.ts";
 
-test("ClickHouseTool loads top offenders from source-tagged rows", async () => {
+test("ClickHouseTool lists tables from SHOW TABLES", async () => {
+  let queryCalls = 0;
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => {
+        queryCalls += 1;
+        return "query_events\ncollector_state\nquery_intervals\nsystem.tables\n";
+      },
+    },
+  });
+
+  assert.deepEqual(await tool.listTables(), ["query_events", "collector_state", "query_intervals"]);
+  assert.equal(queryCalls, 0);
+});
+
+test("ClickHouseTool hides unsupported tables from discovery", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "query_events\ncollector_state\nquery_intervals\ntop_offenders_mv\nsystem.tables\n",
+    },
+  });
+
+  assert.deepEqual(await tool.listTables(), ["query_events", "collector_state", "query_intervals"]);
+});
+
+test("ClickHouseTool describes a table with TSV output", async () => {
+  let sql = "";
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async (value) => {
+        sql = value;
+        return "fingerprint\tString\n";
+      },
+    },
+  });
+
+  await tool.describeTable("query_events");
+
+  assert.equal(sql, "DESCRIBE TABLE query_events FORMAT TSV");
+});
+
+test("ClickHouseTool rejects non-SELECT queries", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "unused",
+    },
+  });
+
+  await assert.rejects(() => tool.executeQuery("DELETE FROM query_events"), /SELECT-only/i);
+});
+
+test("ClickHouseTool rejects multi-statement raw queries", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "unused",
+    },
+  });
+
+  await assert.rejects(
+    () => tool.executeQuery("SELECT * FROM query_events; SELECT * FROM query_intervals"),
+    /single statement/i,
+  );
+});
+
+test("ClickHouseTool rejects raw queries against unsupported tables", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => "unused",
+    },
+  });
+
+  await assert.rejects(
+    () => tool.executeQuery("SELECT * FROM system.tables"),
+    /supported ClickHouse tables/i,
+  );
+});
+
+test("ClickHouseTool queries typed findings without source_tag output", async () => {
   const queries: Array<string> = [];
-  const tool = new ClickHouseTool(undefined, {
+  const tool = new ClickHouseTool({
     transport: {
       query: async (sql: string) => {
         queries.push(sql);
         return [
-          "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
-          "3252138119218455137\ttodos#index\t\\N\tSELECT \\\"users\\\".* FROM \\\"users\\\" WHERE \\\"users\\\".\\\"id\\\" = 1 LIMIT 1 /*action=\\'index\\',application=\\'Demo\\',controller=\\'todos\\'*/\t6547\t123.45\t0.02",
+          "fingerprint\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
+          "fp-1\t/app/controllers/todos_controller.rb:12\tSELECT 1\t7\t50.5\t12",
         ].join("\n");
       },
     },
   });
 
-  const results = await tool.topOffenders("analyze_db");
-
-  assert.match(queries[0] ?? "", /source_tag IS NOT NULL/);
-  assert.deepEqual(results, [
+  assert.deepEqual(await tool.queryFindings("analyze_db"), [
     {
-      fingerprint: "3252138119218455137",
-      p95_exec_time_ms: 0.02,
-      sample_query:
-        "SELECT \"users\".* FROM \"users\" WHERE \"users\".\"id\" = 1 LIMIT 1 /*action='index',application='Demo',controller='todos'*/",
+      fingerprint: "fp-1",
+      p95_exec_time_ms: 12,
+      sample_query: "SELECT 1",
       severity: "medium",
-      source_file: null,
-      source_tag: "todos#index",
-      total_exec_count: 6547,
-      total_exec_time_ms: 123.45,
+      source_file: "/app/controllers/todos_controller.rb:12",
+      total_exec_count: 7,
+      total_exec_time_ms: 50.5,
     },
   ]);
+  assert.match(queries[0] ?? "", /FROM query_intervals/);
+  assert.match(queries[0] ?? "", /interval_duration_ms <= 3600000/);
+  assert.match(queries[0] ?? "", /interval_started_at > now\(\) - INTERVAL 60 MINUTE/);
+  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
+  assert.doesNotMatch(queries[0] ?? "", /source_tag/);
 });
 
-test("ClickHouseTool orders offenders by total execution time and marks high severity from p95", async () => {
+test("ClickHouseTool queries all-time findings from query_intervals", async () => {
   const queries: Array<string> = [];
-  const tool = new ClickHouseTool(undefined, {
+  const tool = new ClickHouseTool({
     transport: {
       query: async (sql: string) => {
         queries.push(sql);
         return [
-          "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
-          "slow-low-count\ttodos#index\t\\N\tSELECT 1\t2\t400.5\t120",
-          "fast-high-count\ttodos#status\t\\N\tSELECT 2\t999\t200.0\t80",
+          "fingerprint\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
+          "fp-2\t/app/models/todo.rb:5\tSELECT 2\t9\t100.0\t200",
         ].join("\n");
       },
     },
   });
 
-  const results = await tool.topOffenders("analyze_db");
+  await tool.queryFindings("analyze_table todos all");
 
-  assert.match(queries[0] ?? "", /round\(sum\(total_exec_count \* mean_exec_time_ms\), 2\) AS total_exec_time_ms/);
-  assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
-  assert.deepEqual(
-    results.map((row) => ({
-      fingerprint: row.fingerprint,
-      severity: row.severity,
-      total_exec_time_ms: row.total_exec_time_ms,
-    })),
-    [
-      { fingerprint: "slow-low-count", severity: "high", total_exec_time_ms: 400.5 },
-      { fingerprint: "fast-high-count", severity: "medium", total_exec_time_ms: 200 },
-    ],
-  );
+  assert.match(queries[0] ?? "", /FROM query_intervals/);
+  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
+  assert.doesNotMatch(queries[0] ?? "", /source_tag/);
+  assert.match(queries[0] ?? "", /GROUP BY fingerprint/);
 });
 
-test("ClickHouseTool scopes analyze_table requests to the named table", async () => {
-  const queries: Array<string> = [];
-  const tool = new ClickHouseTool(undefined, {
+test("ClickHouseTool rejects describeTable for unsupported table", async () => {
+  const tool = new ClickHouseTool({
     transport: {
-      query: async (sql: string) => {
-        queries.push(sql);
-        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
-      },
+      query: async () => "unused",
     },
   });
 
-  await tool.topOffenders("analyze_table todos");
-
-  assert.match(queries[0] ?? "", /todos#/);
+  await assert.rejects(() => tool.describeTable("system.tables"), /Unsupported ClickHouse table/i);
 });
 
-test("ClickHouseTool uses query_events for time-windowed requests", async () => {
-  const queries: Array<string> = [];
-  const tool = new ClickHouseTool(undefined, {
+test("ClickHouseTool rejects executeQuery with no table reference", async () => {
+  const tool = new ClickHouseTool({
     transport: {
-      query: async (sql: string) => {
-        queries.push(sql);
-        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
-      },
+      query: async () => "unused",
     },
   });
 
-  await tool.topOffenders("analyze_db");
-
-  assert.match(queries[0] ?? "", /FROM query_events/);
-  assert.match(queries[0] ?? "", /collected_at > now\(\) - INTERVAL 60 MINUTE/);
-  assert.match(
-    queries[0] ?? "",
-    /tupleElement\(argMax\(\(source_file, sample_query\), collected_at\), 1\) AS source_file/,
+  await assert.rejects(
+    () => tool.executeQuery("SELECT now()"),
+    /supported ClickHouse tables/i,
   );
-  assert.match(
-    queries[0] ?? "",
-    /tupleElement\(argMax\(\(source_file, sample_query\), collected_at\), 2\) AS sample_query/,
-  );
-  assert.match(
-    queries[0] ?? "",
-    /GROUP BY fingerprint, source_tag/,
-  );
-  assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
-});
-
-test("ClickHouseTool uses source-tag-aware query_fingerprints for all-time requests", async () => {
-  const queries: Array<string> = [];
-  const tool = new ClickHouseTool(undefined, {
-    transport: {
-      query: async (sql: string) => {
-        queries.push(sql);
-        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
-      },
-    },
-  });
-
-  await tool.topOffenders("analyze_db all");
-
-  assert.match(queries[0] ?? "", /FROM query_fingerprints/);
-  assert.match(
-    queries[0] ?? "",
-    /SELECT\n  fingerprint,\n  source_tag,\n  tupleElement\(argMaxMerge\(representative_state\), 1\) AS source_file,\n  tupleElement\(argMaxMerge\(representative_state\), 2\) AS sample_query,\n  sumMerge\(total_exec_count_state\) AS total_exec_count,\n  sumMerge\(total_exec_time_ms_state\) AS total_exec_time_ms,\n  round\(quantileMerge\(0\.95\)\(p95_exec_time_state\), 2\) AS p95_exec_time_ms\nFROM query_fingerprints/,
-  );
-  assert.match(queries[0] ?? "", /GROUP BY fingerprint, source_tag/);
-  assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
-});
-
-test("ClickHouseTool keeps analyze_table all-time filtering source-tag aware", async () => {
-  const queries: Array<string> = [];
-  const tool = new ClickHouseTool(undefined, {
-    transport: {
-      query: async (sql: string) => {
-        queries.push(sql);
-        return "fingerprint\tsource_tag\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms";
-      },
-    },
-  });
-
-  await tool.topOffenders("analyze_table todos all");
-
-  assert.match(queries[0] ?? "", /FROM query_fingerprints/);
-  assert.match(queries[0] ?? "", /WHERE source_tag IS NOT NULL AND source_tag ILIKE 'todos#%'/);
-  assert.match(queries[0] ?? "", /GROUP BY fingerprint, source_tag/);
-  assert.match(queries[0] ?? "", /ORDER BY total_exec_time_ms DESC/);
 });

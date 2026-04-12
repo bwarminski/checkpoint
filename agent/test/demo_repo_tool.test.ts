@@ -2,11 +2,19 @@
 // ABOUTME: Covers branching, drift detection, and the git command sequence needed for the live GitHub proof.
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { DemoRepoTool } from "../src/tools/demo_repo_tool.ts";
+import { DemoRepoTool, defaultDemoAppRoot } from "../../src/tools/demo_repo_tool.ts";
+
+test("DemoRepoTool falls back to the sibling db-specialist-demo path when DEMO_APP_ROOT is unset", () => {
+  assert.equal(
+    defaultDemoAppRoot(),
+    resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../db-specialist-demo"),
+  );
+});
 
 test("DemoRepoTool creates a branch per finding fingerprint", async () => {
   const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
@@ -446,6 +454,27 @@ test("DemoRepoTool keeps add_index working and creates db/migrate", async () => 
       `${root}: git diff HEAD~1 HEAD -- db/migrate/20260405012100_add_index_to_todos_status.rb`,
       `${root}: git push origin agent/demo-fix-addindex1234`,
     ]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("DemoRepoTool rejects source_file paths that escape the repo root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
+  try {
+    const tool = createTool(root, []);
+    await assert.rejects(
+      () =>
+        tool.applyFix({
+          finding: { fingerprint: "traversal-test" },
+          fix: { fix_type: "rewrite_like", summary: "summary" },
+          source: {
+            content: "some content",
+            source_file: "../../../etc/passwd:1",
+          },
+        }),
+      /path escapes the repo root/i,
+    );
   } finally {
     await rm(root, { force: true, recursive: true });
   }

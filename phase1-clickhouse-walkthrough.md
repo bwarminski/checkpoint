@@ -1,136 +1,196 @@
-# Phase 1 ClickHouse Ingestion and Schema Walkthrough
+# Checkpoint ClickHouse Pipeline Walkthrough
 
-*2026-04-05T13:44:01Z by Showboat 0.6.1*
-<!-- showboat-id: 5059302e-1082-4549-a0f6-74f9537e086b -->
+*2026-04-10T12:24:46Z by Showboat 0.6.1*
+<!-- showboat-id: 69b21b14-69b6-4db0-b177-22cebed344b7 -->
 
-This walkthrough traces how query performance data flows from a live Postgres instance into ClickHouse and surfaces as ranked offenders for the DB specialist agent. The system uses three objects: a raw events table, an AggregatingMergeTree read model, and a materialized view that connects them. We'll follow the data from collection all the way through to the agent's query.
+## Overview
 
-## 1. The Three-Object Schema
+This walkthrough traces how query performance data flows from a live Postgres instance into ClickHouse and surfaces as ranked findings for the DB specialist agent. The pipeline has three layers: a Ruby collector that polls Postgres, two ClickHouse storage tables, and a VIEW that derives per-interval deltas for the agent to query.
 
-The ClickHouse schema lives under collector/db/clickhouse/ and consists of three migration files applied in order. Before diving into each one, here is the big picture:
+The core design challenge: Postgres `pg_stat_statements` reports *cumulative* counters (calls, total time, block hits, etc.) since the last stats reset. To answer "what queries were slowest in the last hour?" we need deltas — changes between consecutive snapshots — not raw totals. The pipeline stores raw snapshots and derives deltas at query time inside ClickHouse.
 
-- 001_query_events.sql — raw insert target; collector writes here every poll cycle
-- 002_query_fingerprints.sql — AggregatingMergeTree read model; the agent reads from here
-- 003_top_offenders_mv.sql — materialized view that aggregates raw events into the read model automatically
+## 1. The Postgres Source
 
-The reset script (004) rebuilds the read model by replaying all raw events; it exists for schema migrations and is not part of normal operation.
+`pg_stat_statements` tracks execution statistics for every normalized query. Each row identifies a query by `queryid` (a hash of the normalized text) plus `dbid`, `userid`, and `toplevel`. All timing and counter columns are cumulative since the last `pg_stat_statements_reset()` call.
 
-### query_events — the raw insert table
+The companion view `pg_stat_statements_info` has a single row recording when the counters were last reset (`stats_reset`) and how many statements were evicted due to the shared memory budget (`dealloc`). The collector reads both on every poll cycle.
 
-Every collector poll cycle appends one row per pg_stat_statements entry. The engine is plain MergeTree — no aggregation, just durable storage ordered for efficient fingerprint + time range scans.
+## 2. The Collector Entry Point
+
+The `bin/collector` script is the only executable. It wires up three dependencies and calls `run_once`. In production it is invoked on a schedule (cron or a loop); each invocation is a single snapshot pass.
 
 ```bash
-cat collector/db/clickhouse/001_query_events.sql
+cat /home/bjw/checkpoint-collector/collector/bin/collector
 ```
 
 ```output
--- ABOUTME: Creates the raw query events table for collector inserts.
--- ABOUTME: Stores per-query timing and source metadata for later fingerprinting.
-CREATE TABLE query_events (
-  collected_at DateTime64(3),
-  fingerprint String,
-  source_tag Nullable(String),
-  source_file Nullable(String),
-  sample_query Nullable(String),
-  total_exec_count UInt64,
-  mean_exec_time_ms Float64
-) ENGINE = MergeTree
-ORDER BY (fingerprint, collected_at);
+#!/usr/bin/env ruby
+# ABOUTME: Provides the executable entry point for the Postgres stats collector.
+# ABOUTME: Connects the collector to Postgres and ClickHouse for one polling pass.
+require_relative "../lib/collector"
+require_relative "../lib/clickhouse_connection"
+require_relative "../lib/sample_query_lookup"
+require "pg"
+
+stats_connection = PG.connect(ENV.fetch("POSTGRES_URL"))
+clickhouse_connection = ClickhouseConnection.new(base_url: ENV.fetch("CLICKHOUSE_URL"))
+sample_query_lookup = SampleQueryLookup.new(stats_connection)
+
+Collector.new(
+  stats_connection: stats_connection,
+  clickhouse_connection: clickhouse_connection,
+  sample_query_lookup: sample_query_lookup
+).run_once
 ```
 
-Key design choices in query_events:
+Three dependencies:
+- `stats_connection` — a PG connection used for both `pg_stat_statements` queries and live SQL sampling
+- `clickhouse_connection` — HTTP client that inserts rows via JSONEachRow
+- `sample_query_lookup` — uses the same PG connection to grab representative SQL text from `pg_stat_activity`
 
-- collected_at is DateTime64(3) (millisecond precision). See the argMax section below for the full explanation, but briefly: the original schema used DateTime (second precision) and under load two poll cycles could land in the same second, causing argMaxState to be unable to break the tie between a row with source_file set and one with source_file NULL. Millisecond timestamps make same-second collisions extremely unlikely in practice.
-- fingerprint is pg_stat_statements.queryid cast to a string. It is a stable hash of the normalized SQL text, not the raw query.
-- source_tag and source_file are Nullable. Queries that have no Rails query-log comment land here with NULLs and are filtered out by the agent when surfacing offenders.
-- sample_query stores the raw SQL text as sampled from pg_stat_activity at the moment the collector ran — this is used later for code-search tracing and EXPLAIN.
-- total_exec_count and mean_exec_time_ms come directly from pg_stat_statements.calls and pg_stat_statements.mean_exec_time. The collector converts microseconds to milliseconds.
-- ORDER BY (fingerprint, collected_at) means MergeTree stores rows physically sorted by query identity then time, which makes fingerprint-scoped window queries fast.
+`POSTGRES_URL` and `CLICKHOUSE_URL` are the only runtime requirements.
 
-### query_fingerprints — the AggregatingMergeTree read model
+## 3. The Collector's SQL Queries
 
-This is where the agent reads from. Instead of scanning all raw events on every query, the materialized view streams aggregations here incrementally. The engine is AggregatingMergeTree, which means ClickHouse stores aggregate *states* (partial results) rather than final values, and merges them lazily in the background.
+`Collector` opens with two frozen SQL constants. `STATS_SQL` pulls every column we store from `pg_stat_statements`. `INFO_SQL` grabs the global reset metadata.
 
 ```bash
-cat collector/db/clickhouse/002_query_fingerprints.sql
+sed -n '/STATS_SQL/,/INFO_SQL.*freeze/p' /home/bjw/checkpoint-collector/collector/lib/collector.rb | head -35
 ```
 
 ```output
--- ABOUTME: Creates the aggregated query fingerprint read model.
--- ABOUTME: Stores aggregate states consumed by the materialized view.
-CREATE TABLE query_fingerprints (
-  fingerprint String,
-  source_tag Nullable(String),
-  source_file_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
-  sample_query_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
-  total_exec_count_state AggregateFunction(sum, UInt64),
-  total_exec_time_ms_state AggregateFunction(sum, Float64),
-  p95_exec_time_state AggregateFunction(quantile(0.95), Float64)
-) ENGINE = AggregatingMergeTree
-ORDER BY (fingerprint, source_tag);
+  STATS_SQL = <<~SQL.freeze
+    SELECT
+      dbid,
+      userid,
+      toplevel,
+      queryid,
+      calls,
+      total_exec_time,
+      min_exec_time,
+      max_exec_time,
+      mean_exec_time,
+      stddev_exec_time,
+      rows,
+      shared_blks_hit,
+      shared_blks_read,
+      local_blks_hit,
+      local_blks_read,
+      temp_blks_read,
+      temp_blks_written
+    FROM pg_stat_statements
+  SQL
+  INFO_SQL = "SELECT dealloc, stats_reset FROM pg_stat_statements_info".freeze
+    stats_rows = Array(@stats_connection.exec(STATS_SQL))
+    info_row = Array(@stats_connection.exec(INFO_SQL)).first
+    if stats_rows.empty?
+      if info_row
+        collected_at = @clock.call
+        @clickhouse_connection&.insert("collector_state", [build_state_row(info_row, collected_at)])
+      end
+      return []
+    end
+
+    collected_at = @clock.call
+    rows = stats_rows.map do |stats_row|
+      build_row(stats_row, collected_at)
 ```
 
-Key design choices in query_fingerprints:
+Notice that `STATS_SQL` selects `calls` and `rows` (Postgres column names) while the ClickHouse table uses `total_exec_count` and `rows_returned_or_affected`. The renaming happens in `build_row` — more on that below.
 
-- ORDER BY (fingerprint, source_tag) is the grouping key. This means the same SQL query run from two different Rails controllers (e.g. todos#index vs users#index) produces two separate rows. This is intentional: the agent's analyze_table command filters by source_tag prefix, and mixing source tags would make per-table ranking meaningless.
+Also worth noting: `INFO_SQL` is always executed, even when there are no stat rows. If pg_stat_statements is empty but the info row exists (for example, right after a `pg_stat_statements_reset()`), the collector still records a state snapshot so the interval view can detect the reset.
 
-- source_tag is a plain column, not an aggregate state, because it IS the grouping key. It is Nullable so queries with no Rails comment still land here (though the agent filters them out).
+## 4. The run_once Loop and Row Building
 
-- source_file_state and sample_query_state use AggregateFunction(argMax, ..., DateTime64(3)). argMax picks the value from the row with the highest collected_at timestamp — the most recent representative. This prevents a stale file path or old SQL from permanently shadowing current data.
-
-- total_exec_count_state and total_exec_time_ms_state use AggregateFunction(sum, ...). ClickHouse accumulates these across all raw event batches.
-
-- p95_exec_time_state uses AggregateFunction(quantile(0.95), Float64). ClickHouse stores a sketch (t-digest) that can be merged across partial results and finalized to a p95 estimate.
-
-- The _state suffix is a ClickHouse convention. Columns holding aggregate states are written via *State combinators and read via *Merge combinators.
-
-### top_offenders_mv — the materialized view
-
-The materialized view is the pipe that keeps query_fingerprints up to date. Every time ClickHouse processes an INSERT block into query_events, it runs this SELECT and appends the result to query_fingerprints. AggregatingMergeTree then merges in the background.
+`run_once` is the core of the collector. It issues both SQL queries, maps each stats row into a ClickHouse-shaped hash, and inserts two tables in one pass.
 
 ```bash
-cat collector/db/clickhouse/003_top_offenders_mv.sql
+sed -n '/def run_once/,/^  end$/p' /home/bjw/checkpoint-collector/collector/lib/collector.rb | head -25
 ```
 
 ```output
--- ABOUTME: Builds the materialized view that aggregates raw query events.
--- ABOUTME: Feeds the query_fingerprints table from aggregated query events.
-CREATE MATERIALIZED VIEW top_offenders_mv
-TO query_fingerprints AS
-SELECT
-  fingerprint,
-  source_tag,
-  argMaxState(source_file, collected_at) AS source_file_state,
-  argMaxState(sample_query, collected_at) AS sample_query_state,
-  sumState(total_exec_count) AS total_exec_count_state,
-  sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state,
-  quantileState(0.95)(mean_exec_time_ms) AS p95_exec_time_state
-FROM query_events
-GROUP BY fingerprint, source_tag;
+  def run_once
+    return [] unless @stats_connection
+
+    stats_rows = Array(@stats_connection.exec(STATS_SQL))
+    info_row = Array(@stats_connection.exec(INFO_SQL)).first
+    if stats_rows.empty?
+      if info_row
+        collected_at = @clock.call
+        @clickhouse_connection&.insert("collector_state", [build_state_row(info_row, collected_at)])
+      end
+      return []
+    end
+
+    collected_at = @clock.call
+    rows = stats_rows.map do |stats_row|
+      build_row(stats_row, collected_at)
+    end
+
+    @clickhouse_connection&.insert("query_events", rows)
+    @clickhouse_connection&.insert("collector_state", [build_state_row(info_row, collected_at)]) if info_row
+    rows
+  end
 ```
 
-Key design choices in top_offenders_mv:
+The `collected_at` timestamp is captured once for the entire batch, so every row in a single poll pass shares the same timestamp. This is intentional: the interval view joins `query_events` to `collector_state` on `collected_at`, and that join only works when both tables have the exact same value.
 
-- TO query_fingerprints means this is a 'TO-table' materialized view. ClickHouse writes the SELECT results directly into query_fingerprints rather than maintaining its own implicit storage table. This is the correct pattern for AggregatingMergeTree targets.
-
-- total_exec_time_ms_state uses sumState(total_exec_count * mean_exec_time_ms). There is no total_exec_time_ms column in query_events — only the per-execution mean. The view reconstructs total time by multiplying count × mean on the way in. This is the only place that arithmetic lives, keeping query_events rows compact.
-
-- p95_exec_time_state uses quantileState(0.95)(mean_exec_time_ms). Note this is the p95 of *mean* execution times across collector snapshots, not a p95 over individual query executions. It is an approximation that works well for detecting consistently slow queries.
-
-- GROUP BY fingerprint, source_tag matches the ORDER BY of query_fingerprints exactly. This is required — AggregatingMergeTree merges rows by sort key, so the grouping key in the MV must align with the table's sort key.
-
-- The *State combinators (argMaxState, sumState, quantileState) produce binary aggregate states. ClickHouse appends these partial states to the destination table, where they are merged with existing states in the background. A query using the read model then calls *Merge combinators to finalize them.
-
-## 2. The Write Path — Collector to ClickHouse
-
-The collector is a Ruby process that polls Postgres on an interval and writes rows to ClickHouse over HTTP. There are four pieces: SampleQueryLookup, QueryCommentParser, Collector, and ClickhouseConnection.
-
-### Step 1: Read pg_stat_statements and look up live SQL text
-
-The collector polls pg_stat_statements for query identifiers and timing stats, then resolves each queryid to a sample SQL string from pg_stat_activity. These are separate operations because pg_stat_statements stores only the *normalized* query text (with literals replaced by $1 placeholders), while pg_stat_activity holds the live query text including inline literals and the Rails query-log comment.
+Now let's look at `build_row` — the place where Postgres column names get translated and enrichment happens.
 
 ```bash
-sed -n '1,11p' collector/lib/sample_query_lookup.rb
+sed -n '/def build_row/,/^  end$/p' /home/bjw/checkpoint-collector/collector/lib/collector.rb
+```
+
+```output
+  def build_row(stats_row, collected_at)
+    queryid = stats_row.fetch("queryid").to_s
+    sample_query = @sample_query_lookup&.find_for(queryid)
+    parsed = QueryCommentParser.parse(extract_comment(sample_query))
+
+    {
+      collected_at: collected_at,
+      dbid: stats_row.fetch("dbid", 0).to_i,
+      userid: stats_row.fetch("userid", 0).to_i,
+      toplevel: toplevel_value(stats_row.fetch("toplevel", nil)),
+      queryid: queryid,
+      fingerprint: queryid,
+      source_file: presence(parsed[:source_file]),
+      sample_query: sample_query,
+      total_exec_count: stats_row.fetch("calls").to_i,
+      total_exec_time_ms: stats_row.fetch("total_exec_time", 0).to_f,
+      min_exec_time_ms: stats_row.fetch("min_exec_time", 0).to_f,
+      max_exec_time_ms: stats_row.fetch("max_exec_time", 0).to_f,
+      mean_exec_time_ms: stats_row.fetch("mean_exec_time").to_f,
+      stddev_exec_time_ms: stats_row.fetch("stddev_exec_time", 0).to_f,
+      # pg_stat_statements.rows reports rows returned or affected, not rows visited.
+      rows_returned_or_affected: stats_row.fetch("rows", 0).to_i,
+      shared_blks_hit: stat_value(stats_row, "shared_blks_hit"),
+      shared_blks_read: stat_value(stats_row, "shared_blks_read"),
+      local_blks_hit: stat_value(stats_row, "local_blks_hit"),
+      local_blks_read: stat_value(stats_row, "local_blks_read"),
+      temp_blks_read: stat_value(stats_row, "temp_blks_read"),
+      temp_blks_written: stat_value(stats_row, "temp_blks_written"),
+      total_block_accesses: total_block_accesses(stats_row)
+    }
+  end
+```
+
+Key translations in `build_row`:
+
+- `calls` → `total_exec_count` (Postgres naming differs from the schema)
+- `rows` → `rows_returned_or_affected` (the Postgres column name is ambiguous; this name makes the semantics explicit)
+- `fingerprint` is set to `queryid` — at this stage they are the same value; the column exists as a hook for future normalization
+- `total_block_accesses` is computed by summing all six block counter columns
+- `source_file` comes from parsing SQL comment metadata, not from Postgres itself
+
+The `sample_query_lookup&.find_for(queryid)` call is the live SQL capture step.
+
+## 5. Capturing Live SQL and Source Locations
+
+`SampleQueryLookup` queries `pg_stat_activity` for a live query that has the same `query_id` as the stats row. This is a best-effort sampling — if no session is currently executing the query, `find_for` returns nil and both `sample_query` and `source_file` will be null in ClickHouse.
+
+```bash
+cat /home/bjw/checkpoint-collector/collector/lib/sample_query_lookup.rb
 ```
 
 ```output
@@ -147,21 +207,15 @@ class SampleQueryLookup
 end
 ```
 
-### Step 2: Parse Rails query-log comments
-
-Rails injects a structured comment into every SQL query it generates when query_log_tags is configured. The comment looks like:
-
-  /*application:demo,controller='todos',action='index',source_location='/app/controllers/todos_controller.rb:17'*/
-
-QueryCommentParser finds the block comment that contains controller/action/source_location markers and extracts a source_tag (controller#action) and source_file path.
+When a sample query is captured, `QueryCommentParser` looks for a SQL comment block containing `source_location:` or `source_location=`. Rails applications instrumented with `marginalia` or `query_comment` gems automatically embed controller, action, and source file annotations in their SQL.
 
 ```bash
-cat collector/lib/query_comment_parser.rb
+cat /home/bjw/checkpoint-collector/collector/lib/query_comment_parser.rb
 ```
 
 ```output
 # ABOUTME: Parses Rails SQL comment tags into source metadata for collector rows.
-# ABOUTME: Extracts controller-action tags and source file locations from comments.
+# ABOUTME: Extracts source file locations from metadata comments.
 class QueryCommentParser
   def self.parse(comment)
     pairs = comment.to_s.delete_prefix("/*").delete_suffix("*/").split(",").filter_map do |part|
@@ -178,7 +232,6 @@ class QueryCommentParser
     end.to_h
 
     {
-      source_tag: [pairs["controller"], pairs["action"]].compact.join("#"),
       source_file: pairs["source_location"]
     }
   end
@@ -189,105 +242,30 @@ class QueryCommentParser
 end
 ```
 
-The parser handles two quoting styles because Rails changed how it serializes tag values between versions:
-- Older format: controller:todos,action:index (colon-separated key:value)
-- Newer format: controller='todos',action='index' (equals with single quotes)
+The parser handles two comment styles Rails uses in practice:
+- Colon-separated: `/*application:demo,source_location:/app/models/todo.rb:12*/`
+- Equals-separated (escaped): `/*application=\'Demo\',source_location=\'/app/models/todo.rb:12\'*/`
 
-normalize_value strips both plain and escaped single quotes. The extract_comment method in Collector (shown next) scans for the block comment that contains at least one of the known metadata markers before passing it to the parser, so unrelated SQL comments are ignored.
-
-### Step 3: Assemble and write rows
-
-The Collector.run_once method assembles one event row per pg_stat_statements entry and sends them all to ClickHouse in a single HTTP request.
+The `extract_comment` method in `Collector` selects the *right* comment block when a query has multiple — it looks for the one containing `source_location:` or `source_location=` and ignores others like `/*hint:seqscan_off*/`.
 
 ```bash
-cat collector/lib/collector.rb
+sed -n '/def extract_comment/,/^  end$/p' /home/bjw/checkpoint-collector/collector/lib/collector.rb
 ```
 
 ```output
-# ABOUTME: Polls Postgres statement stats and shapes rows for ClickHouse inserts.
-# ABOUTME: Enriches sampled SQL with source metadata parsed from Rails query comments.
-require_relative "query_comment_parser"
-
-class Collector
-  STATS_SQL = "SELECT queryid, calls, mean_exec_time FROM pg_stat_statements".freeze
-  COMMENT_BLOCK_PATTERN = %r{/\*.*?\*/}m
-  COMMENT_METADATA_MARKERS = [
-    "controller:",
-    "controller=",
-    "action:",
-    "action=",
-    "source_location:",
-    "source_location="
-  ].freeze
-
-  def initialize(stats_connection: nil, clickhouse_connection: nil, sample_query_lookup: nil, clock: -> { Time.now.utc })
-    @stats_connection = stats_connection
-    @clickhouse_connection = clickhouse_connection
-    @sample_query_lookup = sample_query_lookup
-    @clock = clock
-  end
-
-  def run_once
-    return [] unless @stats_connection
-
-    stats_rows = Array(@stats_connection.exec(STATS_SQL))
-    return [] if stats_rows.empty?
-
-    collected_at = @clock.call
-    rows = stats_rows.map do |stats_row|
-      build_row(stats_row, collected_at)
-    end
-
-    @clickhouse_connection&.insert("query_events", rows)
-    rows
-  end
-
-  private
-
-  def build_row(stats_row, collected_at)
-    queryid = stats_row.fetch("queryid").to_s
-    sample_query = @sample_query_lookup&.find_for(queryid)
-    parsed = QueryCommentParser.parse(extract_comment(sample_query))
-
-    {
-      collected_at: collected_at,
-      fingerprint: queryid,
-      source_tag: presence(parsed[:source_tag]),
-      source_file: presence(parsed[:source_file]),
-      sample_query: sample_query,
-      total_exec_count: stats_row.fetch("calls").to_i,
-      mean_exec_time_ms: stats_row.fetch("mean_exec_time").to_f
-    }
-  end
-
   def extract_comment(sample_query)
     sample_query.to_s.scan(COMMENT_BLOCK_PATTERN).find do |comment|
       COMMENT_METADATA_MARKERS.any? { |marker| comment.include?(marker) }
     end
   end
-
-  def presence(value)
-    value unless value.to_s.empty?
-  end
-end
 ```
 
-A few subtleties in the Collector:
+## 6. Writing to ClickHouse
 
-- collected_at is captured once per run_once call, not per row. All rows in a single batch get the same timestamp. This is intentional — it makes it easy to reconstruct which rows came from the same poll cycle.
-
-- The collector reads pg_stat_statements.mean_exec_time directly and stores it as mean_exec_time_ms. Postgres reports mean_exec_time in milliseconds already (despite the column name suggesting otherwise in older documentation).
-
-- source_tag is set to nil if the parser returns an empty string (presence helper). This prevents the string '#' (controller and action both absent) from being stored as a source_tag, which would confuse agent-side filtering.
-
-- The clock dependency is injectable for tests — production uses Time.now.utc.
-
-### Step 4: HTTP insert via JSONEachRow
-
-ClickhouseConnection sends rows to ClickHouse over the HTTP interface using the JSONEachRow format — one JSON object per line in the POST body. This requires no ClickHouse-specific Ruby gem; it uses only net/http from the standard library.
+`ClickhouseConnection` uses ClickHouse's HTTP interface with `FORMAT JSONEachRow` — one JSON object per line in the POST body. No extra gems are required beyond Ruby's standard `net/http`.
 
 ```bash
-cat collector/lib/clickhouse_connection.rb
+cat /home/bjw/checkpoint-collector/collector/lib/clickhouse_connection.rb
 ```
 
 ```output
@@ -340,92 +318,322 @@ class ClickhouseConnection
 end
 ```
 
-The INSERT query is passed as the 'query' URL parameter rather than in the request body, which is standard ClickHouse HTTP API convention. The body contains only the data payload.
+The table name goes in the query string (`INSERT INTO query_events FORMAT JSONEachRow`), and the row data goes in the POST body as newline-delimited JSON. This is ClickHouse's preferred bulk insert format — it streams without loading the full payload into memory first.
 
-Time values are serialized as 'YYYY-MM-DD HH:MM:SS.mmm' — the format ClickHouse expects for DateTime64(3) via JSON. The %L strftime directive is Ruby's millisecond formatter.
+The `serialize_value` method converts Ruby `Time` objects to `"YYYY-MM-DD HH:MM:SS.mmm"` strings, which ClickHouse's `DateTime64(3)` column accepts. Symbol keys in the row hash are automatically handled by `to_h`.
 
-The transport is injectable so tests can stub HTTP without a real ClickHouse instance.
+## 7. ClickHouse Schema: query_events
 
-## 3. The Read Path — Agent Queries
-
-The agent reads from ClickHouse through ClickHouseTool in agent/src/tools/clickhouse_tool.ts. It supports two query modes depending on whether it is doing a live-window analysis or an all-time table-scoped analysis.
-
-### Mode 1: Windowed query against query_events (default)
-
-The default analyze_db command looks back over a configurable window (default 60 minutes) directly against the raw query_events table. This gives up-to-the-minute accuracy at the cost of scanning more rows.
+The raw snapshot table. Every poll cycle appends one row per `pg_stat_statements` entry. Nothing is aggregated, deduplicated, or deleted — this is append-only raw data.
 
 ```bash
-sed -n '74,99p' agent/src/tools/clickhouse_tool.ts
+grep -v '^-- ' /home/bjw/checkpoint-collector/collector/db/clickhouse/001_query_events.sql
 ```
 
 ```output
-function buildWindowedQuery(request: ScopeRequest): string {
-  const conditions = [
-    `collected_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
-    "source_tag IS NOT NULL",
-  ];
-  if (request.tableName) {
-    conditions.push(`source_tag ILIKE '${escapeSqlLike(request.tableName)}#%'`);
+CREATE TABLE query_events (
+  collected_at DateTime64(3),
+  dbid UInt64,
+  userid UInt64,
+  toplevel Bool,
+  queryid String,
+  fingerprint String,
+  source_file Nullable(String),
+  sample_query Nullable(String),
+  total_exec_count UInt64,
+  total_exec_time_ms Float64,
+  rows_returned_or_affected UInt64,
+  shared_blks_hit UInt64,
+  shared_blks_read UInt64,
+  local_blks_hit UInt64,
+  local_blks_read UInt64,
+  temp_blks_read UInt64,
+  temp_blks_written UInt64,
+  total_block_accesses UInt64,
+  min_exec_time_ms Float64,
+  max_exec_time_ms Float64,
+  mean_exec_time_ms Float64,
+  stddev_exec_time_ms Float64
+) ENGINE = MergeTree
+ORDER BY (dbid, userid, toplevel, queryid, collected_at);
+```
+
+The `ORDER BY` key is the full row identity: `(dbid, userid, toplevel, queryid, collected_at)`. This matters for two reasons:
+
+1. **MergeTree ordering determines physical layout** — ClickHouse sorts data on disk by this key. Queries that filter or partition on leading columns (dbid, userid, etc.) skip irrelevant data blocks entirely.
+
+2. **The interval view windows on this key** — `query_intervals` uses `PARTITION BY e.dbid, e.userid, e.toplevel, e.queryid ORDER BY e.collected_at` to group consecutive snapshots for the same logical statement. If the ORDER BY key didn't include all of those columns, MergeTree could merge parts in ways that interleave rows from different statements.
+
+All timing columns store cumulative totals — the raw Postgres values. Per-interval deltas are computed only in the view layer.
+
+## 8. ClickHouse Schema: collector_state
+
+One row per poll cycle recording the global Postgres stats state.
+
+```bash
+grep -v '^-- ' /home/bjw/checkpoint-collector/collector/db/clickhouse/002_collector_state.sql
+```
+
+```output
+CREATE TABLE collector_state (
+  collected_at DateTime64(3),
+  dealloc UInt64,
+  stats_reset DateTime
+) ENGINE = MergeTree
+ORDER BY (collected_at);
+```
+
+`stats_reset` is a `DateTime` (second precision), not `DateTime64`. Postgres returns `stats_reset` as a timestamptz string with microseconds and timezone offset — for example, `"2026-04-09 12:00:00.055815+00"`. ClickHouse's `DateTime` column rejects that format and will crash the insert.
+
+The collector's `format_stats_reset` method normalizes it:
+
+```bash
+sed -n '/def format_stats_reset/,/^  end$/p' /home/bjw/checkpoint-collector/collector/lib/collector.rb
+```
+
+```output
+  def format_stats_reset(value)
+    return nil unless value
+    # Postgres returns timestamptz with microseconds and tz offset.
+    # ClickHouse DateTime column accepts "YYYY-MM-DD HH:MM:SS" only.
+    Time.parse(value.to_s).utc.strftime("%Y-%m-%d %H:%M:%S")
+  rescue ArgumentError
+    nil
+  end
+```
+
+`Time.parse` handles the offset and microseconds; `.utc` normalizes to UTC; `strftime` produces exactly the string ClickHouse accepts. An `ArgumentError` rescue prevents a malformed value from crashing the collector — the row is stored with a null `stats_reset` instead.
+
+The `dealloc` counter records how many statements were evicted from the shared memory budget. A sudden spike in dealloc means the collector missed some queries that cycle — useful for detecting blind spots.
+
+## 9. The Interval View: query_intervals
+
+This is the most complex object in the schema. It derives per-interval delta metrics from consecutive raw snapshots, filtering out rows where a stats reset happened between them or where counters regressed (which would produce negative deltas).
+
+```bash
+grep -v '^-- ' /home/bjw/checkpoint-collector/collector/db/clickhouse/003_query_intervals.sql | grep -v '^SET '
+```
+
+```output
+CREATE VIEW query_intervals AS
+WITH interval_candidates AS (
+  SELECT
+    e.collected_at,
+    e.dbid,
+    e.userid,
+    e.toplevel,
+    e.queryid,
+    e.fingerprint,
+    e.source_file,
+    e.sample_query,
+    e.total_exec_count,
+    e.total_exec_time_ms,
+    e.rows_returned_or_affected,
+    e.shared_blks_hit,
+    e.shared_blks_read,
+    e.local_blks_hit,
+    e.local_blks_read,
+    e.temp_blks_read,
+    e.temp_blks_written,
+    e.total_block_accesses,
+    e.min_exec_time_ms,
+    e.max_exec_time_ms,
+    e.mean_exec_time_ms,
+    e.stddev_exec_time_ms,
+    s.stats_reset,
+    row_number() OVER statement_window AS snapshot_position,
+    lagInFrame(e.collected_at) OVER statement_window AS previous_collected_at,
+    lagInFrame(e.total_exec_count) OVER statement_window AS previous_total_exec_count,
+    lagInFrame(e.total_exec_time_ms) OVER statement_window AS previous_total_exec_time_ms,
+    lagInFrame(e.rows_returned_or_affected) OVER statement_window AS previous_rows_returned_or_affected,
+    lagInFrame(e.shared_blks_hit) OVER statement_window AS previous_shared_blks_hit,
+    lagInFrame(e.shared_blks_read) OVER statement_window AS previous_shared_blks_read,
+    lagInFrame(e.local_blks_hit) OVER statement_window AS previous_local_blks_hit,
+    lagInFrame(e.local_blks_read) OVER statement_window AS previous_local_blks_read,
+    lagInFrame(e.temp_blks_read) OVER statement_window AS previous_temp_blks_read,
+    lagInFrame(e.temp_blks_written) OVER statement_window AS previous_temp_blks_written,
+    lagInFrame(e.total_block_accesses) OVER statement_window AS previous_total_block_accesses,
+    lagInFrame(s.stats_reset) OVER statement_window AS previous_stats_reset
+  FROM query_events AS e
+  LEFT JOIN collector_state AS s USING (collected_at)
+  WINDOW statement_window AS (PARTITION BY e.dbid, e.userid, e.toplevel, e.queryid ORDER BY e.collected_at)
+),
+valid_intervals AS (
+  SELECT *
+  FROM interval_candidates
+  WHERE snapshot_position > 1
+    AND stats_reset = previous_stats_reset
+    AND total_exec_count >= previous_total_exec_count
+    AND total_exec_time_ms >= previous_total_exec_time_ms
+)
+SELECT
+  previous_collected_at AS interval_started_at,
+  collected_at AS interval_ended_at,
+  dateDiff('millisecond', previous_collected_at, collected_at) AS interval_duration_ms,
+  dbid,
+  userid,
+  toplevel,
+  queryid,
+  fingerprint,
+  source_file,
+  sample_query,
+  CAST(total_exec_count - previous_total_exec_count AS Int64) AS total_exec_count,
+  CAST(total_exec_time_ms - previous_total_exec_time_ms AS Float64) AS delta_exec_time_ms,
+  CAST(rows_returned_or_affected - previous_rows_returned_or_affected AS Int64) AS rows_returned_or_affected,
+  CAST(shared_blks_hit - previous_shared_blks_hit AS Int64) AS shared_blks_hit,
+  CAST(shared_blks_read - previous_shared_blks_read AS Int64) AS shared_blks_read,
+  CAST(local_blks_hit - previous_local_blks_hit AS Int64) AS local_blks_hit,
+  CAST(local_blks_read - previous_local_blks_read AS Int64) AS local_blks_read,
+  CAST(temp_blks_read - previous_temp_blks_read AS Int64) AS temp_blks_read,
+  CAST(temp_blks_written - previous_temp_blks_written AS Int64) AS temp_blks_written,
+  CAST(total_block_accesses - previous_total_block_accesses AS Int64) AS total_block_accesses,
+  min_exec_time_ms,
+  max_exec_time_ms,
+  mean_exec_time_ms,
+  stddev_exec_time_ms
+FROM valid_intervals;
+```
+
+### How interval_candidates works
+
+The CTE joins `query_events` with `collector_state` on `collected_at` (the shared timestamp from the same poll cycle), then applies window functions over a partition keyed by the full statement identity.
+
+`lagInFrame` is ClickHouse's ANSI-compatible lag function that respects explicit window frame boundaries. For each row, it returns the value from the previous row in the partition. The first row in each partition gets a default (zero or null), which is why we need `snapshot_position > 1` — the very first snapshot has no previous snapshot to compute a delta against.
+
+`stats_reset` is brought in via the LEFT JOIN to `collector_state`. It travels through the same window so we can compare `stats_reset` vs `previous_stats_reset`.
+
+### The valid_intervals filter
+
+Three conditions must all hold for a row to become an interval:
+
+1. `snapshot_position > 1` — must have a previous snapshot to subtract from
+2. `stats_reset = previous_stats_reset` — counters were never reset between the two snapshots
+3. `total_exec_count >= previous_total_exec_count` AND `total_exec_time_ms >= previous_total_exec_time_ms` — counters are monotonically increasing (guards against subtle reset race conditions)
+
+If a stats reset happens between two snapshots, both the count and time counters will drop. The filter catches this whether it shows up in the `stats_reset` timestamp or in a counter regression.
+
+### The final SELECT
+
+Delta columns are computed by subtracting previous from current and cast to signed integer/float types because ClickHouse unsigned subtraction would wrap around. The timing columns (`min`, `max`, `mean`, `stddev`) are point-in-time values from Postgres and are carried forward as-is — they cannot be meaningfully subtracted.
+
+```bash
+grep '^SET ' /home/bjw/checkpoint-collector/collector/db/clickhouse/003_query_intervals.sql
+```
+
+```output
+SET allow_experimental_analyzer = 0;
+```
+
+The `SET allow_experimental_analyzer = 0` at the top disables ClickHouse's new query analyzer during CREATE VIEW. The experimental analyzer (introduced in ClickHouse 23.x) has different behavior for `lagInFrame` inside window functions and produces incorrect results for this query. Disabling it for the view definition makes the view use the stable legacy planner at query time.
+
+## 10. The Agent's ClickHouse Tool
+
+The DB specialist agent accesses ClickHouse through `ClickHouseTool` in `src/tools/clickhouse_tool.ts`. It exposes four operations: list tables, describe a table, execute a guarded query, and query findings.
+
+```bash
+sed -n '/^export class ClickHouseTool/,/^}/p' /home/bjw/checkpoint/src/tools/clickhouse_tool.ts | head -30
+```
+
+```output
+export class ClickHouseTool {
+  private readonly transport?: ClickHouseTransport;
+
+  constructor(options: ClickHouseToolOptions = {}) {
+    this.transport = options.transport ?? createHttpTransport();
   }
 
-  return [
-    "SELECT",
-    "  fingerprint,",
-    "  source_tag,",
-    "  argMax(source_file, collected_at) AS source_file,",
-    "  argMax(sample_query, collected_at) AS sample_query,",
-    "  sum(total_exec_count) AS total_exec_count,",
-    "  round(sum(total_exec_count * mean_exec_time_ms), 2) AS total_exec_time_ms,",
-    "  round(quantile(0.95)(mean_exec_time_ms), 2) AS p95_exec_time_ms",
-    "FROM query_events",
-    `WHERE ${conditions.join(" AND ")}`,
-    "GROUP BY fingerprint, source_tag",
-    "ORDER BY total_exec_time_ms DESC",
-    "LIMIT 5",
-    "FORMAT TSVWithNames",
-  ].join("\n");
+  async listTables(): Promise<Array<string>> {
+    return [...SUPPORTED_TABLES];
+  }
+
+  async describeTable(table: string): Promise<string> {
+    assertSupportedTable(table);
+
+    return this.transport!.query(`DESCRIBE TABLE ${table} FORMAT TSV`);
+  }
+
+  async executeQuery(sql: string): Promise<string> {
+    assertSupportedQuery(sql);
+
+    return this.transport!.query(sql);
+  }
+
+  async queryFindings(scope?: unknown): Promise<Array<TopOffender>> {
+    return parseOffenderRows(await this.executeQuery(buildOffenderQuery(scope)));
+  }
 }
 ```
 
-The windowed query uses plain aggregate functions (argMax, sum, quantile) rather than the *Merge variants because it is reading raw rows from query_events, not pre-aggregated states from query_fingerprints.
+### Query guards
 
-total_exec_time_ms is reconstructed here too (sum(total_exec_count * mean_exec_time_ms)), consistent with how the materialized view writes it. The two query paths are arithmetically equivalent.
+`assertSupportedQuery` enforces three rules before any query reaches ClickHouse:
+- Must start with SELECT
+- Must not contain a semicolon (no statement chaining)
+- Must reference only tables in the SUPPORTED_TABLES allowlist
 
-FORMAT TSVWithNames asks ClickHouse to return a tab-separated header row followed by data rows. The agent's parseRows function splits on tabs and reconstructs typed objects from this format — a lightweight alternative to JSON that ClickHouse handles efficiently.
-
-### Mode 2: All-time query against query_fingerprints (analyze_table / all)
-
-When the user asks for all-time analysis (or scopes by table name with analyze_table), the agent reads from query_fingerprints using the *Merge combinators to finalize the aggregate states.
+This prevents the agent from running writes, drops, or queries against arbitrary tables.
 
 ```bash
-sed -n '44,72p' agent/src/tools/clickhouse_tool.ts
+sed -n '/^function assertSupportedQuery/,/^}/p' /home/bjw/checkpoint/src/tools/clickhouse_tool.ts
 ```
 
 ```output
-function buildTopOffendersQuery(scope?: unknown): string {
+function assertSupportedQuery(sql: string): void {
+  const trimmed = sql.trim();
+
+  if (!/^\s*select\b/i.test(trimmed)) {
+    throw new Error("SELECT-only queries are allowed");
+  }
+
+  if (trimmed.includes(";")) {
+    throw new Error("Only single statement SELECT queries are allowed");
+  }
+
+  const referencedTables = extractReferencedTables(trimmed);
+  if (!referencedTables.length) {
+    throw new Error("Raw queries must use supported ClickHouse tables");
+  }
+
+  const unsupportedTable = referencedTables.find((table) => !SUPPORTED_TABLES.has(table));
+  if (unsupportedTable) {
+    throw new Error(`Raw queries must use supported ClickHouse tables: ${unsupportedTable}`);
+  }
+}
+```
+
+```bash
+grep '^const SUPPORTED_TABLES' /home/bjw/checkpoint/src/tools/clickhouse_tool.ts
+```
+
+```output
+const SUPPORTED_TABLES = new Set(["query_events", "collector_state", "query_intervals"]);
+```
+
+### queryFindings and the offender query
+
+`queryFindings` is the agent's main entry point for surfacing slow queries. It builds a SQL query against `query_intervals`, executes it through the guarded path, and returns structured `TopOffender` objects.
+
+```bash
+sed -n '/^function buildOffenderQuery/,/^}/p' /home/bjw/checkpoint/src/tools/clickhouse_tool.ts
+```
+
+```output
+function buildOffenderQuery(scope?: unknown): string {
   const request = parseScope(scope);
   if (!request.allTime) {
     return buildWindowedQuery(request);
   }
 
-  const conditions = ["source_tag IS NOT NULL"];
-
-  if (request.tableName) {
-    conditions.push(`source_tag ILIKE '${escapeSqlLike(request.tableName)}#%'`);
-  }
-
   return [
     "SELECT",
     "  fingerprint,",
-    "  source_tag,",
-    "  argMaxMerge(source_file_state) AS source_file,",
-    "  argMaxMerge(sample_query_state) AS sample_query,",
-    "  sumMerge(total_exec_count_state) AS total_exec_count,",
-    "  sumMerge(total_exec_time_ms_state) AS total_exec_time_ms,",
-    "  round(quantileMerge(0.95)(p95_exec_time_state), 2) AS p95_exec_time_ms",
-    "FROM query_fingerprints",
-    `WHERE ${conditions.join(" AND ")}`,
-    "GROUP BY fingerprint, source_tag",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS source_file,",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS sample_query,",
+    "  sum(total_exec_count) AS total_exec_count,",
+    "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
+    `  round(quantile(0.95)(${INTERVAL_MEAN_EXEC_TIME_SQL}), 2) AS p95_exec_time_ms`,
+    "FROM query_intervals",
+    "GROUP BY fingerprint",
     "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
     "FORMAT TSVWithNames",
@@ -433,16 +641,44 @@ function buildTopOffendersQuery(scope?: unknown): string {
 }
 ```
 
-The *Merge combinators (argMaxMerge, sumMerge, quantileMerge) finalize the binary aggregate states stored in query_fingerprints. The GROUP BY fingerprint, source_tag is still needed here because AggregatingMergeTree may not have fully merged all partial states by the time the query runs — the merge combinator handles both the in-memory and on-disk partials correctly.
+```bash
+sed -n '/^function buildWindowedQuery/,/^}/p' /home/bjw/checkpoint/src/tools/clickhouse_tool.ts
+```
 
-The analyze_table command filters by source_tag ILIKE 'tablename#%' — it matches any controller that accesses the given table by convention (Rails controller names reflect table names). This is a heuristic; the real source of truth is the code-search trace that follows.
+```output
+function buildWindowedQuery(request: ScopeRequest): string {
+  return [
+    "SELECT",
+    "  fingerprint,",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS source_file,",
+    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS sample_query,",
+    "  sum(total_exec_count) AS total_exec_count,",
+    "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
+    `  round(quantile(0.95)(${INTERVAL_MEAN_EXEC_TIME_SQL}), 2) AS p95_exec_time_ms`,
+    "FROM query_intervals",
+    `WHERE interval_started_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
+    `  AND interval_ended_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
+    `  AND interval_duration_ms <= ${request.timeWindowMinutes * 60 * 1000}`,
+    "GROUP BY fingerprint",
+    "ORDER BY total_exec_time_ms DESC",
+    "LIMIT 5",
+    "FORMAT TSVWithNames",
+  ].join("\n");
+}
+```
 
-### Scope parsing
+The offender query aggregates across all intervals for each fingerprint and returns the top 5 by total execution time. A few design choices worth noting:
 
-The agent parses the user's command text to decide which mode to use.
+- `argMax((source_file, sample_query), interval_ended_at)` picks the most recent non-null source file and sample query. This handles the case where early snapshots had no live SQL sampled but later ones did.
+- `quantile(0.95)(mean_exec_time_ms)` computes P95 over the per-interval mean times, giving a sense of tail latency across polling cycles.
+- `total_exec_time_ms` is the sum of `delta_exec_time_ms` across intervals — total wall-clock time spent in this query across the observation window.
+
+The windowed query adds three WHERE conditions:
+- Both `interval_started_at` and `interval_ended_at` must be within the time window (so partially-overlapping intervals are excluded)
+- `interval_duration_ms` must be at most the window length (filters out intervals that span longer than the window, which would be anomalous)
 
 ```bash
-sed -n '107,120p' agent/src/tools/clickhouse_tool.ts
+sed -n '/^function parseScope/,/^}/p' /home/bjw/checkpoint/src/tools/clickhouse_tool.ts
 ```
 
 ```output
@@ -462,21 +698,309 @@ function parseScope(scope?: unknown): ScopeRequest {
 }
 ```
 
-- 'analyze_db' → allTime: false, no table filter, 60-minute window (reads query_events)
-- 'analyze_db 30' → allTime: false, no table filter, 30-minute window (reads query_events)
-- 'analyze_table todos' → allTime: true (implied by table scope), table filter 'todos#%' (reads query_fingerprints)
-- 'analyze_db all' → allTime: true, no table filter (reads query_fingerprints)
+The agent can pass a natural-language scope string to `queryFindings`. `parseScope` extracts three signals from it:
 
-### Severity classification
+- `all` anywhere in the string → use the all-time query (no WHERE on timestamps)
+- A bare number → use that many minutes as the time window (default: 60)
+- `analyze_table <name>` → record which table the agent is focused on (currently stored but not yet used as an additional filter)
 
-After the query runs, parseRows processes TSV output and classifies each offender.
+So `scope: "last 30"` gives a 30-minute window, `scope: "all time"` removes the time filter, and no scope gives a 60-minute default.
+
+## 11. End-to-End Data Flow
+
+Here is how a single slow query in a Rails app becomes a finding the agent acts on:
+
+1. **Rails executes SQL** with a query comment: `SELECT * FROM todos /*source_location:/app/controllers/todos_controller.rb:12*/`
+
+2. **Postgres records it** in `pg_stat_statements` with a `queryid` hash, incrementing `calls`, `total_exec_time`, and block counters
+
+3. **Collector polls** (every N minutes on cron):
+   - Runs `STATS_SQL` against `pg_stat_statements` → gets cumulative counters for every tracked query
+   - Runs `INFO_SQL` against `pg_stat_statements_info` → gets `stats_reset` timestamp
+   - For each queryid, tries `pg_stat_activity` to grab a live copy of the SQL text
+   - Parses the SQL comment to extract `source_location`
+   - Inserts one row per query into `query_events` and one row into `collector_state`, both with the same `collected_at`
+
+4. **ClickHouse stores** the raw cumulative snapshots
+
+5. **query_intervals VIEW** joins consecutive snapshots on the same queryid, checks stats_reset didn't change, subtracts previous from current counters → one interval row per consecutive snapshot pair per query
+
+6. **Agent calls `queryFindings`** → `buildOffenderQuery` aggregates intervals by fingerprint, sums `delta_exec_time_ms`, orders by total → returns top 5 offenders with source file and sample SQL
+
+7. **Agent calls `locate_source`** with the source file → loads the Rails controller code
+
+8. **Agent proposes a fix**, calls `apply_fix` to write the code change, then `open_pull_request` to submit it
+
+## 12. The Reset Script
+
+`004_reset_query_analytics.sql` drops and recreates all three objects in dependency order. It is used when schema migrations require a full rebuild — not during normal operation.
 
 ```bash
-sed -n '122,149p' agent/src/tools/clickhouse_tool.ts
+head -6 /home/bjw/checkpoint-collector/collector/db/clickhouse/004_reset_query_analytics.sql
 ```
 
 ```output
-function parseRows(payload: string): Array<TopOffender> {
+-- ABOUTME: Rebuilds the raw query events, collector state, and interval view schema.
+-- ABOUTME: Drops and recreates raw tables plus the query intervals view.
+DROP VIEW IF EXISTS query_intervals;
+DROP TABLE IF EXISTS collector_state;
+DROP TABLE IF EXISTS query_events;
+
+```
+
+The view must be dropped before the tables it reads. The tables can be dropped in any order since they have no dependencies on each other. After the drops, the script recreates everything in the same sequence as the numbered migrations (001 → 002 → 003).
+
+## 13. Live Data: Three Snapshot Passes
+
+The sections below capture real output from a running demo stack. Three collector passes were made against a Rails todo app running on Postgres with `pg_stat_statements` enabled. The results show the full transformation from cumulative Postgres counters to per-interval deltas in `query_intervals`.
+
+The demo app runs three endpoints:
+- `GET /todos` — `SELECT * FROM todos` (N+1 on users via includes)
+- `GET /todos/status` — `SELECT * FROM todos WHERE status = ?`
+- `GET /todos/stats` — `SELECT COUNT(*) GROUP BY user_id` + `SELECT * FROM users`
+
+### Step 1: Postgres after three rounds of load
+
+Before any collector run, here is what `pg_stat_statements` shows for the four application queries. These are cumulative totals since the last `pg_stat_statements_reset()` call.
+
+```bash
+docker exec checkpoint-postgres-1 psql -U postgres -d checkpoint_demo -t -A -F $'\t' -c "
+SELECT
+  queryid,
+  calls,
+  round(mean_exec_time::numeric, 4) AS mean_ms,
+  left(query, 80) AS query_snippet
+FROM pg_stat_statements
+WHERE query LIKE '%todos%' OR query LIKE '%users%'
+ORDER BY calls DESC
+LIMIT 5
+" 2>&1
+```
+
+```output
+8809102542184958349	121	0.0031	SELECT "todos".* FROM "todos" /*action='index',application='Demo',controller='to
+5274116089881997307	85	0.0028	SELECT "todos".* FROM "todos" WHERE "todos"."status" = $1 /*action='status',appl
+-2218168421473161013	60	0.0017	SELECT "users".* FROM "users" /*action='stats',application='Demo',controller='to
+-1891428409369833436	60	0.0044	SELECT COUNT(*) AS "count_all", "todos"."user_id" AS "todos_user_id" FROM "todos
+-3384221525701929072	30	0.0029	SELECT "todos".* FROM "todos" WHERE (title LIKE $1) /*action='index',application
+```
+
+The counter for `SELECT * FROM todos` shows 121 total calls — the sum across all three load rounds. This is the raw cumulative number. The collector ran three times and each time recorded a snapshot of these cumulative values.
+
+### Step 2: collector_state — the reset anchor
+
+The collector wrote one `collector_state` row per pass. All three share the same `stats_reset` timestamp, confirming no reset happened between passes.
+
+```bash
+curl -s 'http://localhost:8123/' --data 'SELECT toString(collected_at) AS collected_at, dealloc, stats_reset FROM collector_state ORDER BY collected_at FORMAT TSVWithNames'
+```
+
+```output
+collected_at	dealloc	stats_reset
+2026-04-10 12:44:42.839	0	2026-04-10 12:44:07
+2026-04-10 12:47:15.796	0	2026-04-10 12:44:07
+2026-04-10 12:47:29.849	0	2026-04-10 12:44:07
+```
+
+`stats_reset` is `2026-04-10 12:44:07` in all three rows. The interval view's reset filter (`stats_reset = previous_stats_reset`) will pass for all consecutive pairs, meaning their deltas are valid.
+
+### Step 3: query_events — growing cumulative counters
+
+Here are the three snapshots for the four application queries, ordered by query and time. Watch `total_exec_count` climb from pass to pass.
+
+```bash
+curl -s 'http://localhost:8123/' --data "
+SELECT
+  toString(collected_at) AS collected_at,
+  queryid,
+  total_exec_count,
+  round(total_exec_time_ms, 2) AS total_exec_time_ms,
+  round(mean_exec_time_ms, 4) AS mean_ms
+FROM query_events
+WHERE queryid IN ('8809102542184958349', '-1891428409369833436', '5274116089881997307', '-3384221525701929072')
+ORDER BY queryid, collected_at
+FORMAT TSVWithNames"
+```
+
+```output
+collected_at	queryid	total_exec_count	total_exec_time_ms	mean_ms
+2026-04-10 12:44:42.839	-1891428409369833436	15	0.07	0.0046
+2026-04-10 12:47:15.796	-1891428409369833436	40	0.18	0.0045
+2026-04-10 12:47:29.849	-1891428409369833436	60	0.26	0.0044
+2026-04-10 12:44:42.839	-3384221525701929072	10	0.03	0.0028
+2026-04-10 12:47:15.796	-3384221525701929072	30	0.09	0.0029
+2026-04-10 12:47:29.849	-3384221525701929072	30	0.09	0.0029
+2026-04-10 12:44:42.839	5274116089881997307	20	0.06	0.0031
+2026-04-10 12:47:15.796	5274116089881997307	55	0.16	0.0029
+2026-04-10 12:47:29.849	5274116089881997307	85	0.24	0.0028
+2026-04-10 12:44:42.839	8809102542184958349	30	0.11	0.0035
+2026-04-10 12:47:15.796	8809102542184958349	80	0.25	0.0031
+2026-04-10 12:47:29.849	8809102542184958349	120	0.37	0.0031
+```
+
+Take queryid `8809102542184958349` (the `SELECT * FROM todos` all-rows query) as the running example:
+
+- Pass 1 (12:44:42): 30 cumulative calls, 0.11 ms total
+- Pass 2 (12:47:15): 80 cumulative calls, 0.25 ms total  — 50 new calls in this interval
+- Pass 3 (12:47:29): 120 cumulative calls, 0.37 ms total — 40 new calls in this interval
+
+The view will compute those 50 and 40 call deltas by subtraction.
+
+Note queryid `-3384221525701929072` (the LIKE search): it shows 30 calls in both pass 2 and pass 3. No load was generated for that query in round 3, so the counter did not increment. The interval view will emit a row with `total_exec_count = 0` for that pair — valid but zero activity.
+
+### Step 4: query_intervals — deltas from the VIEW
+
+The interval view pairs each snapshot with the previous one, subtracts the counters, and filters out invalid rows. Three snapshots produce two intervals per query.
+
+```bash
+curl -s 'http://localhost:8123/' --data "
+SELECT
+  toString(interval_started_at) AS started_at,
+  toString(interval_ended_at) AS ended_at,
+  interval_duration_ms,
+  queryid,
+  total_exec_count AS calls_in_interval,
+  round(delta_exec_time_ms, 2) AS delta_ms
+FROM query_intervals
+WHERE queryid IN ('8809102542184958349', '-1891428409369833436', '5274116089881997307', '-3384221525701929072')
+ORDER BY queryid, started_at
+FORMAT TSVWithNames"
+```
+
+```output
+started_at	ended_at	interval_duration_ms	queryid	calls_in_interval	delta_ms
+2026-04-10 12:44:42.839	2026-04-10 12:47:15.796	152957	-1891428409369833436	25	0.11
+2026-04-10 12:47:15.796	2026-04-10 12:47:29.849	14053	-1891428409369833436	20	0.09
+2026-04-10 12:44:42.839	2026-04-10 12:47:15.796	152957	-3384221525701929072	20	0.06
+2026-04-10 12:47:15.796	2026-04-10 12:47:29.849	14053	-3384221525701929072	0	0
+2026-04-10 12:44:42.839	2026-04-10 12:47:15.796	152957	5274116089881997307	35	0.1
+2026-04-10 12:47:15.796	2026-04-10 12:47:29.849	14053	5274116089881997307	30	0.08
+2026-04-10 12:44:42.839	2026-04-10 12:47:15.796	152957	8809102542184958349	50	0.14
+2026-04-10 12:47:15.796	2026-04-10 12:47:29.849	14053	8809102542184958349	40	0.12
+```
+
+The math checks out for queryid `8809102542184958349`:
+
+- Interval 1 (12:44:42 → 12:47:15, 152,957 ms): `80 - 30 = 50` calls, `0.25 - 0.11 = 0.14` ms
+- Interval 2 (12:47:15 → 12:47:29, 14,053 ms): `120 - 80 = 40` calls, `0.37 - 0.25 = 0.12` ms
+
+The LIKE search query (`-3384221525701929072`) shows `calls_in_interval = 0` for the second interval — the counter was unchanged because no matching load was sent in round 3. The row still appears because the filter only rejects counter *regressions*, not zero deltas.
+
+### Step 5: buildOffenderQuery — from scope string to SQL
+
+When the agent calls `queryFindings`, the first thing that happens is `buildOffenderQuery(scope)` builds the SQL string. There are two variants: all-time (no time filter) and windowed (default 60 minutes). Here is the exact SQL each produces.
+
+```bash
+npx tsx /tmp/show_sql.mts
+```
+
+```output
+-- all-time variant (scope = 'all'):
+SELECT
+  fingerprint,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,
+  sum(total_exec_count) AS call_count,
+  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,
+  round(quantile(0.95)(if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)), 2) AS p95_exec_time_ms
+FROM query_intervals
+GROUP BY fingerprint
+ORDER BY total_exec_time_ms DESC
+LIMIT 5
+FORMAT TSVWithNames
+
+-- windowed variant (scope = undefined, default 60 minutes):
+SELECT
+  fingerprint,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,
+  sum(total_exec_count) AS call_count,
+  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,
+  round(quantile(0.95)(if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)), 2) AS p95_exec_time_ms
+FROM query_intervals
+WHERE interval_started_at > now() - INTERVAL 60 MINUTE
+  AND interval_ended_at > now() - INTERVAL 60 MINUTE
+  AND interval_duration_ms <= 3600000
+GROUP BY fingerprint
+ORDER BY total_exec_time_ms DESC
+LIMIT 5
+FORMAT TSVWithNames
+```
+
+The two variants differ only in the WHERE clause. The windowed query adds three conditions — both interval endpoints must fall within the window, and the interval duration must not exceed the window length (which would indicate a stale or anomalous interval).
+
+Key columns in the SELECT:
+- `tupleElement(argMax(...), 1)` — picks `source_file` from the interval with the latest `interval_ended_at`, so newer (potentially enriched) samples win over older ones
+- `sum(total_exec_count) AS call_count` — total calls across all intervals (alias avoids ClickHouse cyclic alias with the view's own `total_exec_count` column)
+- `quantile(0.95)(if(...))` — P95 of per-interval mean exec time; the `if(... = 0, 0, ...)\ guard avoids divide-by-zero on zero-call intervals
+
+### Step 6: Raw ClickHouse TSV response
+
+Before `parseOffenderRows` processes it, ClickHouse returns a raw TSV string. Here is what the wire format looks like for both variants.
+
+```bash
+curl -s 'http://localhost:8123/?allow_experimental_analyzer=0' --data 'SELECT
+  fingerprint,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,
+  sum(total_exec_count) AS call_count,
+  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,
+  round(quantile(0.95)(if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)), 2) AS p95_exec_time_ms
+FROM query_intervals
+GROUP BY fingerprint
+ORDER BY total_exec_time_ms DESC
+LIMIT 5
+FORMAT TSVWithNames'
+```
+
+```output
+fingerprint	top_source_file	top_sample_query	call_count	total_exec_time_ms	p95_exec_time_ms
+-4675886988266314286	\N	SELECT query FROM pg_stat_activity WHERE query_id = $1 LIMIT 1	12	0.47	0.04
+8809102542184958349	\N	\N	90	0.26	0
+-1891428409369833436	\N	\N	45	0.2	0
+5274116089881997307	\N	\N	65	0.18	0
+4552656009507366904	\N	\N	1	0.15	0.15
+```
+
+The first line is always the header. `\N` is ClickHouse's representation of NULL. The windowed variant produces the same rows since this data was collected within the last hour — the WHERE clause on `interval_started_at > now() - INTERVAL 60 MINUTE` passes.
+
+```bash
+curl -s 'http://localhost:8123/?allow_experimental_analyzer=0' --data "SELECT
+  fingerprint,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,
+  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,
+  sum(total_exec_count) AS call_count,
+  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,
+  round(quantile(0.95)(if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)), 2) AS p95_exec_time_ms
+FROM query_intervals
+WHERE interval_started_at > now() - INTERVAL 60 MINUTE
+  AND interval_ended_at > now() - INTERVAL 60 MINUTE
+  AND interval_duration_ms <= 3600000
+GROUP BY fingerprint
+ORDER BY total_exec_time_ms DESC
+LIMIT 5
+FORMAT TSVWithNames"
+```
+
+```output
+fingerprint	top_source_file	top_sample_query	call_count	total_exec_time_ms	p95_exec_time_ms
+-4675886988266314286	\N	SELECT query FROM pg_stat_activity WHERE query_id = $1 LIMIT 1	12	0.47	0.04
+8809102542184958349	\N	\N	90	0.26	0
+-1891428409369833436	\N	\N	45	0.2	0
+5274116089881997307	\N	\N	65	0.18	0
+4552656009507366904	\N	\N	1	0.15	0.15
+```
+
+### Step 7: parseOffenderRows — TSV to TopOffender objects
+
+`parseOffenderRows` splits the TSV header and data lines, maps each row to a `TopOffender` object, and assigns severity based on P95 exec time.
+
+```bash
+sed -n '/^function parseOffenderRows/,/^}/p' /home/bjw/checkpoint/src/tools/clickhouse_tool.ts
+```
+
+```output
+function parseOffenderRows(payload: string): Array<TopOffender> {
   const [headerLine, ...dataLines] = payload.trim().split("\n").filter(Boolean);
   if (!headerLine) {
     return [];
@@ -488,17 +1012,16 @@ function parseRows(payload: string): Array<TopOffender> {
     const row = Object.fromEntries(
       headers.map((header, index) => [header, normalizeValue(header, values[index])]),
     );
-    const totalExecCount = Number(row.total_exec_count ?? 0);
+    const totalExecCount = Number(row.call_count ?? row.total_exec_count ?? 0);
     const p95ExecTimeMs = Number(row.p95_exec_time_ms ?? 0);
     const totalExecTimeMs = Number(row.total_exec_time_ms ?? 0);
 
     return {
       fingerprint: String(row.fingerprint ?? ""),
       p95_exec_time_ms: p95ExecTimeMs,
-      sample_query: row.sample_query,
+      sample_query: row.top_sample_query ?? row.sample_query,
       severity: p95ExecTimeMs >= 100 ? "high" : "medium",
-      source_file: row.source_file,
-      source_tag: row.source_tag,
+      source_file: row.top_source_file ?? row.source_file,
       total_exec_count: totalExecCount,
       total_exec_time_ms: totalExecTimeMs,
     };
@@ -506,452 +1029,67 @@ function parseRows(payload: string): Array<TopOffender> {
 }
 ```
 
-severity is 'high' when p95_exec_time_ms >= 100ms, otherwise 'medium'. Only high-severity findings proceed to PR creation in the executor. The threshold is a fixed constant — not configurable — keeping the classification simple and deterministic.
+The parsing steps:
 
-The fingerprint column gets special treatment in normalizeValue: it is always kept as a string even if it looks numeric. pg_stat_statements.queryid is a signed 64-bit integer that can overflow JavaScript's safe integer range, so treating it as a number would corrupt it.
+1. Split on `\n`, drop empty lines — guards against trailing newlines in ClickHouse output
+2. First line is the header; remaining are data rows
+3. `normalizeValue` converts `\N` to null, coerces numeric-looking strings to numbers (except `fingerprint`, which must stay a string even though it looks like an integer)
+4. `call_count ?? total_exec_count` — handles both the new column alias and the old one for backward compat
+5. `severity: p95ExecTimeMs >= 100 ? 'high' : 'medium'` — the agent's threshold for triggering automated fix attempts
 
-## 4. End-to-End Data Flow Summary
+### Step 8: Final queryFindings output
 
-Here is the complete path a single slow query takes through the system:
-
-1. Rails executes a SQL query and emits it to Postgres with an inline comment:
-   SELECT * FROM todos WHERE title LIKE '%task%' /*application:demo,controller='todos',action='index',source_location='/app/controllers/todos_controller.rb:17'*/
-
-2. pg_stat_statements accumulates call count and mean execution time for the normalized form of this query, indexed by queryid (a stable hash).
-
-3. The collector polls pg_stat_statements and finds the row. It queries pg_stat_activity to retrieve one live copy of the SQL (including the comment). It parses the comment to extract source_tag='todos#index' and source_file='/app/controllers/todos_controller.rb:17'.
-
-4. The collector sends a JSONEachRow POST to ClickHouse, writing one row to query_events with fingerprint=queryid, collected_at=now(), source_tag, source_file, sample_query, total_exec_count, mean_exec_time_ms.
-
-5. ClickHouse processes the INSERT and triggers top_offenders_mv. The view groups by (fingerprint, source_tag) and writes argMaxState/sumState/quantileState partial aggregates to query_fingerprints.
-
-6. The agent receives 'analyze_db'. It builds a windowed query against query_events (or query_fingerprints for all-time), retrieves the top 5 offenders sorted by total_exec_time_ms, and classifies each as 'high' (p95 >= 100ms) or 'medium'.
-
-7. For high-severity findings, the executor continues through EXPLAIN validation, code-search tracing, and PR creation.
-
-## 5. Schema Reset and Backfill
-
-The reset script (004) exists for cases where the query_fingerprints schema changes (e.g. adding a new aggregate column) and the existing materialized view and table need to be rebuilt from raw events. It is not part of normal startup.
+Here is the complete end-to-end call through the TypeScript layer, running against the live data.
 
 ```bash
-cat collector/db/clickhouse/004_reset_query_fingerprints.sql
+CLICKHOUSE_URL=http://localhost:8123 npx tsx /tmp/demo_query.mts
 ```
 
 ```output
--- ABOUTME: Resets the fingerprint read model after schema changes.
--- ABOUTME: Run this only while collector ingestion is stopped so no raw events are missed.
-DROP TABLE IF EXISTS top_offenders_mv;
-DROP TABLE IF EXISTS query_fingerprints;
-
-CREATE TABLE query_fingerprints (
-  fingerprint String,
-  source_tag Nullable(String),
-  source_file_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
-  sample_query_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
-  total_exec_count_state AggregateFunction(sum, UInt64),
-  total_exec_time_ms_state AggregateFunction(sum, Float64),
-  p95_exec_time_state AggregateFunction(quantile(0.95), Float64)
-) ENGINE = AggregatingMergeTree
-ORDER BY (fingerprint, source_tag);
-
-INSERT INTO query_fingerprints (
-  fingerprint,
-  source_tag,
-  source_file_state,
-  sample_query_state,
-  total_exec_count_state,
-  total_exec_time_ms_state,
-  p95_exec_time_state
-)
-SELECT
-  fingerprint,
-  source_tag,
-  argMaxState(source_file, collected_at) AS source_file_state,
-  argMaxState(sample_query, collected_at) AS sample_query_state,
-  sumState(total_exec_count) AS total_exec_count_state,
-  sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state,
-  quantileState(0.95)(mean_exec_time_ms) AS p95_exec_time_state
-FROM query_events
-GROUP BY fingerprint, source_tag;
-
-CREATE MATERIALIZED VIEW top_offenders_mv
-TO query_fingerprints AS
-SELECT
-  fingerprint,
-  source_tag,
-  argMaxState(source_file, collected_at) AS source_file_state,
-  argMaxState(sample_query, collected_at) AS sample_query_state,
-  sumState(total_exec_count) AS total_exec_count_state,
-  sumState(total_exec_count * mean_exec_time_ms) AS total_exec_time_ms_state,
-  quantileState(0.95)(mean_exec_time_ms) AS p95_exec_time_state
-FROM query_events
-GROUP BY fingerprint, source_tag;
+[
+  {
+    "fingerprint": "-4675886988266314286",
+    "p95_exec_time_ms": 0.04,
+    "sample_query": "SELECT query FROM pg_stat_activity WHERE query_id = $1 LIMIT 1",
+    "severity": "medium",
+    "total_exec_count": 12,
+    "total_exec_time_ms": 0.47
+  },
+  {
+    "fingerprint": "8809102542184958349",
+    "p95_exec_time_ms": 0,
+    "severity": "medium",
+    "total_exec_count": 90,
+    "total_exec_time_ms": 0.26
+  },
+  {
+    "fingerprint": "-1891428409369833436",
+    "p95_exec_time_ms": 0,
+    "severity": "medium",
+    "total_exec_count": 45,
+    "total_exec_time_ms": 0.2
+  },
+  {
+    "fingerprint": "5274116089881997307",
+    "p95_exec_time_ms": 0,
+    "severity": "medium",
+    "total_exec_count": 65,
+    "total_exec_time_ms": 0.18
+  },
+  {
+    "fingerprint": "4552656009507366904",
+    "p95_exec_time_ms": 0.15,
+    "severity": "medium",
+    "total_exec_count": 1,
+    "total_exec_time_ms": 0.15
+  }
+]
 ```
 
-The reset sequence is: drop MV → drop table → recreate table → backfill from query_events → recreate MV. The MV must be dropped before the table because ClickHouse prevents dropping a table that has a materialized view writing to it. The INSERT backfill replays all historical raw events through the same aggregate logic, ensuring query_fingerprints is consistent with what the MV would have accumulated incrementally.
+Reading the findings:
 
-The ABOUTME comment says 'Run this only while collector ingestion is stopped' because there is a small window between the DROP and the INSERT where new raw events would be lost. In production this would be coordinated with a collector pause; in the demo it is a manual operation.
+- **Fingerprint `-4675886988266314286`** (collector's own `SampleQueryLookup` query): 12 calls, 0.47 ms total. Has a `sample_query` because this query runs longer than the others and gets captured live in `pg_stat_activity` occasionally.
+- **Fingerprint `8809102542184958349`** (`SELECT * FROM todos`): 90 calls across the two intervals, 0.26 ms total — the busiest application query by call volume but fast.
+- **Fingerprints `-1891428409369833436` and `5274116089881997307`** (group-by stats, status filter): both `null` for `source_file` and `sample_query` — these finished too quickly to be captured in `pg_stat_activity` during any collector pass.
 
-## 6. argMax in Depth
-
-argMax is the function that picks a *representative* value — source_file or sample_query — from across many raw event rows. It appears in three forms in this codebase depending on context, and the choice of argMax over simpler alternatives was a deliberate fix to a real bug.
-
-### The two-argument form
-
-argMax takes two arguments: argMax(value, ordering_column). It returns the value from whichever row has the maximum ordering_column. In this schema:
-
-  argMax(source_file, collected_at)
-
-reads as: 'give me the source_file from the row with the most recent collected_at'. It is not a sort — ClickHouse does not sort rows to compute it. Internally it scans the group and tracks the (value, ordering_key) pair with the highest ordering key, discarding all others.
-
-This is why the two-argument form exists at all: a single-argument aggregate like any() or first_value() gives you *some* value from the group with no defined ordering guarantee. argMax gives you the *latest* value, which is exactly what you want for a column like source_file that may be updated by later collector runs as the codebase changes.
-
-### Why not any()
-
-The original schema used anyState for source_file, source_tag, and sample_query. any() returns an arbitrary value from the group — ClickHouse picks whatever it encounters first in the merge. This worked fine in testing but broke in the live demo.
-
-To understand why, you need to know two things about how the collector writes rows:
-
-1. collected_at is captured **once** at the top of run_once, not per-row. Every row in a single poll cycle shares the same timestamp.
-2. The collector polls on a tight interval (a few seconds). Under load, two consecutive polls can finish within the same wall-clock second.
-
-Now consider what query_events looks like after two polls for the same fingerprint when the demo app is starting up. On the first poll the query is already running in pg_stat_statements, but no live copy appeared in pg_stat_activity yet (it finished too fast), so source_file is NULL. On the second poll, a live copy was captured and the Rails comment was parsed successfully:
-
-| fingerprint       | collected_at (DateTime — second precision) | source_file                                        |
-|-------------------|--------------------------------------------|----------------------------------------------------|
-| -5767027640429317 | 2026-04-04 10:00:00                        | NULL                                               |
-| -5767027640429317 | 2026-04-04 10:00:00                        | /app/controllers/todos_controller.rb:17            |
-
-Both rows have **identical** collected_at values because DateTime has one-second granularity and both polls landed inside the same second. When the materialized view computes argMaxState(source_file, collected_at), ClickHouse must choose between NULL and the real path — but both have the same ordering key, so the tie-break is undefined. In practice ClickHouse often returns the first row it encounters in storage order, which in this case was the NULL one. The agent then received no source_file and could not trace the query to its origin.
-
-Switching to DateTime64(3) means the same scenario produces:
-
-| fingerprint       | collected_at (DateTime64(3) — ms precision) | source_file                                        |
-|-------------------|---------------------------------------------|----------------------------------------------------|
-| -5767027640429317 | 2026-04-04 10:00:00.123                     | NULL                                               |
-| -5767027640429317 | 2026-04-04 10:00:00.891                     | /app/controllers/todos_controller.rb:17            |
-
-Now the ordering key is unambiguous: 10:00:00.891 > 10:00:00.123, so argMaxState correctly selects the row with the real source_file.
-
-Two fixes were applied together: DateTime64(3) for millisecond precision (so same-second ties become extremely unlikely) and switching from anyState to argMaxState (so the ordering key is always consulted rather than relying on arbitrary insertion order).
-
-From the journal (2026-04-04):
-  'Replaced the three independent anyState fields with a single argMaxState tuple keyed by collected_at so the representative row stays coherent.'
-  'Fixed the live collector path by... moving ClickHouse event timestamps to DateTime64(3) with millisecond JSON serialization.'
-
-### The three forms: plain, State, Merge
-
-argMax appears in three syntactic forms depending on where it is used:
-
-**Form 1: argMax(value, ordering) — plain aggregate, used in windowed queries against query_events**
-
-This is a normal aggregate function. ClickHouse scans the raw rows in the GROUP BY group, tracks the (value, ordering_key) pair with the highest key, and returns the value. No state is stored — the result is computed on the fly.
-
-```bash
-grep 'argMax(' agent/src/tools/clickhouse_tool.ts | grep -v State | grep -v Merge
-```
-
-```output
-    "  argMax(source_file, collected_at) AS source_file,",
-    "  argMax(sample_query, collected_at) AS sample_query,",
-```
-
-**Form 2: argMaxState(value, ordering) — State combinator, used in the materialized view**
-
-The State combinator suffix tells ClickHouse to produce a binary aggregate state rather than a final value. The result is stored in an AggregateFunction(argMax, ...) column. ClickHouse can merge multiple partial states later, which is what makes AggregatingMergeTree work incrementally.
-
-```bash
-grep 'argMaxState' collector/db/clickhouse/003_top_offenders_mv.sql
-```
-
-```output
-  argMaxState(source_file, collected_at) AS source_file_state,
-  argMaxState(sample_query, collected_at) AS sample_query_state,
-```
-
-**Form 3: argMaxMerge(state_column) — Merge combinator, used in all-time queries against query_fingerprints**
-
-The Merge combinator finalizes one or more partial states stored in an AggregateFunction column. ClickHouse combines all the partial states in the GROUP BY group and returns the final value — the source_file or sample_query from the row with the globally highest collected_at across all batches ever written.
-
-```bash
-grep 'argMaxMerge' agent/src/tools/clickhouse_tool.ts
-```
-
-```output
-    "  argMaxMerge(source_file_state) AS source_file,",
-    "  argMaxMerge(sample_query_state) AS sample_query,",
-```
-
-The column type declaration in query_fingerprints tells ClickHouse exactly what kind of state to expect:
-
-  source_file_state AggregateFunction(argMax, Nullable(String), DateTime64(3))
-
-This reads as: 'a state produced by argMax, where the value type is Nullable(String) and the ordering key type is DateTime64(3)'. The type signature must match both what argMaxState produces and what argMaxMerge consumes, or ClickHouse will reject the query at parse time.
-
-```bash
-grep 'argMax' collector/db/clickhouse/002_query_fingerprints.sql
-```
-
-```output
-  source_file_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
-  sample_query_state AggregateFunction(argMax, Nullable(String), DateTime64(3)),
-```
-
-### Why argMax is applied to source_file and sample_query but not source_tag
-
-source_tag is a plain Nullable(String) column in query_fingerprints, not an aggregate state. It is part of the ORDER BY (fingerprint, source_tag) grouping key, so every row in query_fingerprints already represents one (fingerprint, source_tag) pair — there is nothing to pick between. argMax is only needed for columns that vary across raw event rows within the same group.
-
-## 7. Live Transformation Walkthrough
-
-This section traces five real queries generated by the demo Rails app through each stage of the pipeline — from Postgres statistics to the final ranked offenders the agent reads. All data is captured from the live running stack.
-
-The demo app exposes four endpoints that the load harness cycles through:
-- GET /todos — full table scan + N+1 user lookup + LIKE search
-- GET /todos/status — status filter
-- GET /todos/stats — per-user COUNT in a loop
-
-Each of these produces one or more fingerprints in pg_stat_statements. We will follow five of them.
-
-### Stage 1: pg_stat_statements — the raw source
-
-The collector's first step is to read pg_stat_statements. This gives it a queryid (the fingerprint), a call count, and the mean execution time. The query text here is normalized — all literal values are replaced with $1, $2 placeholders.
-
-```bash
-docker compose exec postgres psql -U postgres checkpoint_demo -c   "SELECT queryid, calls, round(mean_exec_time::numeric, 4) AS mean_exec_time_ms, LEFT(query, 160) AS query   FROM pg_stat_statements   WHERE queryid IN (3252138119218455137, -2177962793997177478, 3076098543124480455, -5767027640429317262, 8278353056303641570)   ORDER BY calls DESC;"
-```
-
-```output
-       queryid        | calls | mean_exec_time_ms |                                                          query                                                          
-----------------------+-------+-------------------+-------------------------------------------------------------------------------------------------------------------------
-  3252138119218455137 |   527 |            0.0210 | SELECT "users".* FROM "users" WHERE "users"."id" = $1 LIMIT $2 /*action='index',application='Demo',controller='todos'*/
- -2177962793997177478 |   301 |            0.0285 | SELECT "todos".* FROM "todos" /*action='index',application='Demo',controller='todos'*/
-  8278353056303641570 |   226 |            0.0157 | SELECT "todos".* FROM "todos" WHERE "todos"."status" = $1 /*action='status',application='Demo',controller='todos'*/
-  3076098543124480455 |   226 |            0.0178 | SELECT "todos".* FROM "todos" WHERE (title LIKE $1) /*action='index',application='Demo',controller='todos'*/
- -5767027640429317262 |   223 |            0.0221 | SELECT COUNT(*) FROM "todos" WHERE "todos"."user_id" = $1 /*action='stats',application='Demo',controller='todos'*/
-(5 rows)
-
-```
-
-A few things to notice:
-- The query text already contains the Rails query-log comment (e.g. /*action='index',controller='todos'*/) because pg_stat_statements hashes the full query string including comments. This is the normalized comment — literals are replaced but the comment keys remain.
-- There is no source_location in these comments. The demo app is configured to emit it, but Rails' :source_location tag uses Ruby caller to find the callsite, and in this environment it is not being included. So source_file will be NULL throughout this walkthrough.
-- queryid is a signed 64-bit integer. The negative values are valid — they are the low 64 bits of a hash that happened to set the sign bit.
-
-### Stage 2: pg_stat_activity — the sample query lookup
-
-For each queryid the collector tries to find a live copy of the SQL in pg_stat_activity. This is a best-effort lookup: it only succeeds if a query with that query_id happens to be in-flight at the moment the collector polls. Because these queries are fast (sub-millisecond), most polls find nothing.
-
-```bash
-docker compose exec postgres psql -U postgres checkpoint_demo -c   "SELECT query_id, LEFT(query, 200) AS query   FROM pg_stat_activity   WHERE query_id IN (3252138119218455137, -2177962793997177478, 3076098543124480455, -5767027640429317262, 8278353056303641570)   LIMIT 5;"
-```
-
-```output
-      query_id       |                                                         query                                                         
----------------------+-----------------------------------------------------------------------------------------------------------------------
- 3252138119218455137 | SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*action='index',application='Demo',controller='todos'*/
-(1 row)
-
-```
-
-Only one of the five queries was in-flight at this moment — the rest had already finished. This is typical: at any given poll, most fingerprints return no sample query and their rows land in query_events with sample_query = NULL and source_tag = NULL.
-
-When a sample query IS captured (as above), it carries the un-normalized SQL with real literal values (id = 1 rather than $1) and the full comment with source metadata. The collector passes this to QueryCommentParser to extract source_tag = 'todos#index'.
-
-### Stage 3: QueryCommentParser — extracting source metadata
-
-The collector calls QueryCommentParser.parse on the captured SQL comment. Here is what that produces for the one sample we captured:
-
-```bash
-cd collector && bundle exec ruby -e "
-require_relative 'lib/query_comment_parser'
-sql = \"SELECT \\\"users\\\".* FROM \\\"users\\\" WHERE \\\"users\\\".\\\"id\\\" = 1 LIMIT 1 /*action='index',application='Demo',controller='todos'*/\"
-comment = sql.scan(%r{/\\*.*?\\*/}m).first
-puts 'Comment block found: ' + comment.inspect
-result = QueryCommentParser.parse(comment)
-puts 'source_tag:  ' + result[:source_tag].inspect
-puts 'source_file: ' + result[:source_file].inspect
-"
-```
-
-```output
-Comment block found: "/*action='index',application='Demo',controller='todos'*/"
-source_tag:  "todos#index"
-source_file: nil
-```
-
-For the four fingerprints where pg_stat_activity returned nothing, sample_query is nil and the parser receives nil, which it handles by returning empty strings that are then coerced to nil by the presence helper in Collector#build_row. Those rows land in query_events with source_tag = NULL.
-
-### Stage 4: query_events — what actually accumulates
-
-Because the collector runs every ~1.5 seconds, and most polls find no live query in pg_stat_activity, query_events accumulates a huge number of NULL-tagged rows for each fingerprint. Only the occasional lucky poll captures a tagged sample.
-
-Here is the ratio of tagged vs NULL rows per fingerprint after the stack has been running overnight:
-
-```bash
-curl -s 'http://localhost:8123/?query=SELECT+fingerprint,+source_tag,+count()+AS+row_count,+max(toString(collected_at))+AS+latest_collected_at+FROM+query_events+WHERE+fingerprint+IN+('"3252138119218455137"','"-2177962793997177478"','"3076098543124480455"','"-5767027640429317262"','"8278353056303641570"')+GROUP+BY+fingerprint,source_tag+ORDER+BY+fingerprint,row_count+DESC+FORMAT+TSVWithNames'
-```
-
-```output
-fingerprint	source_tag	row_count	latest_collected_at
--2177962793997177478	\N	36932	2026-04-05 15:21:14.047
--2177962793997177478	todos#index	1	2026-04-05 15:16:52.162
--5767027640429317262	\N	36799	2026-04-05 15:21:14.047
--5767027640429317262	todos#stats	134	2026-04-05 01:22:36.171
-3076098543124480455	\N	36933	2026-04-05 15:21:14.047
-3252138119218455137	\N	36302	2026-04-05 15:16:52.162
-3252138119218455137	todos#index	631	2026-04-05 15:21:14.047
-8278353056303641570	\N	36853	2026-04-05 15:21:14.047
-8278353056303641570	todos#status	80	2026-04-05 01:22:34.703
-```
-
-For fingerprint 3252138119218455137 (the users lookup), 631 of ~36,933 rows (~1.7%) have a source_tag. For fingerprint 3076098543124480455 (the LIKE query), zero tagged rows were captured — the collector never happened to poll while that query was in-flight.
-
-Note also the latest_collected_at for some tagged groups: the todos#stats rows for -5767027640429317262 are from 01:22, but the NULL rows are from 15:21 — the NULL rows are 14 hours more recent than the last tagged capture. This matters for the fingerprint-only grouping key discussed in the next stage.
-
-A sample of actual rows from query_events shows the two shapes — one tagged, one not:
-
-```bash
-curl -s 'http://localhost:8123/?query=SELECT+toString(collected_at)+AS+collected_at,+fingerprint,+source_tag,+source_file,+LEFT(sample_query,80)+AS+sample_query,+total_exec_count,+round(mean_exec_time_ms,4)+AS+mean_exec_time_ms+FROM+query_events+WHERE+fingerprint+=+'"3252138119218455137"'+ORDER+BY+source_tag+DESC+NULLS+LAST,collected_at+DESC+LIMIT+4+FORMAT+TSVWithNames'
-```
-
-```output
-Code: 386. DB::Exception: There is no supertype for types String, UInt64 because some of them are String/FixedString/Enum and some of them are not. (NO_COMMON_TYPE) (version 24.3.18.7 (official build))
-```
-
-```bash
-curl -s 'http://localhost:8123/?query=SELECT+toString(collected_at)+AS+collected_at,+fingerprint,+source_tag,+LEFT(toString(sample_query),80)+AS+sample_query,+total_exec_count,+round(mean_exec_time_ms,4)+AS+mean_exec_time_ms+FROM+query_events+WHERE+fingerprint+=+'"3252138119218455137"'+AND+source_tag+IS+NOT+NULL+ORDER+BY+collected_at+DESC+LIMIT+2+FORMAT+TSVWithNames' && echo '--- (NULL rows) ---' && curl -s 'http://localhost:8123/?query=SELECT+toString(collected_at)+AS+collected_at,+fingerprint,+source_tag,+LEFT(toString(sample_query),80)+AS+sample_query,+total_exec_count,+round(mean_exec_time_ms,4)+AS+mean_exec_time_ms+FROM+query_events+WHERE+fingerprint+=+'"3252138119218455137"'+AND+source_tag+IS+NULL+ORDER+BY+collected_at+DESC+LIMIT+2+FORMAT+TSVWithNames'
-```
-
-```output
-Code: 386. DB::Exception: There is no supertype for types String, UInt64 because some of them are String/FixedString/Enum and some of them are not. (NO_COMMON_TYPE) (version 24.3.18.7 (official build))
---- (NULL rows) ---
-Code: 386. DB::Exception: There is no supertype for types String, UInt64 because some of them are String/FixedString/Enum and some of them are not. (NO_COMMON_TYPE) (version 24.3.18.7 (official build))
-```
-
-```bash
-curl -s 'http://localhost:8123/?query=SELECT+toString(collected_at)+AS+collected_at%2Cfingerprint%2Csource_tag%2CLEFT(sample_query%2C80)+AS+sample_query%2Ctotal_exec_count%2Cround(mean_exec_time_ms%2C4)+AS+mean_exec_time_ms+FROM+query_events+WHERE+fingerprint+%3D+%273252138119218455137%27+AND+source_tag+IS+NOT+NULL+ORDER+BY+collected_at+DESC+LIMIT+2+FORMAT+TSVWithNames'
-```
-
-```output
-collected_at	fingerprint	source_tag	sample_query	total_exec_count	mean_exec_time_ms
-2026-04-05 15:21:55.411	3252138119218455137	todos#index	SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*action=\'index\',ap	527	0.021
-2026-04-05 15:21:53.976	3252138119218455137	todos#index	SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*action=\'index\',ap	527	0.021
-```
-
-```bash
-curl -s 'http://localhost:8123/?query=SELECT+toString(collected_at)+AS+collected_at%2Cfingerprint%2Csource_tag%2CLEFT(sample_query%2C80)+AS+sample_query%2Ctotal_exec_count%2Cround(mean_exec_time_ms%2C4)+AS+mean_exec_time_ms+FROM+query_events+WHERE+fingerprint+%3D+%273252138119218455137%27+AND+source_tag+IS+NULL+ORDER+BY+collected_at+DESC+LIMIT+2+FORMAT+TSVWithNames'
-```
-
-```output
-collected_at	fingerprint	source_tag	sample_query	total_exec_count	mean_exec_time_ms
-2026-04-05 15:16:52.162	3252138119218455137	\N	\N	508	0.0211
-2026-04-05 15:16:13.725	3252138119218455137	\N	\N	506	0.02
-```
-
-The tagged rows show the full un-normalized SQL with real literal values and source_tag = 'todos#index'. The NULL rows have no sample_query because pg_stat_activity found no live instance at that moment — but total_exec_count and mean_exec_time_ms are still valid because those come from pg_stat_statements directly, not from the sample lookup.
-
-Notice that total_exec_count is the same (527) across every tagged poll of this fingerprint. pg_stat_statements accumulates a running total — it is not a delta per polling interval. The collector is capturing a snapshot of the cumulative count each time it runs.
-
-### Stage 5: query_fingerprints — the aggregated read model
-
-The materialized view runs on every INSERT batch to query_events and aggregates rows into query_fingerprints. The live running instance uses an older schema that groups by fingerprint only (not fingerprint + source_tag). The current SQL files on disk reflect a later schema revision that uses fingerprint + source_tag as the grouping key, which is the correct design and is covered in the next section.
-
-Here is what the live query_fingerprints table holds for our five fingerprints:
-
-```bash
-curl -s 'http://localhost:8123/?query=SELECT+fingerprint%2CargMaxMerge(representative_state).1+AS+source_tag%2CLEFT(argMaxMerge(representative_state).3%2C80)+AS+sample_query%2CsumMerge(total_exec_count_state)+AS+total_exec_count%2Cround(quantileMerge(0.95)(p95_exec_time_state)%2C4)+AS+p95_exec_time_ms+FROM+query_fingerprints+WHERE+fingerprint+IN+(%273252138119218455137%27%2C%27-2177962793997177478%27%2C%273076098543124480455%27%2C%27-5767027640429317262%27%2C%278278353056303641570%27)+GROUP+BY+fingerprint+ORDER+BY+total_exec_count+DESC+FORMAT+TSVWithNames'
-```
-
-```output
-fingerprint	source_tag	sample_query	total_exec_count	p95_exec_time_ms
-3252138119218455137	\N	\N	18220878	0.02
--2177962793997177478	\N	\N	10110162	0.0241
-8278353056303641570	\N	\N	8113065	0.0157
-3076098543124480455	\N	\N	8110717	0.0178
--5767027640429317262	\N	\N	8003992	0.0223
-```
-
-Every source_tag is NULL, even for fingerprints we know have tagged rows in query_events. This is the fingerprint-only grouping key problem in action.
-
-The live schema's MV groups by fingerprint only and uses argMaxState on the tuple (source_tag, source_file, sample_query) keyed by collected_at. For fingerprint 3252138119218455137, compare the most recent timestamps from Stage 4:
-
-- Most recent tagged row:  2026-04-05 15:21:55.411 (source_tag = todos#index)
-- Most recent NULL row:    2026-04-05 15:16:52.162 (source_tag = NULL)
-
-The tagged row is actually *more recent* here, so argMaxMerge *should* return todos#index. But the result shows NULL. This is because total_exec_count is 18,220,878 — the collector is polling very fast and has written tens of millions of rows. Across that volume, the most recently inserted batch almost always has source_tag = NULL, because the odds of a live query being in pg_stat_activity at any given ~1.5s poll are low. The argMaxState representative gets continually overwritten by NULL batches.
-
-### Why fingerprint + source_tag is the correct grouping key
-
-The fix in the current SQL files is to use (fingerprint, source_tag) as the ORDER BY and GROUP BY key. With this schema, NULL rows and tagged rows form separate groups and are never merged together. The agent then filters to source_tag IS NOT NULL to only surface fingerprints it can trace.
-
-Here is what the same five fingerprints would look like with a fingerprint + source_tag grouping, querying directly from query_events to demonstrate:
-
-```bash
-curl -s 'http://localhost:8123/?query=SELECT+fingerprint%2Csource_tag%2CargMax(sample_query%2Ccollected_at)+AS+sample_query%2Csum(total_exec_count)+AS+total_exec_count%2Cround(quantile(0.95)(mean_exec_time_ms)%2C4)+AS+p95_exec_time_ms+FROM+query_events+WHERE+fingerprint+IN+(%273252138119218455137%27%2C%27-2177962793997177478%27%2C%273076098543124480455%27%2C%27-5767027640429317262%27%2C%278278353056303641570%27)+AND+source_tag+IS+NOT+NULL+GROUP+BY+fingerprint%2Csource_tag+ORDER+BY+total_exec_count+DESC+FORMAT+TSVWithNames'
-```
-
-```output
-fingerprint	source_tag	sample_query	total_exec_count	p95_exec_time_ms
-3252138119218455137	todos#index	SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*action=\'index\',application=\'Demo\',controller=\'todos\'*/	329744	0.021
--5767027640429317262	todos#stats	SELECT COUNT(*) FROM "todos" WHERE "todos"."user_id" = 1 /*action=\'stats\',application=\'Demo\',controller=\'todos\'*/	14474	0.0223
-8278353056303641570	todos#status	SELECT "todos".* FROM "todos" WHERE "todos"."status" = \'open\' /*action=\'status\',application=\'Demo\',controller=\'todos\'*/	7379	0.0157
--2177962793997177478	todos#index	SELECT "todos".* FROM "todos" /*action=\'index\',application=\'Demo\',controller=\'todos\'*/	283	0.0295
-```
-
-With the correct grouping, four of the five fingerprints now have source_tag and a representative sample_query. The fifth (fingerprint 3076098543124480455, the LIKE query) still has no tagged rows at all in query_events — the collector just never happened to catch it in-flight — so it does not appear here. That is the correct behavior: the agent only surfaces queries it can trace.
-
-Also note that total_exec_count (329,744 for the users lookup) is much smaller than the 18 million shown for the fingerprint-only grouping in Stage 5. The fingerprint-only total included every NULL-tagged row too, inflating the count with polls that captured nothing. Grouping by source_tag filters to only the polls that actually succeeded in capturing a live sample — giving a more accurate count of how many executions were witnessed with context.
-
-### Stage 6: agent query — final ranked offenders
-
-This is what the agent actually sees when it runs its default analyze_db command against the live windowed query_events path:
-
-```bash
-curl -s 'http://localhost:8123/?query=SELECT+fingerprint%2Csource_tag%2CargMax(source_file%2Ccollected_at)+AS+source_file%2CargMax(sample_query%2Ccollected_at)+AS+sample_query%2Csum(total_exec_count)+AS+total_exec_count%2Cround(sum(total_exec_count+*+mean_exec_time_ms)%2C2)+AS+total_exec_time_ms%2Cround(quantile(0.95)(mean_exec_time_ms)%2C2)+AS+p95_exec_time_ms+FROM+query_events+WHERE+collected_at+%3E+now()+-+INTERVAL+60+MINUTE+AND+source_tag+IS+NOT+NULL+GROUP+BY+fingerprint%2Csource_tag+ORDER+BY+total_exec_time_ms+DESC+LIMIT+5+FORMAT+TSVWithNames'
-```
-
-```output
-Code: 184. DB::Exception: Aggregate function sum(total_exec_count) AS total_exec_count is found inside another aggregate function in query. (ILLEGAL_AGGREGATION) (version 24.3.18.7 (official build))
-```
-
-```bash
-curl -s 'http://localhost:8123/?query=SELECT%0A++fingerprint%2C%0A++source_tag%2C%0A++argMax(source_file%2C+collected_at)+AS+source_file%2C%0A++argMax(sample_query%2C+collected_at)+AS+sample_query%2C%0A++sum(total_exec_count)+AS+total_exec_count%2C%0A++round(sum(total_exec_count+*+mean_exec_time_ms)%2C+2)+AS+total_exec_time_ms%2C%0A++round(quantile(0.95)(mean_exec_time_ms)%2C+2)+AS+p95_exec_time_ms%0AFROM+query_events%0AWHERE+collected_at+%3E+now()+-+INTERVAL+60+MINUTE%0A++AND+source_tag+IS+NOT+NULL%0AGROUP+BY+fingerprint%2C+source_tag%0AORDER+BY+total_exec_time_ms+DESC%0ALIMIT+5%0AFORMAT+TSVWithNames'
-```
-
-```output
-Code: 184. DB::Exception: Aggregate function sum(total_exec_count) AS total_exec_count is found inside another aggregate function in query. (ILLEGAL_AGGREGATION) (version 24.3.18.7 (official build))
-```
-
-```bash
-curl -s -X POST http://127.0.0.1:3001/a2a/jsonrpc   -H 'content-type: application/json'   -d '{"jsonrpc":"2.0","id":"w2","method":"message/send","params":{"message":{"messageId":"msg-2","role":"user","parts":[{"type":"text","text":"analyze_db"}]}}}' | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-findings = data['result']['status']['message']['parts'][0]['data']['findings']
-for f in findings:
-    print('fingerprint: ', f['fingerprint'])
-    print('source_file: ', f['source'].get('source_file', 'n/a'))
-    print('severity:    ', f['severity'])
-    print('fix_type:    ', f['fix']['fix_type'])
-    print('decision:    ', f['decision'])
-    print()
-"
-```
-
-```output
-fingerprint:  3252138119218455137
-source_file:  app/controllers/todos_controller.rb:4
-severity:     medium
-fix_type:     rewrite_like
-decision:     reported
-
-fingerprint:  -2177962793997177478
-source_file:  app/controllers/todos_controller.rb:4
-severity:     medium
-fix_type:     rewrite_like
-decision:     reported
-
-```
-
-The agent returns two findings, both classified as medium severity (p95 < 100ms). Both point to todos_controller.rb:4 and are classified as rewrite_like because the source query contains a LIKE pattern. The decision is 'reported' rather than 'pr_opened' because the severity threshold for PR creation is 'high'.
-
-This is the end of the pipeline: Postgres statistics → collector → query_events → materialized view → query_fingerprints → agent query → ranked findings.
+In a production workload with slower queries (even a few milliseconds), `source_file` would populate reliably and P95 would surface genuine outliers. The severity threshold of 100 ms is calibrated for production tail latency, not a demo on an idle local database.

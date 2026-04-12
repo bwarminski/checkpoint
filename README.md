@@ -1,68 +1,125 @@
 # Checkpoint DB Specialist
 
-This repo owns the DB-specialist orchestration stack:
+This repo owns the checkpoint agent runtime and orchestration glue.
 
-- Postgres
-- ClickHouse
-- collector
-- agent
-- load harness
+The collector source of truth now lives in the sibling repo at
+`/home/bjw/checkpoint-collector`. That repo owns the collector pipeline, the
+ClickHouse DDLs, the demo Postgres image, and the load harness. Brett can
+create the GitHub remote for that repo while the follow-on tasks proceed.
 
 The Rails demo app is no longer stored here. Its source of truth is the sibling
 repo at `/home/bjw/db-specialist-demo`.
 
-## Session Configuration
-
-Set these variables before running the local stack or the live PR demo:
-
-```bash
-export DEMO_APP_ROOT=/home/bjw/db-specialist-demo
-export DEMO_REPO='bwarminski/db-specialist-demo'
-export DEMO_BASE_REF='main'
-export DEMO_HEAD_REF='agent/demo-fix'
-export GITHUB_TOKEN='...'
-```
-
-What each variable does:
-
-- `DEMO_APP_ROOT`
-  - local filesystem path to the sibling Rails demo repo
-- `DEMO_REPO`
-  - GitHub repo slug used for real PR creation
-- `DEMO_BASE_REF`
-  - base branch for PRs, defaults to `main`
-- `DEMO_HEAD_REF`
-  - fallback branch used for PRs when DemoRepoTool is not configured;
-    DemoRepoTool derives branch names from fingerprints
-- `GITHUB_TOKEN`
-  - GitHub token used by the REST API path in `GitHubTool`
-
-Behavior:
-
-- if `GITHUB_TOKEN` is unset, the agent uses `local://` PR URLs
-- if `GITHUB_TOKEN` is set but `DEMO_REPO` is missing, the
-  GitHub path fails fast with a configuration error
-
 ## Demo setup
 
-1. Clone the demo app repo into `DEMO_APP_ROOT`.
-2. Configure push access in that repo. SSH or HTTPS with a stored credential
-   both work, but the agent must be able to run `git ls-remote` and `git push`
-   there without prompting.
-3. Set `DEMO_REPO`, `DEMO_BASE_REF`, `DEMO_HEAD_REF`, and `GITHUB_TOKEN` in
-   your shell or local `.env` before running the live PR demo.
-4. Before repeating a live proof, reset the demo repo back to `DEMO_BASE_REF`
-   and remove any prior `agent/demo-fix-*` branches created by the agent.
+Clone or update the sibling demo repo at `/home/bjw/db-specialist-demo` and make
+sure you have push access if you want the fix flow to open real branches and pull
+requests against it.
+
+The key demo configuration variables are:
+
+- `DEMO_APP_ROOT`
+  Optional override for the sibling demo repo path. Default:
+  `/home/bjw/db-specialist-demo`.
+- `DEMO_REPO`
+  GitHub repository slug for real pull request creation.
+- `DEMO_BASE_REF`
+  Base branch used for fix branches and pull requests.
+- `GITHUB_TOKEN`
+  Optional token for real pull request creation. Leave unset to keep the local
+  fallback URL path.
+
+If the demo repo drifts or you want a clean rerun, reset it in the sibling repo:
+
+```bash
+cd /home/bjw/db-specialist-demo
+git fetch origin
+git reset --hard origin/main
+git clean -fd
+```
+
+## Standalone Pi Runtime
+
+Build the package image from this repo root:
+
+```bash
+docker build -t checkpoint-db-specialist .
+```
+
+Run a standalone Pi session with the runtime environment the package uses for
+its database and repo tools, plus an explicit Pi provider/model selection:
+
+```bash
+docker run --rm \
+  --add-host host.docker.internal:host-gateway \
+  -e OPENAI_API_KEY=... \
+  -e CLICKHOUSE_URL=http://host.docker.internal:8123 \
+  -e POSTGRES_URL=postgresql://... \
+  -e DEMO_BASE_REF=main \
+  -e CODE_SEARCH_ROOT=/work/db-specialist-demo \
+  -v /path/to/db-specialist-demo:/work/db-specialist-demo \
+  checkpoint-db-specialist \
+  -e ./extensions/db-specialist.ts \
+  --provider openai \
+  --model gpt-4o-mini \
+  -p "List the available DB specialist tools."
+```
+
+This image uses `@mariozechner/pi-coding-agent`, which provides the `pi`
+binary. `@mariozechner/pi` exposes `pi-pods` instead.
+
+The standalone runtime uses `CLICKHOUSE_URL`, `POSTGRES_URL`,
+`DEMO_BASE_REF`, and `CODE_SEARCH_ROOT` for its tool integrations.
+Set `GITHUB_TOKEN` and `DEMO_REPO` only when you want real GitHub pull request
+creation instead of the local fallback URL. Choose the Pi model with CLI flags
+such as `--provider openai --model gpt-4o-mini` plus the matching provider API
+key env var.
+
+For the existing agent loop and manual validation harness, `LLM_MODEL` remains
+the provider-agnostic model selector. Use provider/model format such as
+`openai/gpt-4o-mini` or `anthropic/claude-sonnet-4-20250514`, and set the
+matching provider key too, for example `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
+
+## Session Configuration
+
+Build the local images in the sibling collector repo before starting the
+checkpoint compose stack.
 
 ## Local Run
 
+Build the locally consumed images first from the sibling collector repo:
+
 ```bash
-docker compose up -d --build
-cd agent && npm start
+cd /home/bjw/checkpoint-collector
+docker build -t checkpoint-postgres:local ./postgres
+docker build -t checkpoint-clickhouse:local .
 ```
 
-Then drive traffic:
+Then start the checkpoint stack:
 
 ```bash
-ruby load/harness.rb
+cd /home/bjw/checkpoint
+docker compose up -d
+```
+
+Use the load harness from `/home/bjw/checkpoint-collector` when you need to
+generate database traffic.
+
+## Live Validation
+
+For a manual live-provider proof, run:
+
+```bash
+bash scripts/validate.sh
+```
+
+The script brings up the local stack, seeds fixture ClickHouse data, sends a
+real `message/stream` A2A request to the agent, and prints the completed tool
+results plus the agent response. It skips cleanly if `LLM_MODEL` is unset or if
+the selected provider key is missing.
+
+For the same flow as a manual node test, run:
+
+```bash
+cd agent && node --import tsx --test test/e2e/live_provider_validation.test.ts
 ```

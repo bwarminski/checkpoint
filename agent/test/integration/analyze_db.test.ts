@@ -1,5 +1,5 @@
-// ABOUTME: Exercises the HTTP A2A stream for the analyze_db command against the local service.
-// ABOUTME: Verifies the completed SSE payload carries findings through the real JSON-RPC transport.
+// ABOUTME: Exercises the HTTP A2A stream for analyze_db against the loop-backed executor path.
+// ABOUTME: Verifies submitted, working, and completed events survive the JSON-RPC transport.
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
@@ -8,37 +8,8 @@ import test from "node:test";
 import { DBSpecialistExecutor } from "../../src/executor.ts";
 import { createServer } from "../../src/server.ts";
 
-test("analyze_db streams a completed finding payload over A2A", async () => {
-  const executor = new DBSpecialistExecutor({
-    clickhouseTool: {
-      topOffenders: async (scope?: unknown) => {
-        assert.equal(scope, "analyze_db");
-        return [
-          {
-            fingerprint: "fp-high",
-            sample_query: "SELECT * FROM todos WHERE user_id = 7",
-            severity: "high",
-            source_file: "/app/controllers/todos_controller.rb:12",
-          },
-        ];
-      },
-    },
-    codeSearchTool: {
-      locate: async ({ source_file }: { source_file: string }) => ({
-        content: "11: before_action :load_user\n12: Todo.where(user_id: 7)\n13: end",
-        source_file,
-      }),
-    },
-    explainTool: {
-      analyze: async () => ({ planDiff: "better", validated: true }),
-    },
-    githubTool: {
-      openPullRequest: async () => ({ url: "https://example.test/pr/1" }),
-    },
-    memoryTool: {
-      shouldSuggest: async () => true,
-    },
-  } as any);
+test("analyze_db publishes submitted, working, and completed events through the pi-agent-core path", async () => {
+  const executor = buildMockLoopExecutor();
   const { app } = createServer({
     baseUrl: "http://127.0.0.1",
     executor,
@@ -70,29 +41,23 @@ test("analyze_db streams a completed finding payload over A2A", async () => {
       }),
     });
     const payloads = await readSsePayloads(response);
-    const completed = payloads.at(-1)?.result;
+    const results = payloads.map((payload) => payload.result).filter(Boolean);
 
     assert.equal(response.ok, true);
     assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/i);
-    assert.equal(completed?.kind, "status-update");
-    assert.equal(completed?.status?.state, "completed");
-    assert.deepEqual(completed?.status?.message?.parts?.[0]?.data?.findings, [
-      {
-        decision: "opened",
-        fingerprint: "fp-high",
-        fix: {
-          fix_type: "add_index",
-          summary: "Add an index for the user_id filter used at /app/controllers/todos_controller.rb:12.",
+    assert.equal(results.some((result) => result?.kind === "task"), true);
+    assert.equal(results.some((result) => result?.status?.state === "working"), true);
+    assert.equal(results.some((result) => result?.status?.state === "completed"), true);
+    assert.deepEqual(results.at(-1)?.status?.message?.parts?.[0]?.data, {
+      findings: [{ fingerprint: "fp-loop", severity: "high" }],
+      response: "loop complete",
+      toolResults: [
+        {
+          toolName: "query_findings",
+          details: [{ fingerprint: "fp-loop", severity: "high" }],
         },
-        pr: { url: "https://example.test/pr/1" },
-        severity: "high",
-        source: {
-          content: "11: before_action :load_user\n12: Todo.where(user_id: 7)\n13: end",
-          source_file: "/app/controllers/todos_controller.rb:12",
-        },
-        validation: { planDiff: "better", validated: true },
-      },
-    ]);
+      ],
+    });
   } finally {
     if (listening) {
       await new Promise<void>((resolve, reject) => {
@@ -108,6 +73,93 @@ test("analyze_db streams a completed finding payload over A2A", async () => {
     }
   }
 });
+
+function buildMockLoopExecutor(): DBSpecialistExecutor {
+  return new DBSpecialistExecutor(
+    {
+      clickhouseTool: {
+        listTables: async () => ["query_events"],
+        describeTable: async () => "fingerprint\tString",
+        executeQuery: async () => "fingerprint\tabc",
+        queryFindings: async () => [],
+      },
+    } as any,
+    {
+      createAgent: () => {
+        const handlers = new Set<(event: any) => void>();
+        const finalMessage = assistantMessage("loop complete");
+
+        return {
+          subscribe(handler: (event: any) => void) {
+            handlers.add(handler);
+            return () => {
+              handlers.delete(handler);
+            };
+          },
+          async prompt() {
+            for (const handler of handlers) {
+              handler({
+                type: "tool_execution_end",
+                toolCallId: "tool-1",
+                toolName: "query_findings",
+                isError: false,
+                result: {
+                  content: [{ type: "text", text: "[]" }],
+                  details: [{ fingerprint: "fp-loop", severity: "high" }],
+                },
+              });
+              handler({
+                type: "message_update",
+                message: finalMessage,
+                assistantMessageEvent: {
+                  type: "text_delta",
+                  contentIndex: 0,
+                  delta: "loop complete",
+                  partial: finalMessage,
+                },
+              });
+              handler({
+                type: "message_end",
+                message: finalMessage,
+              });
+              handler({
+                type: "agent_end",
+                messages: [finalMessage],
+              });
+            }
+          },
+          async waitForIdle() {},
+        };
+      },
+    },
+  );
+}
+
+function assistantMessage(text: string) {
+  return {
+    role: "assistant" as const,
+    api: "openai-responses",
+    provider: "openai",
+    model: "gpt-4o-mini",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "stop" as const,
+    timestamp: Date.now(),
+    content: [{ type: "text" as const, text }],
+  };
+}
 
 async function readSsePayloads(response: Response): Promise<Array<any>> {
   const body = await response.text();

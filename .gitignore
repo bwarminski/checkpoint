@@ -3,9 +3,11 @@ interview_text.md
 .codex
 __pycache__/
 .pytest_cache/
+node_modules/
 collector/.bundle/
 collector/vendor/
 .env
+agent/memory/*.tmp
 
 # gstack local artifacts
 .gstack/

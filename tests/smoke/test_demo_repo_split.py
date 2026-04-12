@@ -10,3 +10,16 @@ def test_compose_uses_demo_app_root_for_demo_service():
     text = Path("docker-compose.yml").read_text()
     assert "${DEMO_APP_ROOT:" in text
     assert "./demo" not in text
+
+
+def test_env_example_documents_provider_agnostic_llm_model():
+    text = Path(".env.example").read_text()
+    assert "LLM_MODEL=" in text
+    assert "OPENAI_API_KEY" in text
+    assert "DEMO_HEAD_REF" not in text
+
+
+def test_validate_script_exists_for_manual_live_provider_checks():
+    text = Path("scripts/validate.sh").read_text()
+    assert "message/stream" in text
+    assert "LLM_MODEL" in text
