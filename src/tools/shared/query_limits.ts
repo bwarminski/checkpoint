@@ -15,5 +15,5 @@ function normalizeLimit(value: number | undefined, cap: number): number {
     return cap;
   }
 
-  return Math.min(cap, Math.floor(value));
+  return Math.min(cap, Math.max(1, Math.floor(value)));
 }

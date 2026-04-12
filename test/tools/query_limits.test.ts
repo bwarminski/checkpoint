@@ -40,4 +40,15 @@ test("resolveQueryLimits normalizes invalid row caps and timeouts", () => {
       timeoutMs: 10_000,
     },
   );
+
+  assert.deepEqual(
+    resolveQueryLimits(
+      { rowCap: 0.5, timeoutMs: 0.25 },
+      { maxRows: 200, maxTimeoutMs: 10_000 },
+    ),
+    {
+      rowCap: 1,
+      timeoutMs: 1,
+    },
+  );
 });
