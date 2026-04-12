@@ -18,6 +18,11 @@ Run the live model-backed integration path with
 `npm run test:model-integration`.
 That command skips cleanly when `OMP_MODEL` is unset and otherwise expects an
 oh-my-pi runtime on `PATH` as `pi` unless `OH_MY_PI_COMMAND` overrides it.
+Before opening a pull request or merging to `main`, run that command when the
+required oh-my-pi live model environment is available. If the live environment
+is unavailable, stop and report the PR or merge gate as blocked instead of
+treating the skip as a pass. Intermediate local commits on working branches do
+not need that live-model gate.
 Print the manual workspace smoke loop with
 `bash scripts/workspace-smoke.sh`.
 
