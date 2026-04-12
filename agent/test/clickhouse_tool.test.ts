@@ -128,6 +128,25 @@ test("ClickHouseTool queries typed findings without source_tag output", async ()
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
 });
 
+test("ClickHouseTool parseOffenderRows maps latest_source_file and latest_statement_text column aliases", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => {
+        return [
+          "queryid\tlatest_statement_text\tlatest_source_file\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
+          "101\tSELECT * FROM todos\t/app/controllers/todos_controller.rb:12\t5\t250.0\t50",
+        ].join("\n");
+      },
+    },
+  });
+
+  const findings = await tool.queryFindings("analyze_db");
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.statement_text, "SELECT * FROM todos");
+  assert.equal(findings[0]?.source_file, "/app/controllers/todos_controller.rb:12");
+  assert.equal(findings[0]?.queryid, "101");
+});
+
 test("ClickHouseTool queries all-time findings from query_intervals", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool({
