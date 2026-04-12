@@ -5,6 +5,19 @@ a reason it was intentionally deferred rather than forgotten.
 
 ---
 
+## Root package lockfile policy
+
+**What:** Decide whether the repo root should track a `package-lock.json` and, if
+so, commit the lockfile with a consistent install workflow. If not, document the
+expected bootstrap command for fresh worktrees so baseline test setup does not
+look like an unexpected repo change.
+
+**Why deferred:** Creating this brainstorming worktree required a root `npm install`
+before `npm test` could run, which generated an untracked `package-lock.json`.
+That is easy to discard locally, but the repo should make the intended root
+dependency workflow explicit instead of leaving each fresh checkout to rediscover
+it.
+
 ## ExplainTool: BEGIN/ROLLBACK transaction wrapper
 
 **What:** Wrap `EXPLAIN ANALYZE {sql}` in an explicit `BEGIN; EXPLAIN ANALYZE ...; ROLLBACK;`
