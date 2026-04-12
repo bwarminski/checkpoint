@@ -14,6 +14,10 @@ Create or refresh the workspace skeleton with
 `bash scripts/setup-oh-my-pi-workspace.sh`.
 Reset it to a clean generated state with
 `bash scripts/reset-oh-my-pi-workspace.sh`.
+Run the live model-backed integration path with
+`npm run test:model-integration`.
+That command skips cleanly when `OMP_MODEL` is unset and otherwise expects an
+oh-my-pi runtime on `PATH` as `pi` unless `OH_MY_PI_COMMAND` overrides it.
 
 The collector source of truth lives in the sibling repo at
 `/home/bjw/checkpoint-collector`. That repo owns the collector pipeline, the

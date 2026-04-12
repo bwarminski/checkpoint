@@ -1,18 +1,20 @@
 // ABOUTME: Verifies the generated oh-my-pi workspace exists outside the main checkout.
-// ABOUTME: Confirms the generated workspace skeleton exposes repo-backed symlinks.
+// ABOUTME: Confirms the generated workspace skeleton and live-session harness behave as expected.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { lstat, mkdtemp, readlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import test from "node:test";
-
-const execFileAsync = promisify(execFile);
+import {
+  getWorkspaceRoot,
+  resetWorkspace,
+  runWorkspacePrompt,
+  setupWorkspace,
+} from "../helpers/oh_my_pi_workspace.ts";
 
 test("workspace setup and reset create the expected workspace skeleton", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-home-"));
-  const workspaceRoot = join(fakeHome, ".oh-my-pi-workspaces", "checkpoint");
+  const workspaceRoot = getWorkspaceRoot(fakeHome);
   const skillsEntry = join(workspaceRoot, ".omp", "skills");
   const toolsEntry = join(workspaceRoot, ".omp", "tools");
   const workdirEntry = join(workspaceRoot, "workdir");
@@ -20,10 +22,7 @@ test("workspace setup and reset create the expected workspace skeleton", async (
   try {
     await assert.rejects(() => lstat(workspaceRoot));
 
-    await execFileAsync("bash", ["scripts/setup-oh-my-pi-workspace.sh"], {
-      cwd: process.cwd(),
-      env: { ...process.env, HOME: fakeHome },
-    });
+    await setupWorkspace(fakeHome);
 
     let workspaceStats = await lstat(workspaceRoot);
     let skillsStats = await lstat(skillsEntry);
@@ -37,10 +36,7 @@ test("workspace setup and reset create the expected workspace skeleton", async (
     assert.equal(await readlink(toolsEntry), join(process.cwd(), "src", "tools"));
     assert.equal(workdirStats.isDirectory(), true);
 
-    await execFileAsync("bash", ["scripts/reset-oh-my-pi-workspace.sh"], {
-      cwd: process.cwd(),
-      env: { ...process.env, HOME: fakeHome },
-    });
+    await resetWorkspace(fakeHome);
 
     workspaceStats = await lstat(workspaceRoot);
     skillsStats = await lstat(skillsEntry);
@@ -51,6 +47,31 @@ test("workspace setup and reset create the expected workspace skeleton", async (
     assert.equal(skillsStats.isSymbolicLink(), true);
     assert.equal(toolsStats.isSymbolicLink(), true);
     assert.equal(workdirStats.isDirectory(), true);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("live oh-my-pi session exposes coarse SQL tools", async (t) => {
+  if (!process.env.OMP_MODEL) {
+    t.skip("OMP_MODEL is not set");
+    return;
+  }
+
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-live-home-"));
+
+  try {
+    await setupWorkspace(fakeHome);
+
+    const output = await runWorkspacePrompt({
+      home: fakeHome,
+      model: process.env.OMP_MODEL,
+      prompt:
+        "List the available database investigation tools by name only, one per line.",
+    });
+
+    assert.match(output, /sql_db_list_tables/);
+    assert.match(output, /clickhouse_db_query/);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }
