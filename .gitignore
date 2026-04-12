@@ -11,3 +11,5 @@ agent/memory/*.tmp
 
 # gstack local artifacts
 .gstack/
+
+.worktrees/
