@@ -8,7 +8,7 @@
     "skills": ["./skills"]
   },
   "scripts": {
-    "test": "node --import tsx --test",
+    "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

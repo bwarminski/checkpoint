@@ -1,16 +1,16 @@
-// ABOUTME: Defines the shared contract for SQL checker tools backed by oh-my-pi subagents.
+// ABOUTME: Defines the shared contract for SQL query checker tools.
 // ABOUTME: Keeps checker logic injectable so unit tests do not require a live model.
 
-export type CheckerVerdict = "safe" | "rewrite" | "reject";
+export type QueryCheckVerdict = "safe" | "rewrite" | "reject";
 
-export type CheckerResult = {
-  verdict: CheckerVerdict;
+export type QueryCheckResult = {
+  verdict: QueryCheckVerdict;
   rewrittenQuery: string;
   notes: Array<string>;
 };
 
-export type SubagentChecker = {
-  runCheck(prompt: string): Promise<CheckerResult>;
+export type QueryChecker = {
+  runCheck(prompt: string): Promise<QueryCheckResult>;
 };
 
 export function buildCheckerPrompt(input: {
