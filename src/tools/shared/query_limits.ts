@@ -5,7 +5,15 @@ export function resolveQueryLimits(
   caps: { maxRows: number; maxTimeoutMs: number },
 ): { rowCap: number; timeoutMs: number } {
   return {
-    rowCap: Math.min(requested.rowCap ?? caps.maxRows, caps.maxRows),
-    timeoutMs: Math.min(requested.timeoutMs ?? caps.maxTimeoutMs, caps.maxTimeoutMs),
+    rowCap: normalizeLimit(requested.rowCap, caps.maxRows),
+    timeoutMs: normalizeLimit(requested.timeoutMs, caps.maxTimeoutMs),
   };
+}
+
+function normalizeLimit(value: number | undefined, cap: number): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return cap;
+  }
+
+  return Math.min(cap, Math.floor(value));
 }

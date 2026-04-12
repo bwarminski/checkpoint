@@ -16,3 +16,14 @@ test("clickhouse list tables returns plain table names", async () => {
     "collector_state",
   ]);
 });
+
+test("clickhouse list tables rejects non-identifier databases", async () => {
+  let called = false;
+  const tool = createClickHouseListTablesTool(async () => {
+    called = true;
+    return [];
+  });
+
+  await assert.rejects(() => tool.execute({ database: "default.system" }), /invalid.*database/i);
+  assert.equal(called, false);
+});

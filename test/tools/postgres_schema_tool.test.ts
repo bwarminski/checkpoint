@@ -21,3 +21,21 @@ test("postgres schema tool returns column details for the requested tables", asy
   assert.match(received, /information_schema\.columns/);
   assert.match(received, /'todos'/);
 });
+
+test("postgres schema tool rejects empty table lists", async () => {
+  const tool = createPostgresSchemaTool(async () => []);
+
+  await assert.rejects(
+    () => tool.execute({ schema: "public", tables: [] }),
+    /table list/i,
+  );
+});
+
+test("postgres schema tool rejects non-identifier table names", async () => {
+  const tool = createPostgresSchemaTool(async () => []);
+
+  await assert.rejects(
+    () => tool.execute({ schema: "public", tables: ["todos;drop"] }),
+    /invalid.*table/i,
+  );
+});

@@ -5,7 +5,17 @@ export function createClickHouseSchemaTool(
 ) {
   return {
     async execute(input: { database: string; tables: Array<string> }) {
-      const tables = input.tables.map((table) => `'${table}'`).join(", ");
+      assertIdentifierLike(input.database, "ClickHouse database");
+      if (input.tables.length === 0) {
+        throw new Error("Table list must not be empty");
+      }
+
+      const tables = input.tables
+        .map((table) => {
+          assertIdentifierLike(table, "ClickHouse table");
+          return `'${table}'`;
+        })
+        .join(", ");
       return runQuery(
         "select name, type " +
           "from system.columns " +
@@ -14,4 +24,10 @@ export function createClickHouseSchemaTool(
       );
     },
   };
+}
+
+function assertIdentifierLike(value: string, label: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new Error(`Invalid ${label}: ${value}`);
+  }
 }

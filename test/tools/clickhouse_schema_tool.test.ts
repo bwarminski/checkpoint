@@ -21,3 +21,21 @@ test("clickhouse schema tool returns column details for the requested tables", a
   assert.match(received, /system\.columns/);
   assert.match(received, /'query_events'/);
 });
+
+test("clickhouse schema tool rejects empty table lists", async () => {
+  const tool = createClickHouseSchemaTool(async () => []);
+
+  await assert.rejects(
+    () => tool.execute({ database: "default", tables: [] }),
+    /table list/i,
+  );
+});
+
+test("clickhouse schema tool rejects non-identifier table names", async () => {
+  const tool = createClickHouseSchemaTool(async () => []);
+
+  await assert.rejects(
+    () => tool.execute({ database: "default", tables: ["query_events;drop"] }),
+    /invalid.*table/i,
+  );
+});

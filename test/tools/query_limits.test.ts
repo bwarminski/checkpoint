@@ -17,3 +17,27 @@ test("resolveQueryLimits clamps row caps and timeout values", () => {
     },
   );
 });
+
+test("resolveQueryLimits normalizes invalid row caps and timeouts", () => {
+  assert.deepEqual(
+    resolveQueryLimits(
+      { rowCap: 0, timeoutMs: Number.NaN },
+      { maxRows: 200, maxTimeoutMs: 10_000 },
+    ),
+    {
+      rowCap: 200,
+      timeoutMs: 10_000,
+    },
+  );
+
+  assert.deepEqual(
+    resolveQueryLimits(
+      { rowCap: -5, timeoutMs: Number.POSITIVE_INFINITY },
+      { maxRows: 200, maxTimeoutMs: 10_000 },
+    ),
+    {
+      rowCap: 200,
+      timeoutMs: 10_000,
+    },
+  );
+});
