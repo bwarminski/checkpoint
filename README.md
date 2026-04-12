@@ -10,6 +10,11 @@ inside it.
 This checkout remains the source of truth for the DB specialist tools, skills,
 tests, and the local database stack that workspace uses.
 
+Create or refresh the runtime workspace with
+`bash scripts/setup-oh-my-pi-workspace.sh`.
+Reset it to a clean generated state with
+`bash scripts/reset-oh-my-pi-workspace.sh`.
+
 The collector source of truth lives in the sibling repo at
 `/home/bjw/checkpoint-collector`. That repo owns the collector pipeline, the
 ClickHouse DDLs, the demo Postgres image, and the load harness.
