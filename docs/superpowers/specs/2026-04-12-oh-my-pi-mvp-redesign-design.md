@@ -153,6 +153,45 @@ The redesign is successful when:
 - the agent can inspect both Postgres and ClickHouse through coarse tools
 - Brett can run a manual TUI loop that reaches diagnosis and a local diff
 
+## Decisions Resolved During Eng Review (2026-04-12)
+
+- `oh-my-pi` workspace structure is assumed known; implementation plan defines the generation script
+- Demo repo clone/refresh is handled by the agent via oh-my-pi's built-in shell capability, not a setup script
+- `*_db_checker` uses oh-my-pi's built-in subagent execution (no standalone API key needed); borrow from LangChain implementation and adapt to the oh-my-pi subagent API
+- ClickHouse catalog is embedded inline in the investigation skill file
+- Generated workspace lives at `~/.oh-my-pi-workspaces/checkpoint` by default
+- `explain_tool.ts` and `code_search_tool.ts` are kept as-is; only `clickhouse_tool.ts`, `demo_repo_tool.ts`, and `github_tool.ts` are removed from `src/tools/`
+- `src/a2a_bridge/` and `src/agent_tools.ts` are removed; `src/` retains only `src/tools/`
+- Query tools enforce a configurable row cap and per-query timeout (Postgres `statement_timeout`, ClickHouse `max_execution_time`)
+- `ANTHROPIC_API_KEY` is not required as a separate workspace env var; model access flows through oh-my-pi
+
+### Test strategy additions
+
+Three verification layers (enriched from spec's two):
+
+1. **Unit tests** (mocked DB/subagent): Each of the 8 SQL tools gets its own test file. The `*_db_checker` tools take an injectable subagent dependency, mocked in unit tests.
+2. **Model-based integration tests** (live model, runs before each commit): Validate tool behavior end-to-end with a real oh-my-pi session against the generated workspace.
+3. **Workspace smoke tests** (manually runnable): Scripts in the workspace validate outcomes for a known set of problematic queries (N+1, LIKE leading-wildcard, etc.) against the demo app.
+
+### TODOS to prune after the cut
+
+The following TODOS.md items become moot and should be removed after the A2A/pi-mono removal:
+- A2A endpoint authentication
+- Agent loop timeout and max-turn limit
+- Session registry 24h TTL cleanup
+- A2A bridge concurrency model
+- ExplainTool BEGIN/ROLLBACK transaction wrapper
+- IndexValidationTool HypoPG implementation
+- LLM-based fix classification (Phase 2)
+- pi-agent-core loop wiring (Phase 2)
+- agent/ package retirement
+- ClickHouse schema version validation at startup
+
+Still live after the cut:
+- ClickHouse security: bind to 127.0.0.1 (not 0.0.0.0)
+- pg_stat_monitor upgrade path
+- Root package lockfile policy
+
 ## Open Decisions Resolved During Brainstorming
 
 - Hard cut the current runtime path instead of a compatibility phase
