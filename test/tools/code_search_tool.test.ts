@@ -1,5 +1,5 @@
 // ABOUTME: Verifies the root code-search tool stays self-contained under the root package.
-// ABOUTME: Keeps the default client path tied to the repo root instead of the agent subpackage.
+// ABOUTME: Keeps the default client path driven by explicit workspace environment variables.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -101,4 +101,5 @@ test("CodeSearchTool source does not reference the agent package", async () => {
 
   assert.doesNotMatch(source, /agent\/src\/tools\/generated/);
   assert.doesNotMatch(source, /agent\/\.mcporter\.json/);
+  assert.doesNotMatch(source, /demo_repo_tool/);
 });
