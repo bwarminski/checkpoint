@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Creates the external oh-my-pi workspace used as the runtime-facing project surface.
+# ABOUTME: Creates the external oh-my-pi workspace skeleton used by the current MVP.
 # ABOUTME: Symlinks the repo-owned skills and tools into the workspace and ensures a working directory exists.
 set -euo pipefail
 

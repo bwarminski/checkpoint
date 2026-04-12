@@ -2,15 +2,15 @@
 
 This repo owns the oh-my-pi-based DB specialist MVP.
 
-The runtime surface is a generated oh-my-pi workspace at
+The generated oh-my-pi workspace skeleton lives at
 `~/.oh-my-pi-workspaces/checkpoint`.
-Manual verification runs use that workspace plus a dedicated demo repo clone
-inside it.
+Today that skeleton contains repo-backed `.omp/skills` and `.omp/tools`
+symlinks plus a persistent `workdir` for the demo clone and local agent state.
 
 This checkout remains the source of truth for the DB specialist tools, skills,
 tests, and the local database stack that workspace uses.
 
-Create or refresh the runtime workspace with
+Create or refresh the workspace skeleton with
 `bash scripts/setup-oh-my-pi-workspace.sh`.
 Reset it to a clean generated state with
 `bash scripts/reset-oh-my-pi-workspace.sh`.
