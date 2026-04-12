@@ -1,5 +1,7 @@
 // ABOUTME: Inspects ClickHouse table columns from system.columns through an injected runner.
 // ABOUTME: Leaves connection ownership and runtime concerns to the caller.
+import { assertIdentifierLike } from "../shared/identifier.ts";
+
 export function createClickHouseSchemaTool(
   runQuery: (sql: string) => Promise<Array<Record<string, unknown>>>,
 ) {
@@ -26,8 +28,3 @@ export function createClickHouseSchemaTool(
   };
 }
 
-function assertIdentifierLike(value: string, label: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
-    throw new Error(`Invalid ${label}: ${value}`);
-  }
-}

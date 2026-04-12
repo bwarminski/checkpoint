@@ -1,5 +1,7 @@
 // ABOUTME: Inspects PostgreSQL table columns from information_schema through an injected runner.
 // ABOUTME: Leaves runtime wiring and connection ownership to the caller.
+import { assertIdentifierLike } from "../shared/identifier.ts";
+
 export function createPostgresSchemaTool(
   runQuery: (sql: string) => Promise<Array<Record<string, unknown>>>,
 ) {
@@ -24,8 +26,3 @@ export function createPostgresSchemaTool(
   };
 }
 
-function assertIdentifierLike(value: string, label: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
-    throw new Error(`Invalid ${label}: ${value}`);
-  }
-}

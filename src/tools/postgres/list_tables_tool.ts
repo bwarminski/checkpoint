@@ -1,5 +1,7 @@
 // ABOUTME: Lists PostgreSQL tables from the requested schema through an injected runner.
 // ABOUTME: Keeps table discovery separate from schema and query execution concerns.
+import { assertIdentifierLike } from "../shared/identifier.ts";
+
 export function createPostgresListTablesTool(
   runQuery: (sql: string) => Promise<Array<{ table_name: string }>>,
 ) {
@@ -12,10 +14,4 @@ export function createPostgresListTablesTool(
       return rows.map((row) => row.table_name);
     },
   };
-}
-
-function assertIdentifierLike(value: string, label: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
-    throw new Error(`Invalid ${label}: ${value}`);
-  }
 }

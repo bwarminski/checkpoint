@@ -8,7 +8,7 @@ export function createClickHouseQueryTool(
   return {
     async execute(input: { query: string; rowCap?: number; timeoutMs?: number }) {
       const limits = resolveQueryLimits(input, { maxRows: 200, maxTimeoutMs: 10_000 });
-      const query = input.query.trim().replace(/;+$/, "");
+      const query = input.query.trim().replace(/;+$/, "").replace(/\bLIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$/i, "").trimEnd();
       return runQuery(
         `${query} LIMIT ${limits.rowCap} SETTINGS max_execution_time = ${Math.ceil(limits.timeoutMs / 1000)}`,
       );

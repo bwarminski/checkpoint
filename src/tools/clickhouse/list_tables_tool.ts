@@ -1,5 +1,7 @@
 // ABOUTME: Lists ClickHouse tables from the requested database through an injected runner.
 // ABOUTME: Keeps table discovery coarse and independent from runtime wiring.
+import { assertIdentifierLike } from "../shared/identifier.ts";
+
 export function createClickHouseListTablesTool(
   runQuery: (sql: string) => Promise<Array<{ name: string }>>,
 ) {
@@ -14,8 +16,3 @@ export function createClickHouseListTablesTool(
   };
 }
 
-function assertIdentifierLike(value: string, label: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
-    throw new Error(`Invalid ${label}: ${value}`);
-  }
-}

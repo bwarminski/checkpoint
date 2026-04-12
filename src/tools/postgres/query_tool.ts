@@ -8,7 +8,8 @@ export function createPostgresQueryTool(
   return {
     async execute(input: { query: string; rowCap?: number; timeoutMs?: number }) {
       const limits = resolveQueryLimits(input, { maxRows: 200, maxTimeoutMs: 10_000 });
-      const query = input.query.trim().replace(/;+$/, "");
+      const query = input.query.trim().replace(/;+$/, "").replace(/\bLIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$/i, "").trimEnd();
+      // statement_timeout is session-level; leaks on pooled connections. Acceptable for single-user local MVP.
       return runQuery(`set statement_timeout = ${limits.timeoutMs}; ${query} LIMIT ${limits.rowCap}`);
     },
   };
