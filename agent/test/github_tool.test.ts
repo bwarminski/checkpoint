@@ -11,11 +11,11 @@ test("GitHubTool returns a local demo pull request url when no client is configu
   });
 
   const result = await tool.openPullRequest({
-    finding: { fingerprint: "fp-demo" },
+    finding: { queryid: "101" },
   });
 
   assert.deepEqual(result, {
-    url: "local://db-specialist/pull-requests/fp-demo",
+    url: "local://db-specialist/pull-requests/101",
   });
 });
 
@@ -46,7 +46,7 @@ test("GitHubTool posts a real pull request when token and repo config are presen
 
   const result = await tool.openPullRequest({
     finding: {
-      fingerprint: "fp-real",
+      queryid: "202",
       source_file: "app/controllers/todos_controller.rb:12",
     },
     fix: {
@@ -64,7 +64,7 @@ test("GitHubTool posts a real pull request when token and repo config are presen
   assert.equal(result.url, "https://github.com/brett/db-specialist-demo/pull/12");
   assert.equal(requests[0]?.url, "https://api.github.com/repos/brett/db-specialist-demo/pulls");
   assert.match(requests[0]?.headers.get("authorization") ?? "", /^Bearer secret-token$/);
-  assert.match(requests[0]?.body ?? "", /fp-real/);
+  assert.match(requests[0]?.body ?? "", /202/);
   assert.match(requests[0]?.body ?? "", /app\/controllers\/todos_controller\.rb:12/);
   assert.doesNotMatch(requests[0]?.body ?? "", /source_tag/);
   assert.match(requests[0]?.body ?? "", /rewrite_like/);
@@ -89,7 +89,7 @@ test("GitHubTool throws when token is set without DEMO_REPO", async () => {
 
   await assert.rejects(
     tool.openPullRequest({
-      finding: { fingerprint: "fp-missing-repo" },
+      finding: { queryid: "303" },
       fix: { fix_type: "add_index", summary: "Add an index." },
       validation: { validated: true },
     } as any),
@@ -113,7 +113,7 @@ test("GitHubTool requires a headRef when token and repo config are present", asy
 
   await assert.rejects(
     tool.openPullRequest({
-      finding: { fingerprint: "fp-missing-head" },
+      finding: { queryid: "404" },
       fix: { fix_type: "add_index", summary: "Add an index." },
       validation: { validated: true },
     } as any),
@@ -153,7 +153,7 @@ test("GitHubTool returns an existing pull request url when GitHub reports one al
   });
 
   const result = await tool.openPullRequest({
-    finding: { fingerprint: "fp-existing", source_file: "app/models/todo.rb:5" },
+    finding: { queryid: "505", source_file: "app/models/todo.rb:5" },
     fix: { fix_type: "add_index", summary: "Add an index for status." },
     validation: { validated: true },
     headRef: "agent/demo-fix/fp-existing",

@@ -92,7 +92,7 @@ export function createDbSpecialistTools(options: DbSpecialistToolsOptions = {}):
     description: "Apply a concrete fix in the demo repo for a selected finding.",
     execute: async (input: unknown) => {
       const request = input as {
-        finding?: { fingerprint?: string; severity?: string };
+        finding?: { queryid?: string; severity?: string };
         fix?: { fix_type?: string; summary?: string };
         source?: { content?: string; source_file?: string };
         validation?: { validated?: boolean };
@@ -112,7 +112,7 @@ export function createDbSpecialistTools(options: DbSpecialistToolsOptions = {}):
 
       return demoRepoTool.applyFix({
         finding: {
-          fingerprint: request.finding.fingerprint ?? "",
+          queryid: request.finding.queryid ?? "",
         },
         fix: {
           fix_type: request.fix?.fix_type ?? "",
@@ -136,7 +136,7 @@ export function createDbSpecialistTools(options: DbSpecialistToolsOptions = {}):
     execute: async (input: unknown) => {
       const request = input as {
         codeDiff?: string;
-        finding?: { fingerprint?: string; source_file?: string };
+        finding?: { queryid?: string; source_file?: string };
         fix?: { fix_type?: string; summary?: string };
         headRef?: string;
         validation?: { plan_rows?: Array<Record<string, unknown>> };

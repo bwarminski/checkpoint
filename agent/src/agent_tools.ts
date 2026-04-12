@@ -4,7 +4,7 @@ import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 
 type ClickHouseFinding = {
-  fingerprint: string;
+  queryid: string;
   [key: string]: unknown;
 };
 
@@ -28,7 +28,7 @@ export type AgentToolDependencies = {
   demoRepoTool?: {
     applyFix(input: {
       finding: {
-        fingerprint: string;
+        queryid: string;
       };
       fix: {
         fix_type: string;
@@ -163,7 +163,7 @@ export function buildAgentTools(
       description: "Apply a concrete fix in the demo repo for a selected finding.",
       parameters: Type.Object({
         finding: Type.Object({
-          fingerprint: Type.String(),
+          queryid: Type.String(),
           severity: Type.Optional(Type.String()),
         }),
         fix: Type.Object({
@@ -193,7 +193,7 @@ export function buildAgentTools(
         }
         const result = await deps.demoRepoTool!.applyFix({
           finding: {
-            fingerprint: input.finding.fingerprint,
+            queryid: input.finding.queryid,
           },
           fix: input.fix,
           source: input.source,
@@ -210,7 +210,7 @@ export function buildAgentTools(
       description: "Open a pull request for the selected finding and prepared fix.",
       parameters: Type.Object({
         finding: Type.Object({
-          fingerprint: Type.Optional(Type.String()),
+          queryid: Type.Optional(Type.String()),
           source_file: Type.Optional(Type.String()),
         }),
         fix: Type.Object({
@@ -252,7 +252,7 @@ function asLocateSourceInput(value: unknown): {
 
 function asApplyFixInput(value: unknown): {
   finding: {
-    fingerprint: string;
+    queryid: string;
     severity?: string;
   };
   fix: {
@@ -275,7 +275,7 @@ function asApplyFixInput(value: unknown): {
 
   return {
     finding: {
-      fingerprint: readStringProperty(finding, "fingerprint"),
+      queryid: readStringProperty(finding, "queryid"),
       severity: readOptionalStringProperty(finding, "severity"),
     },
     fix: {
@@ -298,7 +298,7 @@ function asApplyFixInput(value: unknown): {
 function asOpenPullRequestInput(value: unknown): {
   codeDiff?: string;
   finding: {
-    fingerprint?: string;
+    queryid?: string;
     source_file?: string;
   };
   fix: {
@@ -314,15 +314,15 @@ function asOpenPullRequestInput(value: unknown): {
   const finding = readRecordProperty(value, "finding");
   const fix = readRecordProperty(value, "fix");
   const validation = readOptionalRecordProperty(value, "validation");
-  const fingerprint = readOptionalStringProperty(finding, "fingerprint");
+  const queryid = readOptionalStringProperty(finding, "queryid");
   const source_file = readOptionalStringProperty(finding, "source_file");
   const findingInput: {
-    fingerprint?: string;
+    queryid?: string;
     source_file?: string;
   } = {};
 
-  if (fingerprint !== undefined) {
-    findingInput.fingerprint = fingerprint;
+  if (queryid !== undefined) {
+    findingInput.queryid = queryid;
   }
   if (source_file !== undefined) {
     findingInput.source_file = source_file;

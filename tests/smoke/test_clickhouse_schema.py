@@ -73,6 +73,8 @@ def test_clickhouse_image_boots_and_loads_counter_schema():
         assert "query_events" in tables
         assert "collector_state" in tables
         assert "query_intervals" in tables
+        assert "postgres_logs" in tables
+        assert "postgres_log_state" in tables
 
         interval_query = subprocess.run(
             ["docker", "compose", "exec", "-T", "clickhouse", "clickhouse-client", "--query", "SELECT count() FROM query_intervals"],

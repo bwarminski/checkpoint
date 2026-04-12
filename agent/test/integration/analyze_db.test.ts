@@ -49,12 +49,12 @@ test("analyze_db publishes submitted, working, and completed events through the 
     assert.equal(results.some((result) => result?.status?.state === "working"), true);
     assert.equal(results.some((result) => result?.status?.state === "completed"), true);
     assert.deepEqual(results.at(-1)?.status?.message?.parts?.[0]?.data, {
-      findings: [{ fingerprint: "fp-loop", severity: "high" }],
+      findings: [{ queryid: "101", severity: "high" }],
       response: "loop complete",
       toolResults: [
         {
           toolName: "query_findings",
-          details: [{ fingerprint: "fp-loop", severity: "high" }],
+          details: [{ queryid: "101", severity: "high" }],
         },
       ],
     });
@@ -105,7 +105,7 @@ function buildMockLoopExecutor(): DBSpecialistExecutor {
                 isError: false,
                 result: {
                   content: [{ type: "text", text: "[]" }],
-                  details: [{ fingerprint: "fp-loop", severity: "high" }],
+                  details: [{ queryid: "101", severity: "high" }],
                 },
               });
               handler({

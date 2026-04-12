@@ -111,23 +111,31 @@ function providerApiKeyEnv(provider: string): string | null | undefined {
 
 async function seedLiveValidationData(): Promise<void> {
   const clickhouseUrl = process.env.CLICKHOUSE_URL ?? "http://127.0.0.1:8123";
-  const truncateEvents = "TRUNCATE TABLE query_events";
-  const truncateFingerprints = "TRUNCATE TABLE query_fingerprints";
-  const insertFixture = [
-    "INSERT INTO query_events",
-    "(",
-    "  collected_at, fingerprint, source_file, sample_query, total_exec_count, mean_exec_time_ms,",
-    "  rows_returned_or_affected, shared_blks_hit, shared_blks_read, local_blks_hit, local_blks_read,",
-    "  temp_blks_read, temp_blks_written, total_block_accesses, mean_block_accesses_per_call",
-    ") VALUES (",
-    "  now(), 'fp-live-provider', '/app/controllers/todos_controller.rb:12',",
-    "  'SELECT * FROM todos', 7, 125.5, 20, 100, 40, 0, 0, 3, 2, 145, 20.714285714285715",
-    ")",
-  ].join(" ");
-
-  await runClickHouseQuery(clickhouseUrl, truncateEvents);
-  await runClickHouseQuery(clickhouseUrl, truncateFingerprints);
-  await runClickHouseQuery(clickhouseUrl, insertFixture);
+  await runClickHouseQuery(clickhouseUrl, "TRUNCATE TABLE query_events");
+  await runClickHouseQuery(clickhouseUrl, "TRUNCATE TABLE collector_state");
+  await runClickHouseQuery(clickhouseUrl, "TRUNCATE TABLE postgres_logs");
+  await runClickHouseQuery(
+    clickhouseUrl,
+    [
+      "INSERT INTO query_events",
+      "(",
+      "  collected_at, dbid, userid, toplevel, queryid, statement_text, source_file, total_exec_count,",
+      "  total_exec_time_ms, rows_returned_or_affected, shared_blks_hit, shared_blks_read, local_blks_hit,",
+      "  local_blks_read, temp_blks_read, temp_blks_written, total_block_accesses, min_exec_time_ms,",
+      "  max_exec_time_ms, mean_exec_time_ms, stddev_exec_time_ms",
+      ") VALUES",
+      "  (toDateTime64(now() - INTERVAL 1 MINUTE, 3), 1, 1, true, '101', 'SELECT * FROM todos', NULL, 5, 450, 10, 80, 20, 0, 0, 0, 0, 100, 70, 120, 90, 10),",
+      "  (toDateTime64(now(), 3), 1, 1, true, '101', 'SELECT * FROM todos', NULL, 7, 700, 15, 120, 30, 0, 0, 0, 0, 150, 80, 140, 110, 12)",
+    ].join(" "),
+  );
+  await runClickHouseQuery(
+    clickhouseUrl,
+    "INSERT INTO collector_state (collected_at, dealloc, stats_reset) SELECT collected_at, 0, now() - INTERVAL 10 MINUTE FROM query_events WHERE queryid = '101'",
+  );
+  await runClickHouseQuery(
+    clickhouseUrl,
+    "INSERT INTO postgres_logs (log_file, byte_offset, log_timestamp, query_id, statement_text, database, session_id, source_location, raw_json) VALUES ('postgresql.json', 1, toDateTime64(now() - INTERVAL 30 SECOND, 3), '101', 'SELECT * FROM todos', 'checkpoint_demo', 'session-live-provider', '/app/controllers/todos_controller.rb:12', '{\"message\":\"duration: 1.23 ms statement: SELECT * FROM todos\"}')",
+  );
 }
 
 async function runClickHouseQuery(baseUrl: string, sql: string): Promise<void> {

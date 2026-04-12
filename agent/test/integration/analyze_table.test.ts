@@ -49,12 +49,12 @@ test("analyze_table streams reported findings without opening a PR", async () =>
     assert.equal(results.some((result) => result?.status?.state === "working"), true);
     assert.equal(results.some((result) => result?.status?.state === "completed"), true);
     assert.deepEqual(results.at(-1)?.status?.message?.parts?.[0]?.data, {
-      findings: [{ fingerprint: "fp-medium", severity: "medium" }],
+      findings: [{ queryid: "102", severity: "medium" }],
       response: "table analysis complete",
       toolResults: [
         {
           toolName: "query_findings",
-          details: [{ fingerprint: "fp-medium", severity: "medium" }],
+          details: [{ queryid: "102", severity: "medium" }],
         },
       ],
     });
@@ -105,7 +105,7 @@ function buildMockLoopExecutor(): DBSpecialistExecutor {
                 isError: false,
                 result: {
                   content: [{ type: "text", text: "[]" }],
-                  details: [{ fingerprint: "fp-medium", severity: "medium" }],
+                  details: [{ queryid: "102", severity: "medium" }],
                 },
               });
               handler({

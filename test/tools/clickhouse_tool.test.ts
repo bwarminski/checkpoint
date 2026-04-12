@@ -15,13 +15,13 @@ test("clickhouse_tool.ts does not reference agent internals or schema contract h
   assert.doesNotMatch(source, /clickhouse_schema_contract/);
 });
 
-test("queryFindings groups by fingerprint only", async () => {
+test("queryFindings groups by queryid and reads source locations from postgres logs", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool({
     transport: {
       query: async (sql: string) => {
         queries.push(sql);
-        return ["fingerprint\tString", "fp-1"].join("\n");
+        return ["queryid\tString", "101"].join("\n");
       },
     },
   });
@@ -29,11 +29,13 @@ test("queryFindings groups by fingerprint only", async () => {
   await tool.queryFindings("analyze_table todos");
 
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
-  assert.match(queries[0] ?? "", /GROUP BY fingerprint/);
+  assert.doesNotMatch(queries[0] ?? "", /sample_query/);
+  assert.match(queries[0] ?? "", /LEFT JOIN postgres_logs/);
+  assert.match(queries[0] ?? "", /GROUP BY queryid/);
   assert.match(queries[0] ?? "", /FROM query_intervals/);
   assert.match(queries[0] ?? "", /interval_duration_ms <= 3600000/);
   assert.match(queries[0] ?? "", /interval_started_at > now\(\) - INTERVAL 60 MINUTE/);
-  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
+  assert.match(queries[0] ?? "", /round\(if\(sum\(total_exec_count\) = 0, 0, sum\(delta_exec_time_ms\) \/ sum\(total_exec_count\)\), 2\) AS avg_exec_time_ms/);
 });
 
 test("queryFindings reads all-time findings from query_intervals", async () => {
@@ -42,7 +44,7 @@ test("queryFindings reads all-time findings from query_intervals", async () => {
     transport: {
       query: async (sql: string) => {
         queries.push(sql);
-        return ["fingerprint\tString", "fp-1"].join("\n");
+        return ["queryid\tString", "101"].join("\n");
       },
     },
   });
@@ -50,7 +52,7 @@ test("queryFindings reads all-time findings from query_intervals", async () => {
   await tool.queryFindings("analyze_table todos all");
 
   assert.match(queries[0] ?? "", /FROM query_intervals/);
-  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
+  assert.match(queries[0] ?? "", /LEFT JOIN postgres_logs/);
 });
 
 test("queryFindings uses non-conflicting aliases to avoid ClickHouse cyclic alias errors", async () => {
@@ -59,7 +61,7 @@ test("queryFindings uses non-conflicting aliases to avoid ClickHouse cyclic alia
     transport: {
       query: async (sql: string) => {
         queries.push(sql);
-        return ["fingerprint\tString", "fp-1"].join("\n");
+        return ["queryid\tString", "101"].join("\n");
       },
     },
   });
@@ -70,10 +72,10 @@ test("queryFindings uses non-conflicting aliases to avoid ClickHouse cyclic alia
   for (const sql of queries) {
     assert.match(sql, /sum\(total_exec_count\) AS call_count/);
     assert.doesNotMatch(sql, /sum\(total_exec_count\) AS total_exec_count/);
-    assert.match(sql, /AS top_source_file/);
-    assert.match(sql, /AS top_sample_query/);
+    assert.match(sql, /AS latest_source_file/);
+    assert.match(sql, /AS latest_statement_text/);
     assert.doesNotMatch(sql, /\) AS source_file/);
-    assert.doesNotMatch(sql, /\) AS sample_query/);
+    assert.doesNotMatch(sql, /\) AS statement_text/);
   }
 });
 
@@ -84,5 +86,11 @@ test("listTables returns exactly the supported checkpoint schema tables", async 
     },
   });
 
-  assert.deepEqual(await tool.listTables(), ["query_events", "collector_state", "query_intervals"]);
+  assert.deepEqual(await tool.listTables(), [
+    "query_events",
+    "collector_state",
+    "query_intervals",
+    "postgres_logs",
+    "postgres_log_state",
+  ]);
 });
