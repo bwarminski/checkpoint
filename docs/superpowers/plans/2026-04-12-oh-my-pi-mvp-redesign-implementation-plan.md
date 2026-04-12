@@ -99,7 +99,7 @@
 - [ ] **Step 2: Verify the worktree is clean except for approved planning docs**
 
 Run: `git status --short --branch`
-Expected: the branch is `wip/brainstorm-2026-04-12` and only the expected doc edits appear.
+Expected: the branch is `wip/brainstorm-2026-04-12` and only the expected planning docs plus the new `JOURNAL.md` edit appear.
 
 - [ ] **Step 3: Create the pre-cut tag**
 
@@ -263,17 +263,7 @@ export function createClickHouseCheckerTool(checker: SubagentChecker) {
 Run: `npm test -- test/tools/postgres_checker_tool.test.ts test/tools/clickhouse_checker_tool.test.ts`
 Expected: PASS with 2 passing tests.
 
-- [ ] **Step 7: Add a temporary script entry for the subagent spike if needed by follow-on tasks**
-
-```json
-{
-  "scripts": {
-    "test:checkers": "node --import tsx --test test/tools/postgres_checker_tool.test.ts test/tools/clickhouse_checker_tool.test.ts"
-  }
-}
-```
-
-- [ ] **Step 8: Commit the verified subagent spike**
+- [ ] **Step 7: Commit the verified subagent spike**
 
 ```bash
 git add package.json src/tools/shared/subagent_checker.ts src/tools/postgres/checker_tool.ts src/tools/clickhouse/checker_tool.ts test/tools/postgres_checker_tool.test.ts test/tools/clickhouse_checker_tool.test.ts
