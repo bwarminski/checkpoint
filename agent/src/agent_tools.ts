@@ -47,7 +47,7 @@ export type AgentToolDependencies = {
     openPullRequest(input: {
       codeDiff?: string;
       finding: {
-        fingerprint?: string;
+        queryid?: string;
         source_file?: string;
       };
       fix: {
