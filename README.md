@@ -18,10 +18,23 @@ Run the live model-backed integration path with
 `npm run test:model-integration`.
 That command skips cleanly when `OMP_MODEL` is unset and otherwise expects an
 oh-my-pi runtime on `PATH` as `pi` unless `OH_MY_PI_COMMAND` overrides it.
+Print the manual workspace smoke loop with
+`bash scripts/workspace-smoke.sh`.
 
 The collector source of truth lives in the sibling repo at
 `/home/bjw/checkpoint-collector`. That repo owns the collector pipeline, the
 ClickHouse DDLs, the demo Postgres image, and the load harness.
+
+## Manual TUI Loop
+
+1. Run `bash scripts/setup-oh-my-pi-workspace.sh`.
+2. Set `OMP_MODEL` to the real model you want to use.
+3. Start the oh-my-pi TUI from `~/.oh-my-pi-workspaces/checkpoint` with
+   `pi --model "$OMP_MODEL"`.
+4. Use the DB investigation skill with one of the prompts printed by
+   `bash scripts/workspace-smoke.sh`.
+5. Inspect the resulting diff or local commit in
+   `~/.oh-my-pi-workspaces/checkpoint/workdir`.
 
 ## Session Configuration
 
