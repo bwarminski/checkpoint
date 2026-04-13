@@ -99,6 +99,22 @@ Postgres and ClickHouse remain separate tool families. The dialects, safety
 checks, and expected usage differ enough that a single generic SQL tool would
 make the MVP less clear.
 
+The MVP should now follow LangChain's SQL tool ergonomics more closely.
+
+- `*_db_list_tables` returns a plain text list rather than structured rows
+- `*_db_schema` returns formatted schema text with small sample-row sections
+- `*_db_query` returns formatted result text or `Error: ...` text rather than
+  raw row arrays
+
+This is an output-contract change only. The redesign still keeps the existing
+MVP safety boundaries: identifier validation, bounded limits, bounded timeouts,
+and injectable execution paths.
+
+The internal implementation should stay smaller than LangChain's generic
+`SQLDatabase` abstraction. Postgres and ClickHouse tools remain separate, but
+they should share formatting helpers where possible so schema rendering and
+query-result formatting do not diverge unnecessarily.
+
 The ClickHouse surface also needs a supporting catalog that explains the
 available performance tables and the meaning of the important columns so the
 agent can reason about the observability model without reverse engineering it
@@ -169,9 +185,16 @@ The redesign is successful when:
 
 Three verification layers (enriched from spec's two):
 
-1. **Unit tests** (mocked DB/subagent): Each of the 8 SQL tools gets its own test file. The `*_db_checker` tools take an injectable subagent dependency, mocked in unit tests.
+1. **Unit tests** (mocked DB/subagent): Each of the 8 SQL tools gets its own test file. The `*_db_checker` tools take an injectable subagent dependency, mocked in unit tests. The schema and query tool tests should assert the LangChain-style formatted string outputs rather than raw rows.
 2. **Model-based integration tests** (live model, runs before each commit): Validate tool behavior end-to-end with a real oh-my-pi session against the generated workspace.
 3. **Workspace smoke tests** (manually runnable): Scripts in the workspace validate outcomes for a known set of problematic queries (N+1, LIKE leading-wildcard, etc.) against the demo app.
+
+Additional focused checks for the ergonomic shift:
+
+- shared formatter tests for deterministic schema and result rendering
+- explicit tests that query-tool failures surface as `Error: ...` strings
+- a live local assertion that the Postgres tools render useful output against
+  the demo schema
 
 ### TODOS to prune after the cut
 
