@@ -11,7 +11,14 @@ test("db investigation skill includes ClickHouse catalog guidance", async () => 
   const markdown = await readFile("skills/db-investigation.md", "utf8");
 
   assert.match(markdown, /^# DB Investigation/m);
-  assert.match(markdown, /query_events/);
-  assert.match(markdown, /query_intervals/);
+  assert.match(markdown, /queryid/);
+  assert.match(markdown, /statement_text/);
+  assert.match(markdown, /comment_metadata/);
+  assert.match(markdown, /postgres_logs/);
+  assert.match(markdown, /LEFT JOIN postgres_logs/);
+  assert.match(markdown, /query_intervals\.comment_metadata\['source_location'\]/);
+  assert.doesNotMatch(markdown, /fingerprint/);
+  assert.doesNotMatch(markdown, /source_file/);
+  assert.doesNotMatch(markdown, /sample_query/);
   assert.match(markdown, /highest-value issue/);
 });
