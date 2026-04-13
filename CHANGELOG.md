@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-04-13
+
+oh-my-pi MVP: cut A2A/pi-mono runtime, replace with coarse SQL tools and generated workspace.
+
+### Removed
+- `src/a2a_bridge/` — A2A server and all protocol handlers
+- `src/agent_tools.ts` — fine-grained specialist tool aggregator
+- `agent/` package — pi-mono / pi-agent-core runtime
+- `clickhouse_tool.ts`, `demo_repo_tool.ts`, `github_tool.ts` — old specialist tools
+
+### Added
+- 8 coarse SQL tools (4 Postgres + 4 ClickHouse), LangChain SQL agent pattern
+- `src/tools/shared/result_formatter.ts` and `schema_formatter.ts`
+- `src/tools/shared/identifier.ts`, `query_limits.ts`, `query_checker.ts`
+- `scripts/setup-oh-my-pi-workspace.sh` and `scripts/reset-oh-my-pi-workspace.sh`
+- `skills/db-investigation.md` with full ClickHouse catalog and investigation workflow
+- `AGENTS.md` — model integration test gate
+- 15 new test files
+
+### Changed
+- Query tools strip trailing LIMIT before appending row cap (fixes double-LIMIT)
+- Schema tools fetch 3 sample rows and return formatted text
+- List-tables tools return comma-separated string
+
 ## [0.1.0.0] - 2026-04-12
 
 Collector correctness: adopt queryid, comment_metadata, and postgres_logs source-location join.
