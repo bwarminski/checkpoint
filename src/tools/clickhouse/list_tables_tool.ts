@@ -11,8 +11,7 @@ export function createClickHouseListTablesTool(
       const rows = await runQuery(
         `select name from system.tables where database = '${input.database}' order by name`,
       );
-      return rows.map((row) => row.name);
+      return rows.map((row) => row.name).join(", ");
     },
   };
 }
-

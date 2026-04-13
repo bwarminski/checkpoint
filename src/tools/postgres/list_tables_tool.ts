@@ -11,7 +11,7 @@ export function createPostgresListTablesTool(
       const rows = await runQuery(
         `select table_name from information_schema.tables where table_schema = '${input.schema}' order by table_name`,
       );
-      return rows.map((row) => row.table_name);
+      return rows.map((row) => row.table_name).join(", ");
     },
   };
 }
