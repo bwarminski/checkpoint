@@ -56,6 +56,27 @@ test("queryFindings does not fall back to the removed source_file column", async
   assert.equal(findings[0]?.source_file, "");
 });
 
+test("queryFindings falls back to query interval metadata when no postgres log matches", async () => {
+  const queries: Array<string> = [];
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return [
+          "queryid\tlatest_statement_text\tlatest_source_location\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
+          "101\tSELECT 1\t/app/models/todo.rb:5\t7\t50.5\t12",
+        ].join("\n");
+      },
+    },
+  });
+
+  const findings = await tool.queryFindings("analyze_db");
+
+  assert.equal(findings[0]?.source_file, "/app/models/todo.rb:5");
+  assert.match(queries[0] ?? "", /coalesce\(argMax\(postgres_logs\.comment_metadata\['source_location'\]/);
+  assert.match(queries[0] ?? "", /argMax\(query_intervals\.comment_metadata\['source_location'\], interval_ended_at\)/);
+});
+
 test("queryFindings reads all-time findings from query_intervals", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool({

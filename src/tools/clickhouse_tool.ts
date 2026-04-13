@@ -44,6 +44,8 @@ export class ClickHouseTool {
 
 const INTERVAL_AVG_EXEC_TIME_SQL =
   "round(if(sum(total_exec_count) = 0, 0, sum(delta_exec_time_ms) / sum(total_exec_count)), 2)";
+const INTERVAL_SOURCE_LOCATION_SQL =
+  "coalesce(argMax(postgres_logs.comment_metadata['source_location'], postgres_logs.log_timestamp), argMax(query_intervals.comment_metadata['source_location'], interval_ended_at))";
 
 function buildOffenderQuery(scope?: unknown): string {
   const request = parseScope(scope);
@@ -55,7 +57,7 @@ function buildOffenderQuery(scope?: unknown): string {
     "SELECT",
     "  queryid,",
     "  argMax(query_intervals.statement_text, interval_ended_at) AS latest_statement_text,",
-    "  argMax(postgres_logs.comment_metadata['source_location'], postgres_logs.log_timestamp) AS latest_source_location,",
+    `  ${INTERVAL_SOURCE_LOCATION_SQL} AS latest_source_location,`,
     "  sum(total_exec_count) AS call_count,",
     "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
     `  ${INTERVAL_AVG_EXEC_TIME_SQL} AS avg_exec_time_ms`,
@@ -76,7 +78,7 @@ function buildWindowedQuery(request: ScopeRequest): string {
     "SELECT",
     "  queryid,",
     "  argMax(query_intervals.statement_text, interval_ended_at) AS latest_statement_text,",
-    "  argMax(postgres_logs.comment_metadata['source_location'], postgres_logs.log_timestamp) AS latest_source_location,",
+    `  ${INTERVAL_SOURCE_LOCATION_SQL} AS latest_source_location,`,
     "  sum(total_exec_count) AS call_count,",
     "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
     `  ${INTERVAL_AVG_EXEC_TIME_SQL} AS avg_exec_time_ms`,
