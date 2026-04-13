@@ -6,6 +6,14 @@ import time
 
 import pytest
 
+EXPECTED_COLLECTOR_TABLES = {
+    "collector_state",
+    "postgres_log_state",
+    "postgres_logs",
+    "query_events",
+    "query_intervals",
+}
+
 
 def image_exists(image: str) -> bool:
     result = subprocess.run(
@@ -62,6 +70,42 @@ def assert_collector_schema(
     assert "source_file" not in postgres_logs_schema
 
 
+def collector_schema_tables_ready(tables: list[str]) -> bool:
+    return EXPECTED_COLLECTOR_TABLES.issubset(set(tables))
+
+
+def wait_for_collector_schema_tables(
+    container_name: str,
+    retries: int = 30,
+    delay_seconds: float = 1.0,
+) -> list[str]:
+    last_tables: list[str] = []
+    last_error = ""
+    for attempt in range(retries):
+        result = subprocess.run(
+            ["docker", "exec", container_name, "clickhouse-client", "--query", "SHOW TABLES"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            tables = result.stdout.splitlines()
+            if collector_schema_tables_ready(tables):
+                return tables
+            last_tables = tables
+        else:
+            last_error = result.stderr.strip()
+
+        if attempt < retries - 1:
+            time.sleep(delay_seconds)
+
+    details = "\n".join(last_tables) if last_tables else last_error
+    raise AssertionError(
+        "collector schema did not become ready after "
+        f"{retries} attempts:\n{details}"
+    )
+
+
 def test_collector_schema_rejects_legacy_source_file_columns():
     with pytest.raises(AssertionError):
         assert_collector_schema(
@@ -76,6 +120,21 @@ def test_collector_schema_rejects_legacy_source_file_columns():
             "comment_metadata\tMap(String, String)\n",
             "comment_metadata\tMap(String, String)\nsource_file\tString\n",
         )
+
+
+def test_collector_schema_tables_require_expected_tables():
+    assert not collector_schema_tables_ready([])
+    assert not collector_schema_tables_ready(["query_events"])
+    assert not collector_schema_tables_ready(["query_events", "collector_state"])
+    assert collector_schema_tables_ready(
+        [
+            "collector_state",
+            "postgres_log_state",
+            "postgres_logs",
+            "query_events",
+            "query_intervals",
+        ]
+    )
 
 
 def test_clickhouse_image_boots_and_loads_counter_schema():
@@ -117,7 +176,7 @@ def test_clickhouse_image_boots_and_loads_counter_schema():
         else:
             raise AssertionError("clickhouse did not become healthy")
 
-        tables = run_clickhouse_query(container_name, "SHOW TABLES").splitlines()
+        tables = wait_for_collector_schema_tables(container_name)
         query_intervals_schema = run_clickhouse_query(
             container_name, "DESCRIBE TABLE query_intervals FORMAT TSV"
         )
