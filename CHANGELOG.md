@@ -10,7 +10,7 @@ oh-my-pi MVP: cut A2A/pi-mono runtime, replace with coarse SQL tools and generat
 - `src/a2a_bridge/` — A2A server and all protocol handlers
 - `src/agent_tools.ts` — fine-grained specialist tool aggregator
 - `agent/` package — pi-mono / pi-agent-core runtime
-- `clickhouse_tool.ts`, `demo_repo_tool.ts`, `github_tool.ts` — old specialist tools
+- `clickhouse_tool.ts`, `demo_repo_tool.ts`, `github_tool.ts` — specialist tools
 
 ### Added
 - 8 coarse SQL tools (4 Postgres + 4 ClickHouse), LangChain SQL agent pattern
