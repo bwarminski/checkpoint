@@ -31,7 +31,7 @@ test("query_findings returns typed ClickHouse findings details", async () => {
       executeQuery: async () => "fingerprint\tabc",
       queryFindings: async (scope?: unknown) => [
         {
-          fingerprint: String(scope ?? "fp-1"),
+          queryid: String(scope ?? "101"),
           severity: "high",
           total_exec_time_ms: 123.4,
         },
@@ -54,7 +54,7 @@ test("query_findings returns typed ClickHouse findings details", async () => {
   );
   assert.deepEqual(result.details, [
     {
-      fingerprint: "analyze_db",
+      queryid: "analyze_db",
       severity: "high",
       total_exec_time_ms: 123.4,
     },
@@ -94,7 +94,7 @@ test("apply_fix requires explicit high severity, validation, and source input", 
   await assert.rejects(
     () =>
       applyFix.execute("tool-3", {
-        finding: { fingerprint: "fp-1", severity: "medium" },
+        finding: { queryid: "101", severity: "medium" },
         validation: { validated: true },
         source: { content: "body", source_file: "app/models/todo.rb:2" },
         fix: { fix_type: "add_index", summary: "Add index" },
@@ -118,14 +118,14 @@ test("apply_fix succeeds with high severity, validated input, and source_file", 
   assert.ok(applyFix);
 
   const result = await applyFix.execute("tool-4", {
-    finding: { fingerprint: "fp-1", severity: "high" },
+    finding: { queryid: "101", severity: "high" },
     validation: { validated: true },
     source: { content: "body", source_file: "app/models/todo.rb:2" },
     fix: { fix_type: "add_index", summary: "Add index" },
   } as any);
 
   assert.deepEqual(capturedInput, {
-    finding: { fingerprint: "fp-1" },
+    finding: { queryid: "101" },
     fix: { fix_type: "add_index", summary: "Add index" },
     source: { content: "body", source_file: "app/models/todo.rb:2" },
   });
@@ -143,7 +143,7 @@ test("apply_fix rejects when finding severity is not high", async () => {
       executeQuery: async () => "fingerprint\tabc",
       queryFindings: async () => [
         {
-          fingerprint: "fp-medium",
+          queryid: "102",
           severity: "medium",
         },
       ],
@@ -165,7 +165,7 @@ test("apply_fix rejects when finding severity is not high", async () => {
   await assert.rejects(
     () =>
       applyFix.execute("tool-2", {
-        finding: { fingerprint: "fp-medium", severity: "medium" },
+        finding: { queryid: "102", severity: "medium" },
         fix: { fix_type: "add_index", summary: "Add an index." },
         source: { content: "where(status: 'open')", source_file: "/app/models/todo.rb:2" },
       } as any),
@@ -188,7 +188,7 @@ test("open_pull_request requires prepared branch and diff inputs", async () => {
   await assert.rejects(
     () =>
       openPullRequest.execute("tool-4", {
-        finding: { fingerprint: "fp-1" },
+        finding: { queryid: "101" },
         fix: { fix_type: "add_index", summary: "Add index" },
         validation: { validated: true },
         source: { content: "body", source_file: "app/models/todo.rb:2" },
@@ -212,7 +212,7 @@ test("open_pull_request succeeds with non-empty headRef and codeDiff", async () 
   assert.ok(openPullRequest);
 
   const result = await openPullRequest.execute("tool-5", {
-    finding: { fingerprint: "fp-1" },
+    finding: { queryid: "101" },
     fix: { fix_type: "add_index", summary: "Add index" },
     validation: { validated: true, plan_rows: [{ plan: "Index Scan" }] },
     source: { content: "body", source_file: "app/models/todo.rb:2" },
@@ -221,7 +221,7 @@ test("open_pull_request succeeds with non-empty headRef and codeDiff", async () 
   } as any);
 
   assert.deepEqual(capturedInput, {
-    finding: { fingerprint: "fp-1" },
+    finding: { queryid: "101" },
     fix: { fix_type: "add_index", summary: "Add index" },
     validation: { validated: true, plan_rows: [{ plan: "Index Scan" }] },
     headRef: "agent/demo-fix-fp-1",

@@ -16,7 +16,13 @@ test("ClickHouseTool lists tables from SHOW TABLES", async () => {
     },
   });
 
-  assert.deepEqual(await tool.listTables(), ["query_events", "collector_state", "query_intervals"]);
+  assert.deepEqual(await tool.listTables(), [
+    "query_events",
+    "collector_state",
+    "query_intervals",
+    "postgres_logs",
+    "postgres_log_state",
+  ]);
   assert.equal(queryCalls, 0);
 });
 
@@ -27,7 +33,13 @@ test("ClickHouseTool hides unsupported tables from discovery", async () => {
     },
   });
 
-  assert.deepEqual(await tool.listTables(), ["query_events", "collector_state", "query_intervals"]);
+  assert.deepEqual(await tool.listTables(), [
+    "query_events",
+    "collector_state",
+    "query_intervals",
+    "postgres_logs",
+    "postgres_log_state",
+  ]);
 });
 
 test("ClickHouseTool describes a table with TSV output", async () => {
@@ -89,8 +101,8 @@ test("ClickHouseTool queries typed findings without source_tag output", async ()
       query: async (sql: string) => {
         queries.push(sql);
         return [
-          "fingerprint\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
-          "fp-1\t/app/controllers/todos_controller.rb:12\tSELECT 1\t7\t50.5\t12",
+          "queryid\tlatest_statement_text\tlatest_source_location\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
+          "101\tSELECT 1\t/app/controllers/todos_controller.rb:12\t7\t50.5\t12",
         ].join("\n");
       },
     },
@@ -98,20 +110,42 @@ test("ClickHouseTool queries typed findings without source_tag output", async ()
 
   assert.deepEqual(await tool.queryFindings("analyze_db"), [
     {
-      fingerprint: "fp-1",
-      p95_exec_time_ms: 12,
-      sample_query: "SELECT 1",
+      avg_exec_time_ms: 12,
+      queryid: "101",
       severity: "medium",
+      statement_text: "SELECT 1",
       source_file: "/app/controllers/todos_controller.rb:12",
       total_exec_count: 7,
       total_exec_time_ms: 50.5,
     },
   ]);
   assert.match(queries[0] ?? "", /FROM query_intervals/);
+  assert.match(queries[0] ?? "", /LEFT JOIN postgres_logs/);
   assert.match(queries[0] ?? "", /interval_duration_ms <= 3600000/);
   assert.match(queries[0] ?? "", /interval_started_at > now\(\) - INTERVAL 60 MINUTE/);
-  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
+  assert.match(queries[0] ?? "", /round\(if\(sum\(total_exec_count\) = 0, 0, sum\(delta_exec_time_ms\) \/ sum\(total_exec_count\)\), 2\) AS avg_exec_time_ms/);
+  assert.match(queries[0] ?? "", /comment_metadata\['source_location'\]/);
+  assert.doesNotMatch(queries[0] ?? "", /sample_query/);
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
+});
+
+test("ClickHouseTool parseOffenderRows maps latest_source_location and latest_statement_text column aliases", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () => {
+        return [
+          "queryid\tlatest_statement_text\tlatest_source_location\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
+          "101\tSELECT * FROM todos\t/app/controllers/todos_controller.rb:12\t5\t250.0\t50",
+        ].join("\n");
+      },
+    },
+  });
+
+  const findings = await tool.queryFindings("analyze_db");
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.statement_text, "SELECT * FROM todos");
+  assert.equal(findings[0]?.source_file, "/app/controllers/todos_controller.rb:12");
+  assert.equal(findings[0]?.queryid, "101");
 });
 
 test("ClickHouseTool queries all-time findings from query_intervals", async () => {
@@ -121,8 +155,8 @@ test("ClickHouseTool queries all-time findings from query_intervals", async () =
       query: async (sql: string) => {
         queries.push(sql);
         return [
-          "fingerprint\tsource_file\tsample_query\ttotal_exec_count\ttotal_exec_time_ms\tp95_exec_time_ms",
-          "fp-2\t/app/models/todo.rb:5\tSELECT 2\t9\t100.0\t200",
+          "queryid\tlatest_statement_text\tlatest_source_location\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
+          "102\tSELECT 2\t/app/models/todo.rb:5\t9\t100.0\t200",
         ].join("\n");
       },
     },
@@ -131,9 +165,10 @@ test("ClickHouseTool queries all-time findings from query_intervals", async () =
   await tool.queryFindings("analyze_table todos all");
 
   assert.match(queries[0] ?? "", /FROM query_intervals/);
-  assert.match(queries[0] ?? "", /quantile\(0\.95\)\(if\(total_exec_count = 0, 0, delta_exec_time_ms \/ total_exec_count\)\)/);
+  assert.match(queries[0] ?? "", /LEFT JOIN postgres_logs/);
+  assert.match(queries[0] ?? "", /comment_metadata\['source_location'\]/);
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
-  assert.match(queries[0] ?? "", /GROUP BY fingerprint/);
+  assert.match(queries[0] ?? "", /GROUP BY queryid/);
 });
 
 test("ClickHouseTool rejects describeTable for unsupported table", async () => {

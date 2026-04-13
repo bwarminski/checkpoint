@@ -16,7 +16,7 @@ test("DemoRepoTool falls back to the sibling db-specialist-demo path when DEMO_A
   );
 });
 
-test("DemoRepoTool creates a branch per finding fingerprint", async () => {
+test("DemoRepoTool creates a branch per finding queryid", async () => {
   const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
   const commands: Array<string> = [];
 
@@ -26,7 +26,7 @@ test("DemoRepoTool creates a branch per finding fingerprint", async () => {
     const tool = createTool(root, commands);
 
     const first = await tool.applyFix({
-      finding: { fingerprint: "1234567890ab" },
+      finding: { queryid: "1234567890ab" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -37,7 +37,7 @@ test("DemoRepoTool creates a branch per finding fingerprint", async () => {
     await writeControllerFile(root);
 
     const second = await tool.applyFix({
-      finding: { fingerprint: "fedcba098765" },
+      finding: { queryid: "fedcba098765" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -66,7 +66,7 @@ test("DemoRepoTool uses the remote-tracking base ref when creating a branch", as
     const tool = createTool(root, commands, undefined, "develop");
 
     await tool.applyFix({
-      finding: { fingerprint: "base-ref-123" },
+      finding: { queryid: "base-ref-123" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -80,7 +80,7 @@ test("DemoRepoTool uses the remote-tracking base ref when creating a branch", as
   }
 });
 
-test("DemoRepoTool sanitizes fingerprint characters before building the branch name", async () => {
+test("DemoRepoTool sanitizes queryid characters before building the branch name", async () => {
   const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
   const commands: Array<string> = [];
 
@@ -90,7 +90,7 @@ test("DemoRepoTool sanitizes fingerprint characters before building the branch n
     const tool = createTool(root, commands);
 
     const result = await tool.applyFix({
-      finding: { fingerprint: "abc/def:gh" },
+      finding: { queryid: "abc/def:gh" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -105,7 +105,7 @@ test("DemoRepoTool sanitizes fingerprint characters before building the branch n
   }
 });
 
-test("DemoRepoTool appends a suffix for long fingerprints that share the same prefix", async () => {
+test("DemoRepoTool appends a suffix for long queryids that share the same prefix", async () => {
   const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
   try {
     await writeControllerFile(root);
@@ -114,7 +114,7 @@ test("DemoRepoTool appends a suffix for long fingerprints that share the same pr
     const secondTool = createTool(root, []);
 
     const first = await firstTool.applyFix({
-      finding: { fingerprint: "abcdefghijklmnop" },
+      finding: { queryid: "abcdefghijklmnop" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -125,7 +125,7 @@ test("DemoRepoTool appends a suffix for long fingerprints that share the same pr
     await writeControllerFile(root);
 
     const second = await secondTool.applyFix({
-      finding: { fingerprint: "abcdefghijklqrstuv" },
+      finding: { queryid: "abcdefghijklqrstuv" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -141,7 +141,7 @@ test("DemoRepoTool appends a suffix for long fingerprints that share the same pr
   }
 });
 
-test("DemoRepoTool reuses the same branch name safely for the same fingerprint", async () => {
+test("DemoRepoTool reuses the same branch name safely for the same queryid", async () => {
   const root = await mkdtemp(join(tmpdir(), "demo-repo-tool-"));
   const commands: Array<string> = [];
 
@@ -152,7 +152,7 @@ test("DemoRepoTool reuses the same branch name safely for the same fingerprint",
 
     const firstBranchName = (
       await tool.applyFix({
-        finding: { fingerprint: "samefingerprint" },
+        finding: { queryid: "samequeryid" },
         fix: { fix_type: "rewrite_like", summary: "summary" },
         source: {
           content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -165,7 +165,7 @@ test("DemoRepoTool reuses the same branch name safely for the same fingerprint",
 
     const secondBranchName = (
       await tool.applyFix({
-        finding: { fingerprint: "samefingerprint" },
+        finding: { queryid: "samequeryid" },
         fix: { fix_type: "rewrite_like", summary: "summary" },
         source: {
           content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -176,7 +176,7 @@ test("DemoRepoTool reuses the same branch name safely for the same fingerprint",
 
     const sequence = commands.join("\n");
     assert.equal(firstBranchName, secondBranchName);
-    assert.match(firstBranchName, /^agent\/demo-fix-samefingerpr-/);
+    assert.match(firstBranchName, /^agent\/demo-fix-samequeryid/);
     assert.match(sequence, new RegExp(`git checkout -B ${firstBranchName} origin/main`));
     assert.doesNotMatch(sequence, new RegExp(`git branch -D ${firstBranchName}`));
     assert.match(sequence, new RegExp(`git push origin ${firstBranchName}`));
@@ -195,7 +195,7 @@ test("DemoRepoTool rewrite_like updates the file and pushes the branch", async (
     const tool = createTool(root, commands);
 
     const result = await tool.applyFix({
-      finding: { fingerprint: "rwlike123456" },
+      finding: { queryid: "rwlike123456" },
       fix: { fix_type: "rewrite_like", summary: "Remove the leading wildcard." },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -241,7 +241,7 @@ test("DemoRepoTool rewrite_count updates the file and pushes the branch", async 
     const tool = createTool(root, commands);
 
     const result = await tool.applyFix({
-      finding: { fingerprint: "countfix1234" },
+      finding: { queryid: "countfix1234" },
       fix: { fix_type: "rewrite_count", summary: "Move the count query out of the loop." },
       source: {
         content:
@@ -284,7 +284,7 @@ test("DemoRepoTool add_includes updates the file and pushes the branch", async (
     const tool = createTool(root, commands);
 
     const result = await tool.applyFix({
-      finding: { fingerprint: "addincl12345" },
+      finding: { queryid: "addincl12345" },
       fix: { fix_type: "add_includes", summary: "Eager load the user association." },
       source: {
         content: [
@@ -328,7 +328,7 @@ test("DemoRepoTool add_includes rejects partial rewrites", async () => {
     await assert.rejects(
       () =>
         tool.applyFix({
-          finding: { fingerprint: "partial-includes" },
+          finding: { queryid: "partial-includes" },
           fix: { fix_type: "add_includes", summary: "Eager load the user association." },
           source: {
             content: [
@@ -389,7 +389,7 @@ test("DemoRepoTool fails before file edits when the git remote is unreachable", 
     await assert.rejects(
       () =>
         tool.applyFix({
-          finding: { fingerprint: "remote-failure" },
+          finding: { queryid: "remote-failure" },
           fix: { fix_type: "rewrite_like", summary: "summary" },
           source: {
             content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -431,7 +431,7 @@ test("DemoRepoTool keeps add_index working and creates db/migrate", async () => 
     const tool = createTool(root, commands, new Date("2026-04-05T01:21:00Z"));
 
     const result = await tool.applyFix({
-      finding: { fingerprint: "addindex1234" },
+      finding: { queryid: "addindex1234" },
       fix: { fix_type: "add_index", summary: "Add an index for the status filter used at /app/models/todo.rb:2." },
       source: {
         content: "2: scope :open, -> { where(status: 'open') }",
@@ -466,7 +466,7 @@ test("DemoRepoTool rejects source_file paths that escape the repo root", async (
     await assert.rejects(
       () =>
         tool.applyFix({
-          finding: { fingerprint: "traversal-test" },
+          finding: { queryid: "traversal-test" },
           fix: { fix_type: "rewrite_like", summary: "summary" },
           source: {
             content: "some content",
@@ -492,7 +492,7 @@ test("DemoRepoTool rejects unsupported fix types", async () => {
     await assert.rejects(
       () =>
         tool.applyFix({
-          finding: { fingerprint: "unsupported-1" },
+          finding: { queryid: "unsupported-1" },
           fix: { fix_type: "rename_table", summary: "summary" },
           source: {
             content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',
@@ -555,7 +555,7 @@ async function runDriftCase(fixType: string, fileContent: string): Promise<never
 
     const tool = createTool(root, []);
     await tool.applyFix({
-      finding: { fingerprint: `${fixType}-drift` },
+      finding: { queryid: `${fixType}-drift` },
       fix: { fix_type: fixType, summary: "summary" },
       source: {
         content: '3: Todo.where("title LIKE ?", "%#{params[:q]}%")',

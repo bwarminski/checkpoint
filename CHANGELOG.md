@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0.0] - 2026-04-12
+
+Collector correctness: adopt queryid, comment_metadata, and postgres_logs source-location join.
+
+### Changed
+
+**ClickHouse findings contract**
+- Findings now use `queryid` (Postgres internal query ID from `pg_stat_statements`) instead of `fingerprint` everywhere: tool interfaces, agent parameters, branch naming, PR body, and all tests
+- `statement_text` replaces `sample_query` as the field name for the representative SQL statement
+- `avg_exec_time_ms` replaces `p95_exec_time_ms` as the execution-time metric; the 100 ms high-severity threshold is retained
+
+**Source location via comment metadata**
+- `ClickHouseTool` now joins `postgres_logs` to resolve source location from `comment_metadata['source_location']` rather than a dedicated `source_file` column; falls back to `query_intervals.comment_metadata['source_location']` when no raw-log row matches
+- `ClickHouse Map['key']` returns `''` for missing keys; the SQL uses `nullIf(..., '')` before `coalesce` to make the fallback robust
+- `postgres_logs` and `postgres_log_state` added to the supported table whitelist
+
+**Schema smoke test**
+- Smoke test now validates `comment_metadata Map` is present in `query_events`, `query_intervals`, and `postgres_logs`, and that the old `source_file`/`source_location` columns are absent
+- Switched from `docker compose` to standalone `docker run` so the smoke test is isolated from the project's compose stack
+
+### Fixed
+
+- Removed a dead `?? row.statement_text` fallback in `parseOffenderRows` that could silently mask a missing `latest_statement_text` column alias
+- Renamed stale `fingerprint` type in the `githubTool.openPullRequest` dependency interface to `queryid`
+
 ## [0.2.0.0] - 2026-04-06
 
 Phase 2: LLM reasoning loop, per-loop evidence guardrails, and security hardening.

@@ -2,7 +2,7 @@
 // ABOUTME: Exposes table discovery and guarded query execution for the executor.
 
 export type TopOffender = {
-  fingerprint: string;
+  queryid: string;
   [key: string]: unknown;
 };
 
@@ -42,7 +42,13 @@ export class ClickHouseTool {
   }
 }
 
-const INTERVAL_MEAN_EXEC_TIME_SQL = "if(total_exec_count = 0, 0, delta_exec_time_ms / total_exec_count)";
+const INTERVAL_AVG_EXEC_TIME_SQL =
+  "round(if(sum(total_exec_count) = 0, 0, sum(delta_exec_time_ms) / sum(total_exec_count)), 2)";
+// Prefer the most recent raw-log source_location; fall back to interval-level metadata when the
+// log row has no source_location or no matching log row exists in the join window.
+// ClickHouse Map access returns '' for missing keys, so nullIf is required before coalesce.
+const INTERVAL_SOURCE_LOCATION_SQL =
+  "coalesce(nullIf(argMax(postgres_logs.comment_metadata['source_location'], postgres_logs.log_timestamp), ''), argMax(query_intervals.comment_metadata['source_location'], interval_ended_at))";
 
 function buildOffenderQuery(scope?: unknown): string {
   const request = parseScope(scope);
@@ -52,14 +58,18 @@ function buildOffenderQuery(scope?: unknown): string {
 
   return [
     "SELECT",
-    "  fingerprint,",
-    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,",
-    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,",
+    "  queryid,",
+    "  argMax(query_intervals.statement_text, interval_ended_at) AS latest_statement_text,",
+    `  ${INTERVAL_SOURCE_LOCATION_SQL} AS latest_source_location,`,
     "  sum(total_exec_count) AS call_count,",
     "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
-    `  round(quantile(0.95)(${INTERVAL_MEAN_EXEC_TIME_SQL}), 2) AS p95_exec_time_ms`,
+    `  ${INTERVAL_AVG_EXEC_TIME_SQL} AS avg_exec_time_ms`,
     "FROM query_intervals",
-    "GROUP BY fingerprint",
+    "LEFT JOIN postgres_logs",
+    "  ON postgres_logs.query_id = query_intervals.queryid",
+    "  AND postgres_logs.log_timestamp >= query_intervals.interval_started_at",
+    "  AND postgres_logs.log_timestamp < query_intervals.interval_ended_at",
+    "GROUP BY queryid",
     "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
     "FORMAT TSVWithNames",
@@ -69,17 +79,21 @@ function buildOffenderQuery(scope?: unknown): string {
 function buildWindowedQuery(request: ScopeRequest): string {
   return [
     "SELECT",
-    "  fingerprint,",
-    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 1) AS top_source_file,",
-    "  tupleElement(argMax((source_file, sample_query), interval_ended_at), 2) AS top_sample_query,",
+    "  queryid,",
+    "  argMax(query_intervals.statement_text, interval_ended_at) AS latest_statement_text,",
+    `  ${INTERVAL_SOURCE_LOCATION_SQL} AS latest_source_location,`,
     "  sum(total_exec_count) AS call_count,",
     "  round(sum(delta_exec_time_ms), 2) AS total_exec_time_ms,",
-    `  round(quantile(0.95)(${INTERVAL_MEAN_EXEC_TIME_SQL}), 2) AS p95_exec_time_ms`,
+    `  ${INTERVAL_AVG_EXEC_TIME_SQL} AS avg_exec_time_ms`,
     "FROM query_intervals",
+    "LEFT JOIN postgres_logs",
+    "  ON postgres_logs.query_id = query_intervals.queryid",
+    "  AND postgres_logs.log_timestamp >= query_intervals.interval_started_at",
+    "  AND postgres_logs.log_timestamp < query_intervals.interval_ended_at",
     `WHERE interval_started_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
     `  AND interval_ended_at > now() - INTERVAL ${request.timeWindowMinutes} MINUTE`,
     `  AND interval_duration_ms <= ${request.timeWindowMinutes * 60 * 1000}`,
-    "GROUP BY fingerprint",
+    "GROUP BY queryid",
     "ORDER BY total_exec_time_ms DESC",
     "LIMIT 5",
     "FORMAT TSVWithNames",
@@ -120,15 +134,15 @@ function parseOffenderRows(payload: string): Array<TopOffender> {
       headers.map((header, index) => [header, normalizeValue(header, values[index])]),
     );
     const totalExecCount = Number(row.call_count ?? row.total_exec_count ?? 0);
-    const p95ExecTimeMs = Number(row.p95_exec_time_ms ?? 0);
+    const avgExecTimeMs = Number(row.avg_exec_time_ms ?? 0);
     const totalExecTimeMs = Number(row.total_exec_time_ms ?? 0);
 
     return {
-      fingerprint: String(row.fingerprint ?? ""),
-      p95_exec_time_ms: p95ExecTimeMs,
-      sample_query: row.top_sample_query ?? row.sample_query,
-      severity: p95ExecTimeMs >= 100 ? "high" : "medium",
-      source_file: row.top_source_file ?? row.source_file,
+      avg_exec_time_ms: avgExecTimeMs,
+      queryid: String(row.queryid ?? ""),
+      severity: avgExecTimeMs >= 100 ? "high" : "medium",
+      source_file: row.latest_source_location ?? "",
+      statement_text: row.latest_statement_text ?? "",
       total_exec_count: totalExecCount,
       total_exec_time_ms: totalExecTimeMs,
     };
@@ -140,7 +154,7 @@ function normalizeValue(header: string, value: string | undefined): number | str
     return null;
   }
 
-  if (header !== "fingerprint" && /^-?\d+(?:\.\d+)?$/.test(value)) {
+  if (header !== "queryid" && /^-?\d+(?:\.\d+)?$/.test(value)) {
     return Number(value);
   }
 
@@ -217,4 +231,10 @@ function createHttpTransport(): ClickHouseTransport {
   };
 }
 
-const SUPPORTED_TABLES = new Set(["query_events", "collector_state", "query_intervals"]);
+const SUPPORTED_TABLES = new Set([
+  "query_events",
+  "collector_state",
+  "query_intervals",
+  "postgres_logs",
+  "postgres_log_state",
+]);

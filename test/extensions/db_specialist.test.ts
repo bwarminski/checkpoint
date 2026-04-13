@@ -45,7 +45,7 @@ test("db-specialist extension gates apply_fix before calling DemoRepoTool", asyn
     await assert.rejects(
       () =>
         applyFix!.execute({
-          finding: { fingerprint: "fp-1", severity: "medium" },
+          finding: { queryid: "101", severity: "medium" },
           fix: { fix_type: "rewrite_like", summary: "summary" },
           source: { content: "content", source_file: "app/controllers/todos_controller.rb:3" },
           validation: { validated: true },
@@ -56,7 +56,7 @@ test("db-specialist extension gates apply_fix before calling DemoRepoTool", asyn
     await assert.rejects(
       () =>
         applyFix!.execute({
-          finding: { fingerprint: "fp-2", severity: "high" },
+          finding: { queryid: "102", severity: "high" },
           fix: { fix_type: "rewrite_like", summary: "summary" },
           source: { content: "content", source_file: "app/controllers/todos_controller.rb:3" },
           validation: { validated: false },
@@ -67,7 +67,7 @@ test("db-specialist extension gates apply_fix before calling DemoRepoTool", asyn
     await assert.rejects(
       () =>
         applyFix!.execute({
-          finding: { fingerprint: "fp-3", severity: "high" },
+          finding: { queryid: "103", severity: "high" },
           fix: { fix_type: "rewrite_like", summary: "summary" },
           source: { content: "content", source_file: "" },
           validation: { validated: true },
@@ -86,7 +86,7 @@ test("db-specialist extension gates open_pull_request before calling GitHubTool"
   let calls = 0;
   GitHubTool.prototype.openPullRequest = async function () {
     calls += 1;
-    return { url: "local://db-specialist/pull-requests/fp" };
+    return { url: "local://db-specialist/pull-requests/104" };
   };
 
   try {
@@ -99,7 +99,7 @@ test("db-specialist extension gates open_pull_request before calling GitHubTool"
       () =>
         openPullRequest!.execute({
           codeDiff: "diff --git a/app/controllers/todos_controller.rb b/app/controllers/todos_controller.rb",
-          finding: { fingerprint: "fp-4" },
+          finding: { queryid: "104" },
           fix: { fix_type: "rewrite_like", summary: "summary" },
           validation: { validated: true },
         }),
@@ -109,7 +109,7 @@ test("db-specialist extension gates open_pull_request before calling GitHubTool"
     await assert.rejects(
       () =>
         openPullRequest!.execute({
-          finding: { fingerprint: "fp-5" },
+          finding: { queryid: "105" },
           fix: { fix_type: "rewrite_like", summary: "summary" },
           headRef: "agent/demo-fix-fp",
           validation: { validated: true },
@@ -148,14 +148,14 @@ test("db-specialist extension returns validated query output usable by apply_fix
     });
 
     const result = await applyFix.execute({
-      finding: { fingerprint: "fp-1", severity: "high" },
+      finding: { queryid: "101", severity: "high" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: { content: "content", source_file: "app/controllers/todos_controller.rb:3" },
       validation,
     });
 
     assert.deepEqual(capturedInput, {
-      finding: { fingerprint: "fp-1" },
+      finding: { queryid: "101" },
       fix: { fix_type: "rewrite_like", summary: "summary" },
       source: { content: "content", source_file: "app/controllers/todos_controller.rb:3" },
     });
@@ -182,7 +182,7 @@ test("db-specialist extension returns apply_fix handoff fields for open_pull_req
   };
   GitHubTool.prototype.openPullRequest = async function (input: unknown) {
     capturedInput = input;
-    return { url: "local://db-specialist/pull-requests/fp-1" };
+    return { url: "local://db-specialist/pull-requests/101" };
   };
 
   try {
@@ -198,7 +198,7 @@ test("db-specialist extension returns apply_fix handoff fields for open_pull_req
       validated: true,
     };
     const fixResult = await applyFix!.execute({
-      finding: { fingerprint: "fp-1", severity: "high" },
+      finding: { queryid: "101", severity: "high" },
       fix: { fix_type: "add_index", summary: "Add index" },
       source: { content: "content", source_file: "app/controllers/todos_controller.rb:3" },
       validation,
@@ -214,19 +214,19 @@ test("db-specialist extension returns apply_fix handoff fields for open_pull_req
     const result = await openPullRequest!.execute({
       headRef: fixResult.headRef,
       codeDiff: fixResult.codeDiff,
-      finding: { fingerprint: "fp-1", source_file: "app/controllers/todos_controller.rb:3" },
+      finding: { queryid: "101", source_file: "app/controllers/todos_controller.rb:3" },
       fix: { fix_type: "add_index", summary: "Add index" },
       validation,
     });
 
     assert.deepEqual(capturedInput, {
       codeDiff: "diff --git a/file b/file",
-      finding: { fingerprint: "fp-1", source_file: "app/controllers/todos_controller.rb:3" },
+      finding: { queryid: "101", source_file: "app/controllers/todos_controller.rb:3" },
       fix: { fix_type: "add_index", summary: "Add index" },
       headRef: "agent/demo-fix-fp-1",
       validation,
     });
-    assert.deepEqual(result, { url: "local://db-specialist/pull-requests/fp-1" });
+    assert.deepEqual(result, { url: "local://db-specialist/pull-requests/101" });
   } finally {
     DemoRepoTool.prototype.applyFix = originalApplyFix;
     GitHubTool.prototype.openPullRequest = originalOpenPullRequest;
@@ -238,7 +238,7 @@ test("db-specialist extension rejects open_pull_request aliases without headRef 
   let calls = 0;
   GitHubTool.prototype.openPullRequest = async function () {
     calls += 1;
-    return { url: "local://db-specialist/pull-requests/fp" };
+    return { url: "local://db-specialist/pull-requests/106" };
   };
 
   try {
@@ -250,7 +250,7 @@ test("db-specialist extension rejects open_pull_request aliases without headRef 
         openPullRequest.execute({
           branchName: "agent/demo-fix-fp",
           diff: "diff --git a/file b/file",
-          finding: { fingerprint: "fp-6" },
+          finding: { queryid: "106" },
           fix: { fix_type: "add_index", summary: "summary" },
           validation: { validated: true },
         }),

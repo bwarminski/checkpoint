@@ -33,7 +33,7 @@ type DemoRepoToolOptions = {
 
 type ApplyFixInput = {
   finding: {
-    fingerprint: string;
+    queryid: string;
   };
   fix: FixProposal;
   source: LocatedSource;
@@ -67,7 +67,7 @@ export class DemoRepoTool {
 
     const baseRef = this.env.DEMO_BASE_REF ?? "main";
     await ensureRemoteReachable(this.runner, root);
-    const branchName = buildBranchName(input.finding.fingerprint);
+    const branchName = buildBranchName(input.finding.queryid);
     await this.runner.exec(["git", "checkout", "-B", branchName, `origin/${baseRef}`], root);
     const touchedPaths = await this.applyChange(root, input);
 
@@ -205,8 +205,8 @@ function camelize(value: string): string {
     .join("");
 }
 
-function buildBranchName(fingerprint: string): string {
-  const sanitized = fingerprint.replace(/[^A-Za-z0-9._-]/g, "-");
+function buildBranchName(queryid: string): string {
+  const sanitized = queryid.replace(/[^A-Za-z0-9._-]/g, "-");
   const readable = sanitized.slice(0, 12);
   if (sanitized.length <= 12) {
     return `agent/demo-fix-${readable}`;

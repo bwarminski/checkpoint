@@ -46,7 +46,7 @@ test("executor bridges pi-agent-core events into working and completed task even
                 isError: false,
                 result: {
                   content: [{ type: "text", text: "[]" }],
-                  details: [{ fingerprint: "fp-1", severity: "high" }],
+                  details: [{ queryid: "101", severity: "high" }],
                 },
               });
               handler({
@@ -94,12 +94,12 @@ test("executor bridges pi-agent-core events into working and completed task even
     {
       type: "completed",
       result: {
-        findings: [{ fingerprint: "fp-1", severity: "high" }],
+        findings: [{ queryid: "101", severity: "high" }],
         response: "analysis complete",
         toolResults: [
           {
             toolName: "query_findings",
-            details: [{ fingerprint: "fp-1", severity: "high" }],
+            details: [{ queryid: "101", severity: "high" }],
           },
         ],
       },
@@ -347,7 +347,7 @@ test("executor can run through the default pi-agent-core agent path with a local
         listTables: async () => ["query_events"],
         describeTable: async () => "fingerprint\tString",
         executeQuery: async () => "fingerprint\tabc",
-        queryFindings: async () => [{ fingerprint: "fp-agent", severity: "high" }],
+        queryFindings: async () => [{ queryid: "201", severity: "high" }],
       },
     } as any,
     {
@@ -413,12 +413,12 @@ test("executor can run through the default pi-agent-core agent path with a local
   assert.deepEqual(events.at(-1), {
     type: "completed",
     result: {
-      findings: [{ fingerprint: "fp-agent", severity: "high" }],
+      findings: [{ queryid: "201", severity: "high" }],
       response: "agent path complete",
       toolResults: [
         {
           toolName: "query_findings",
-          details: [{ fingerprint: "fp-agent", severity: "high" }],
+          details: [{ queryid: "201", severity: "high" }],
         },
       ],
     },

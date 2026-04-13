@@ -2,7 +2,7 @@
 // ABOUTME: Leaves PR automation intentionally minimal until later executor work lands.
 type PullRequestInput = {
   finding?: {
-    fingerprint?: string;
+    queryid?: string;
     source_file?: string;
   };
   fix?: {
@@ -53,12 +53,12 @@ export class GitHubTool {
       return this.client.openPullRequest(input);
     }
 
-    const fingerprint = input.finding?.fingerprint ?? "unknown";
+    const queryid = input.finding?.queryid ?? "unknown";
     const token = this.env.GITHUB_TOKEN;
 
     if (!token) {
       return {
-        url: `local://db-specialist/pull-requests/${fingerprint}`,
+        url: `local://db-specialist/pull-requests/${queryid}`,
       };
     }
 
@@ -161,10 +161,10 @@ async function resolveExistingPullRequestUrl(
 }
 
 function buildPullRequestTitle(input: PullRequestInput): string {
-  const fingerprint = input.finding?.fingerprint ?? "unknown";
+  const queryid = input.finding?.queryid ?? "unknown";
   const fixType = input.fix?.fix_type ?? "db_fix";
 
-  return `[db-specialist] ${fixType} for ${fingerprint}`;
+  return `[db-specialist] ${fixType} for ${queryid}`;
 }
 
 function buildPullRequestBody(input: PullRequestInput): string {
@@ -174,7 +174,7 @@ function buildPullRequestBody(input: PullRequestInput): string {
 
   return [
     "## DB Specialist Finding",
-    `- fingerprint: ${input.finding?.fingerprint ?? "unknown"}`,
+    `- queryid: ${input.finding?.queryid ?? "unknown"}`,
     `- source_file: ${input.finding?.source_file ?? "unknown"}`,
     `- fix_type: ${input.fix?.fix_type ?? "unknown"}`,
     `- summary: ${input.fix?.summary ?? "unknown"}`,

@@ -223,3 +223,22 @@ The feature was removed so startup no longer blocks on an incomplete contract.
 
 **Where:** `agent/src/runtime_dependencies.ts` and `agent/src/server.ts` once the
 collector repo owns and boots a real schema contract table.
+
+---
+
+## buildOffenderQuery: postgres_logs JOIN fan-out
+
+**What:** `buildOffenderQuery` and `buildWindowedQuery` LEFT JOIN `postgres_logs` before
+`GROUP BY queryid`. If `postgres_logs` has many rows per `queryid` in the interval
+window, the join fans out significantly before aggregation. The `argMax` aggregate
+is O(n) so correctness is fine, but cost scales with log volume.
+
+**Fix:** Move source_location lookup to a subquery or use `LEFT JOIN LATERAL` to
+fetch only the latest log row per (queryid, window), reducing the fan-out to 1:1
+before the aggregate.
+
+**Why deferred:** Demo-only tool against a local ClickHouse. Acceptable until the
+tool is pointed at production-volume log tables.
+
+**Where:** `src/tools/clickhouse_tool.ts` — `buildOffenderQuery()` and
+`buildWindowedQuery()`.
