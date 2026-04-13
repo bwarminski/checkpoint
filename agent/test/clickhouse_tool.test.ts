@@ -101,8 +101,8 @@ test("ClickHouseTool queries typed findings without source_tag output", async ()
       query: async (sql: string) => {
         queries.push(sql);
         return [
-          "queryid\tsource_file\tstatement_text\ttotal_exec_count\ttotal_exec_time_ms\tavg_exec_time_ms",
-          "101\t/app/controllers/todos_controller.rb:12\tSELECT 1\t7\t50.5\t12",
+          "queryid\tlatest_statement_text\tlatest_source_location\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
+          "101\tSELECT 1\t/app/controllers/todos_controller.rb:12\t7\t50.5\t12",
         ].join("\n");
       },
     },
@@ -124,16 +124,17 @@ test("ClickHouseTool queries typed findings without source_tag output", async ()
   assert.match(queries[0] ?? "", /interval_duration_ms <= 3600000/);
   assert.match(queries[0] ?? "", /interval_started_at > now\(\) - INTERVAL 60 MINUTE/);
   assert.match(queries[0] ?? "", /round\(if\(sum\(total_exec_count\) = 0, 0, sum\(delta_exec_time_ms\) \/ sum\(total_exec_count\)\), 2\) AS avg_exec_time_ms/);
+  assert.match(queries[0] ?? "", /comment_metadata\['source_location'\]/);
   assert.doesNotMatch(queries[0] ?? "", /sample_query/);
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
 });
 
-test("ClickHouseTool parseOffenderRows maps latest_source_file and latest_statement_text column aliases", async () => {
+test("ClickHouseTool parseOffenderRows maps latest_source_location and latest_statement_text column aliases", async () => {
   const tool = new ClickHouseTool({
     transport: {
       query: async () => {
         return [
-          "queryid\tlatest_statement_text\tlatest_source_file\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
+          "queryid\tlatest_statement_text\tlatest_source_location\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
           "101\tSELECT * FROM todos\t/app/controllers/todos_controller.rb:12\t5\t250.0\t50",
         ].join("\n");
       },
@@ -154,8 +155,8 @@ test("ClickHouseTool queries all-time findings from query_intervals", async () =
       query: async (sql: string) => {
         queries.push(sql);
         return [
-          "queryid\tsource_file\tstatement_text\ttotal_exec_count\ttotal_exec_time_ms\tavg_exec_time_ms",
-          "102\t/app/models/todo.rb:5\tSELECT 2\t9\t100.0\t200",
+          "queryid\tlatest_statement_text\tlatest_source_location\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
+          "102\tSELECT 2\t/app/models/todo.rb:5\t9\t100.0\t200",
         ].join("\n");
       },
     },
@@ -165,6 +166,7 @@ test("ClickHouseTool queries all-time findings from query_intervals", async () =
 
   assert.match(queries[0] ?? "", /FROM query_intervals/);
   assert.match(queries[0] ?? "", /LEFT JOIN postgres_logs/);
+  assert.match(queries[0] ?? "", /comment_metadata\['source_location'\]/);
   assert.doesNotMatch(queries[0] ?? "", /source_tag/);
   assert.match(queries[0] ?? "", /GROUP BY queryid/);
 });

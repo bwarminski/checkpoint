@@ -69,6 +69,53 @@ def test_clickhouse_image_boots_and_loads_counter_schema():
         assert "postgres_logs" in tables
         assert "postgres_log_state" in tables
 
+        query_intervals_schema = subprocess.run(
+            [
+                "docker",
+                "exec",
+                container_name,
+                "clickhouse-client",
+                "--query",
+                "DESCRIBE TABLE query_intervals FORMAT TSV",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        query_events_schema = subprocess.run(
+            [
+                "docker",
+                "exec",
+                container_name,
+                "clickhouse-client",
+                "--query",
+                "DESCRIBE TABLE query_events FORMAT TSV",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        postgres_logs_schema = subprocess.run(
+            [
+                "docker",
+                "exec",
+                container_name,
+                "clickhouse-client",
+                "--query",
+                "DESCRIBE TABLE postgres_logs FORMAT TSV",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+        assert "comment_metadata\tMap" in query_intervals_schema
+        assert "comment_metadata\tMap" in query_events_schema
+        assert "comment_metadata\tMap" in postgres_logs_schema
+        assert "source_file" not in query_events_schema
+        assert "source_file" not in query_intervals_schema
+        assert "source_location" not in postgres_logs_schema
+
         interval_query = subprocess.run(
             ["docker", "exec", container_name, "clickhouse-client", "--query", "SELECT count() FROM query_intervals"],
             check=True,

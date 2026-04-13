@@ -15,7 +15,7 @@ test("clickhouse_tool.ts does not reference agent internals or schema contract h
   assert.doesNotMatch(source, /clickhouse_schema_contract/);
 });
 
-test("queryFindings groups by queryid and reads source locations from postgres logs", async () => {
+test("queryFindings groups by queryid and reads source locations from comment metadata", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool({
     transport: {
@@ -28,7 +28,7 @@ test("queryFindings groups by queryid and reads source locations from postgres l
 
   await tool.queryFindings("analyze_table todos");
 
-  assert.doesNotMatch(queries[0] ?? "", /source_tag/);
+  assert.match(queries[0] ?? "", /comment_metadata\['source_location'\]/);
   assert.doesNotMatch(queries[0] ?? "", /sample_query/);
   assert.match(queries[0] ?? "", /LEFT JOIN postgres_logs/);
   assert.match(queries[0] ?? "", /GROUP BY queryid/);
@@ -36,6 +36,8 @@ test("queryFindings groups by queryid and reads source locations from postgres l
   assert.match(queries[0] ?? "", /interval_duration_ms <= 3600000/);
   assert.match(queries[0] ?? "", /interval_started_at > now\(\) - INTERVAL 60 MINUTE/);
   assert.match(queries[0] ?? "", /round\(if\(sum\(total_exec_count\) = 0, 0, sum\(delta_exec_time_ms\) \/ sum\(total_exec_count\)\), 2\) AS avg_exec_time_ms/);
+  assert.doesNotMatch(queries[0] ?? "", /\bsource_location\b(?!'\])/);
+  assert.doesNotMatch(queries[0] ?? "", /\bsource_file\b/);
 });
 
 test("queryFindings reads all-time findings from query_intervals", async () => {
@@ -72,10 +74,11 @@ test("queryFindings uses non-conflicting aliases to avoid ClickHouse cyclic alia
   for (const sql of queries) {
     assert.match(sql, /sum\(total_exec_count\) AS call_count/);
     assert.doesNotMatch(sql, /sum\(total_exec_count\) AS total_exec_count/);
-    assert.match(sql, /AS latest_source_file/);
+    assert.match(sql, /AS latest_source_location/);
     assert.match(sql, /AS latest_statement_text/);
     assert.doesNotMatch(sql, /\) AS source_file/);
     assert.doesNotMatch(sql, /\) AS statement_text/);
+    assert.match(sql, /comment_metadata\['source_location'\]/);
   }
 });
 
