@@ -40,6 +40,22 @@ test("queryFindings groups by queryid and reads source locations from comment me
   assert.doesNotMatch(queries[0] ?? "", /\bsource_file\b/);
 });
 
+test("queryFindings does not fall back to the removed source_file column", async () => {
+  const tool = new ClickHouseTool({
+    transport: {
+      query: async () =>
+        [
+          "queryid\tlatest_statement_text\tsource_file\tcall_count\ttotal_exec_time_ms\tavg_exec_time_ms",
+          "101\tSELECT 1\t/app/controllers/todos_controller.rb:12\t7\t50.5\t12",
+        ].join("\n"),
+    },
+  });
+
+  const findings = await tool.queryFindings("analyze_db");
+
+  assert.equal(findings[0]?.source_file, "");
+});
+
 test("queryFindings reads all-time findings from query_intervals", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool({

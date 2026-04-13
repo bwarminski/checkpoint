@@ -136,7 +136,7 @@ function parseOffenderRows(payload: string): Array<TopOffender> {
       avg_exec_time_ms: avgExecTimeMs,
       queryid: String(row.queryid ?? ""),
       severity: avgExecTimeMs >= 100 ? "high" : "medium",
-      source_file: row.latest_source_location ?? row.source_file,
+      source_file: row.latest_source_location ?? "",
       statement_text: row.latest_statement_text ?? row.statement_text,
       total_exec_count: totalExecCount,
       total_exec_time_ms: totalExecTimeMs,
