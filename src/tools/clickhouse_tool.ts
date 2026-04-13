@@ -44,6 +44,9 @@ export class ClickHouseTool {
 
 const INTERVAL_AVG_EXEC_TIME_SQL =
   "round(if(sum(total_exec_count) = 0, 0, sum(delta_exec_time_ms) / sum(total_exec_count)), 2)";
+// Prefer the most recent raw-log source_location; fall back to interval-level metadata when the
+// log row has no source_location or no matching log row exists in the join window.
+// ClickHouse Map access returns '' for missing keys, so nullIf is required before coalesce.
 const INTERVAL_SOURCE_LOCATION_SQL =
   "coalesce(nullIf(argMax(postgres_logs.comment_metadata['source_location'], postgres_logs.log_timestamp), ''), argMax(query_intervals.comment_metadata['source_location'], interval_ended_at))";
 
