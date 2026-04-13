@@ -56,7 +56,7 @@ test("queryFindings does not fall back to the removed source_file column", async
   assert.equal(findings[0]?.source_file, "");
 });
 
-test("queryFindings falls back to query interval metadata when no postgres log matches", async () => {
+test("queryFindings falls back to query interval metadata when postgres log source location is empty", async () => {
   const queries: Array<string> = [];
   const tool = new ClickHouseTool({
     transport: {
@@ -73,7 +73,10 @@ test("queryFindings falls back to query interval metadata when no postgres log m
   const findings = await tool.queryFindings("analyze_db");
 
   assert.equal(findings[0]?.source_file, "/app/models/todo.rb:5");
-  assert.match(queries[0] ?? "", /coalesce\(argMax\(postgres_logs\.comment_metadata\['source_location'\]/);
+  assert.match(
+    queries[0] ?? "",
+    /coalesce\(nullIf\(argMax\(postgres_logs\.comment_metadata\['source_location'\], postgres_logs\.log_timestamp\), ''\), argMax\(query_intervals\.comment_metadata\['source_location'\], interval_ended_at\)\)/,
+  );
   assert.match(queries[0] ?? "", /argMax\(query_intervals\.comment_metadata\['source_location'\], interval_ended_at\)/);
 });
 

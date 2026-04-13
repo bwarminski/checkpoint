@@ -45,7 +45,7 @@ export class ClickHouseTool {
 const INTERVAL_AVG_EXEC_TIME_SQL =
   "round(if(sum(total_exec_count) = 0, 0, sum(delta_exec_time_ms) / sum(total_exec_count)), 2)";
 const INTERVAL_SOURCE_LOCATION_SQL =
-  "coalesce(argMax(postgres_logs.comment_metadata['source_location'], postgres_logs.log_timestamp), argMax(query_intervals.comment_metadata['source_location'], interval_ended_at))";
+  "coalesce(nullIf(argMax(postgres_logs.comment_metadata['source_location'], postgres_logs.log_timestamp), ''), argMax(query_intervals.comment_metadata['source_location'], interval_ended_at))";
 
 function buildOffenderQuery(scope?: unknown): string {
   const request = parseScope(scope);
