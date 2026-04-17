@@ -24,7 +24,7 @@ export async function runWorkspacePrompt(input: {
   prompt: string;
 }): Promise<string> {
   const workspaceRoot = getWorkspaceRoot(input.home);
-  const command = process.env.OH_MY_PI_COMMAND ?? "pi";
+  const command = process.env.OH_MY_PI_COMMAND ?? "omp";
 
   try {
     const { stdout } = await execFileAsync(
@@ -54,7 +54,7 @@ export async function runWorkspacePrompt(input: {
           : String(error);
 
     throw new Error(
-      `Failed to run the oh-my-pi session. Set OH_MY_PI_COMMAND if the runtime is not available as "pi". ${message}`.trim(),
+      `Failed to run the oh-my-pi session. Set OH_MY_PI_COMMAND if the runtime is not available as "omp". ${message}`.trim(),
     );
   }
 }

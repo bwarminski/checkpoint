@@ -17,7 +17,7 @@ Reset it to a clean generated state with
 Run the live model-backed integration path with
 `npm run test:model-integration`.
 That command skips cleanly when `OMP_MODEL` is unset and otherwise expects an
-oh-my-pi runtime on `PATH` as `pi` unless `OH_MY_PI_COMMAND` overrides it.
+oh-my-pi runtime on `PATH` as `omp` unless `OH_MY_PI_COMMAND` overrides it.
 Before opening a pull request or merging to `main`, run that command when the
 required oh-my-pi live model environment is available. If the live environment
 is unavailable, stop and report the PR or merge gate as blocked instead of
@@ -35,7 +35,7 @@ ClickHouse DDLs, the demo Postgres image, and the load harness.
 1. Run `bash scripts/setup-oh-my-pi-workspace.sh`.
 2. Set `OMP_MODEL` to the real model you want to use.
 3. Start the oh-my-pi TUI from `~/.oh-my-pi-workspaces/checkpoint` with
-   `pi --model "$OMP_MODEL"`.
+   `omp --model "$OMP_MODEL"`.
 4. Use the DB investigation skill with one of the prompts printed by
    `bash scripts/workspace-smoke.sh`.
 5. Inspect the resulting diff or local commit in
