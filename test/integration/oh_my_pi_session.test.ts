@@ -1,7 +1,7 @@
 // ABOUTME: Verifies the generated oh-my-pi workspace exists outside the main checkout.
 // ABOUTME: Confirms the generated workspace skeleton and live-session harness behave as expected.
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, readlink, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -65,9 +65,14 @@ test("workspace setup creates discoverable tool entrypoints", async () => {
 
     const postgresListStats = await lstat(postgresListEntry);
     const clickHouseQueryStats = await lstat(clickHouseQueryEntry);
+    const postgresListSource = await readFile(postgresListEntry, "utf8");
 
     assert.equal(postgresListStats.isFile(), true);
     assert.equal(clickHouseQueryStats.isFile(), true);
+    assert.match(
+      postgresListSource,
+      /^export \{ sqlDbListTables as default \} from "[^"\n]+";\n$/,
+    );
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }

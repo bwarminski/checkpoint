@@ -12,7 +12,7 @@ write_tool() {
   local module_path="$3"
 
   mkdir -p "${WORKSPACE_ROOT}/.omp/tools/${tool_name}"
-  printf 'export { %s as default } from %q;\n' "${export_name}" "${module_path}" > "${WORKSPACE_ROOT}/.omp/tools/${tool_name}/index.ts"
+  printf 'export { %s as default } from "%s";\n' "${export_name}" "${module_path}" > "${WORKSPACE_ROOT}/.omp/tools/${tool_name}/index.ts"
 }
 
 mkdir -p "${WORKSPACE_ROOT}/.omp" "${WORKSPACE_ROOT}/workdir"
