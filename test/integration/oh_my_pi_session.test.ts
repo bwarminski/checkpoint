@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   getWorkspaceRoot,
+  runWorkspaceChecker,
   resetWorkspace,
   runWorkspaceSession,
   setupWorkspace,
@@ -72,6 +73,50 @@ test("live oh-my-pi session exposes coarse SQL tools", {
 
     assert.match(output, /sql_db_list_tables/);
     assert.match(output, /clickhouse_db_query/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("live oh-my-pi checker tools return structured verdicts", {
+  skip: !process.env.OMP_MODEL || !("bun" in process.versions),
+  timeout: 30_000,
+}, async () => {
+  const model = process.env.OMP_MODEL;
+  assert.ok(model);
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-checker-home-"));
+
+  try {
+    await setupWorkspace(fakeHome);
+
+    const postgresResult = await runWorkspaceChecker({
+      home: fakeHome,
+      model,
+      toolName: "sql_db_checker",
+      input: {
+        dialect: "postgres",
+        question: "Check whether this exploratory query is safe.",
+        query: "select 1",
+      },
+    });
+    const clickHouseResult = await runWorkspaceChecker({
+      home: fakeHome,
+      model,
+      toolName: "clickhouse_db_checker",
+      input: {
+        dialect: "clickhouse",
+        question: "Check whether this exploratory query is safe.",
+        query: "select 1",
+      },
+    });
+
+    assert.match(postgresResult.verdict, /^(safe|rewrite|reject)$/);
+    assert.equal(typeof postgresResult.rewrittenQuery, "string");
+    assert.equal(Array.isArray(postgresResult.notes), true);
+
+    assert.match(clickHouseResult.verdict, /^(safe|rewrite|reject)$/);
+    assert.equal(typeof clickHouseResult.rewrittenQuery, "string");
+    assert.equal(Array.isArray(clickHouseResult.notes), true);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }

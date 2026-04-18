@@ -35,33 +35,44 @@ export async function runWorkspaceSession(input: {
   model: string;
   prompt: string;
 }): Promise<string> {
-  const sdkModuleName = "@oh-my-pi/pi-coding-agent";
-  const { createAgentSession, SessionManager } = await import(sdkModuleName);
-  const workspaceRoot = getWorkspaceRoot(input.home);
-  const agentDir = join(input.home, ".omp", "agent");
-  const sqlTools = createSqlToolDefinitions();
-  const { session } = await createAgentSession({
-    agentDir,
-    contextFiles: [],
-    cwd: workspaceRoot,
-    customTools: sqlTools,
-    disableExtensionDiscovery: true,
-    enableLsp: false,
-    enableMCP: false,
-    hasUI: false,
-    modelPattern: input.model,
-    promptTemplates: [],
-    sessionManager: SessionManager.inMemory(),
-    skills: [],
-    slashCommands: [],
-    toolNames: ["__none__"],
-  });
+  const { session } = await createWorkspaceSession(input.home, input.model);
 
   try {
     return await collectAssistantText(session, input.prompt);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to run the oh-my-pi SDK session. ${message}`.trim());
+  } finally {
+    await session.dispose();
+  }
+}
+
+export async function runWorkspaceChecker(input: {
+  home: string;
+  model: string;
+  toolName: "sql_db_checker" | "clickhouse_db_checker";
+  input: QueryCheckInput;
+}): Promise<QueryCheckResult> {
+  const { session, sqlTools } = await createWorkspaceSession(input.home, input.model);
+  const checkerTool = sqlTools.find((tool) => tool.name === input.toolName);
+
+  if (!checkerTool) {
+    throw new Error(`Missing checker tool definition: ${input.toolName}`);
+  }
+
+  try {
+    const result = await checkerTool.execute(
+      "checker-test-call",
+      input.input,
+      undefined,
+      undefined,
+      {
+        model: session.model,
+        modelRegistry: session.modelRegistry,
+        sessionManager: session.sessionManager,
+      },
+    );
+    return parseQueryCheckResult(extractAssistantText(result.content));
   } finally {
     await session.dispose();
   }
@@ -74,7 +85,39 @@ async function runWorkspaceScript(home: string, scriptPath: string): Promise<voi
   });
 }
 
-function createSqlToolDefinitions() {
+async function createWorkspaceSession(home: string, model: string): Promise<{
+  session: WorkspaceSession;
+  sqlTools: Array<ToolDefinition>;
+}> {
+  const sdkModuleName = "@oh-my-pi/pi-coding-agent";
+  const { createAgentSession, SessionManager } = await import(sdkModuleName);
+  const workspaceRoot = getWorkspaceRoot(home);
+  const agentDir = join(home, ".omp", "agent");
+  const sqlTools = createSqlToolDefinitions();
+  const { session } = await createAgentSession({
+    agentDir,
+    contextFiles: [],
+    cwd: workspaceRoot,
+    customTools: sqlTools,
+    disableExtensionDiscovery: true,
+    enableLsp: false,
+    enableMCP: false,
+    hasUI: false,
+    modelPattern: model,
+    promptTemplates: [],
+    sessionManager: SessionManager.inMemory(),
+    skills: [],
+    slashCommands: [],
+    toolNames: ["__none__"],
+  });
+
+  return {
+    session: session as WorkspaceSession,
+    sqlTools,
+  };
+}
+
+function createSqlToolDefinitions(): Array<ToolDefinition> {
   const postgresRunner = createPostgresRunner();
   const clickHouseRunner = createClickHouseRunner();
   const postgresListRunner = async (sql: string): Promise<Array<{ table_name: string }>> =>
@@ -328,9 +371,31 @@ type SessionLike = {
   subscribe(listener: (event: SessionEvent) => void): () => void;
 };
 
+type ToolDefinition = {
+  name: string;
+  label: string;
+  description: string;
+  parameters: unknown;
+  execute(
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+    onUpdate?: unknown,
+    ctx?: ToolContext,
+  ): Promise<{
+    content: Array<{ type: "text"; text: string }>;
+  }>;
+};
+
 type ToolModel = {
   provider: string;
 } & Record<string, unknown>;
+
+type WorkspaceSession = SessionLike & {
+  model: ToolModel | undefined;
+  modelRegistry: ToolContext["modelRegistry"];
+  sessionManager: ToolContext["sessionManager"];
+};
 
 type ToolContext = {
   model: ToolModel | undefined;
