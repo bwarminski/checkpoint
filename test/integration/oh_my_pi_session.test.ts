@@ -13,12 +13,11 @@ import {
   setupWorkspace,
 } from "../helpers/oh_my_pi_workspace.ts";
 
-test("workspace setup and reset create the expected workspace skeleton", async () => {
+test("workspace setup creates a real .omp/tools directory", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-home-"));
   const workspaceRoot = getWorkspaceRoot(fakeHome);
   const skillsEntry = join(workspaceRoot, ".omp", "skills");
-  const postgresListEntry = join(workspaceRoot, ".omp", "tools", "sql_db_list_tables", "index.ts");
-  const clickHouseQueryEntry = join(workspaceRoot, ".omp", "tools", "clickhouse_db_query", "index.ts");
+  const toolsEntry = join(workspaceRoot, ".omp", "tools");
   const workdirEntry = join(workspaceRoot, "workdir");
 
   try {
@@ -28,26 +27,47 @@ test("workspace setup and reset create the expected workspace skeleton", async (
 
     let workspaceStats = await lstat(workspaceRoot);
     let skillsStats = await lstat(skillsEntry);
-    let postgresListStats = await lstat(postgresListEntry);
-    let clickHouseQueryStats = await lstat(clickHouseQueryEntry);
+    let toolsStats = await lstat(toolsEntry);
     let workdirStats = await lstat(workdirEntry);
 
     assert.equal(workspaceStats.isDirectory(), true);
     assert.equal(skillsStats.isSymbolicLink(), true);
     assert.equal(await readlink(skillsEntry), join(process.cwd(), "skills"));
-    assert.equal(postgresListStats.isFile(), true);
-    assert.equal(clickHouseQueryStats.isFile(), true);
+    assert.equal(toolsStats.isDirectory(), true);
+    assert.equal(toolsStats.isSymbolicLink(), false);
     assert.equal(workdirStats.isDirectory(), true);
 
     await resetWorkspace(fakeHome);
 
     workspaceStats = await lstat(workspaceRoot);
     skillsStats = await lstat(skillsEntry);
+    toolsStats = await lstat(toolsEntry);
     workdirStats = await lstat(workdirEntry);
 
     assert.equal(workspaceStats.isDirectory(), true);
     assert.equal(skillsStats.isSymbolicLink(), true);
+    assert.equal(toolsStats.isDirectory(), true);
+    assert.equal(toolsStats.isSymbolicLink(), false);
     assert.equal(workdirStats.isDirectory(), true);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("workspace setup creates discoverable tool entrypoints", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-home-"));
+  const workspaceRoot = getWorkspaceRoot(fakeHome);
+  const postgresListEntry = join(workspaceRoot, ".omp", "tools", "sql_db_list_tables", "index.ts");
+  const clickHouseQueryEntry = join(workspaceRoot, ".omp", "tools", "clickhouse_db_query", "index.ts");
+
+  try {
+    await setupWorkspace(fakeHome);
+
+    const postgresListStats = await lstat(postgresListEntry);
+    const clickHouseQueryStats = await lstat(clickHouseQueryEntry);
+
+    assert.equal(postgresListStats.isFile(), true);
+    assert.equal(clickHouseQueryStats.isFile(), true);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }
