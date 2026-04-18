@@ -94,16 +94,21 @@ function toCustomTool(definition: ClickHouseDefinition): NativeCustomTool {
   };
 }
 
-export const clickhouseDbListTables: NativeCustomToolFactory = (pi) => toCustomTool(createClickHouseToolDefinitions(pi.typebox.Type)[0]);
-export const clickhouseDbSchema: NativeCustomToolFactory = (pi) => toCustomTool(createClickHouseToolDefinitions(pi.typebox.Type)[1]);
-export const clickhouseDbChecker: NativeCustomToolFactory = (pi) => toCustomTool(createClickHouseToolDefinitions(pi.typebox.Type)[2]);
-export const clickhouseDbQuery: NativeCustomToolFactory = (pi) => toCustomTool(createClickHouseToolDefinitions(pi.typebox.Type)[3]);
+function createClickHouseNativeTools(type: TypeFactory): [NativeCustomTool, NativeCustomTool, NativeCustomTool, NativeCustomTool] {
+  const definitions = createClickHouseToolDefinitions(type);
+  return [
+    toCustomTool(definitions[0]),
+    toCustomTool(definitions[1]),
+    toCustomTool(definitions[2]),
+    toCustomTool(definitions[3]),
+  ];
+}
 
-const clickHouseCustomTools: NativeCustomToolFactory = (pi) => [
-  toCustomTool(createClickHouseToolDefinitions(pi.typebox.Type)[0]),
-  toCustomTool(createClickHouseToolDefinitions(pi.typebox.Type)[1]),
-  toCustomTool(createClickHouseToolDefinitions(pi.typebox.Type)[2]),
-  toCustomTool(createClickHouseToolDefinitions(pi.typebox.Type)[3]),
-];
+export const clickhouseDbListTables: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type)[0];
+export const clickhouseDbSchema: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type)[1];
+export const clickhouseDbChecker: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type)[2];
+export const clickhouseDbQuery: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type)[3];
+
+const clickHouseCustomTools: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type);
 
 export default clickHouseCustomTools;

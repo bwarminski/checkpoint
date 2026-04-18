@@ -94,16 +94,21 @@ function toCustomTool(definition: PostgresDefinition): NativeCustomTool {
   };
 }
 
-export const sqlDbListTables: NativeCustomToolFactory = (pi) => toCustomTool(createPostgresToolDefinitions(pi.typebox.Type)[0]);
-export const sqlDbSchema: NativeCustomToolFactory = (pi) => toCustomTool(createPostgresToolDefinitions(pi.typebox.Type)[1]);
-export const sqlDbChecker: NativeCustomToolFactory = (pi) => toCustomTool(createPostgresToolDefinitions(pi.typebox.Type)[2]);
-export const sqlDbQuery: NativeCustomToolFactory = (pi) => toCustomTool(createPostgresToolDefinitions(pi.typebox.Type)[3]);
+function createPostgresNativeTools(type: TypeFactory): [NativeCustomTool, NativeCustomTool, NativeCustomTool, NativeCustomTool] {
+  const definitions = createPostgresToolDefinitions(type);
+  return [
+    toCustomTool(definitions[0]),
+    toCustomTool(definitions[1]),
+    toCustomTool(definitions[2]),
+    toCustomTool(definitions[3]),
+  ];
+}
 
-const postgresCustomTools: NativeCustomToolFactory = (pi) => [
-  toCustomTool(createPostgresToolDefinitions(pi.typebox.Type)[0]),
-  toCustomTool(createPostgresToolDefinitions(pi.typebox.Type)[1]),
-  toCustomTool(createPostgresToolDefinitions(pi.typebox.Type)[2]),
-  toCustomTool(createPostgresToolDefinitions(pi.typebox.Type)[3]),
-];
+export const sqlDbListTables: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type)[0];
+export const sqlDbSchema: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type)[1];
+export const sqlDbChecker: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type)[2];
+export const sqlDbQuery: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type)[3];
+
+const postgresCustomTools: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type);
 
 export default postgresCustomTools;

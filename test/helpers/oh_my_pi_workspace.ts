@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { Type } from "@sinclair/typebox";
 
-import { parseQueryCheckResult } from "../../src/omp_tools/live_query_checker.ts";
+import { extractAssistantText, parseQueryCheckResult } from "../../src/omp_tools/live_query_checker.ts";
 import { createClickHouseToolDefinitions } from "../../src/omp_tools/clickhouse_custom_tools.ts";
 import { createPostgresToolDefinitions } from "../../src/omp_tools/postgres_custom_tools.ts";
 import type { SdkToolDefinition, ToolContext, ToolModel } from "../../src/omp_tools/runtime.ts";
@@ -163,16 +163,4 @@ type SessionEvent = {
   };
 };
 
-export function extractAssistantText(content: string | Array<{ type: string; text?: string }>): string {
-  if (typeof content === "string") {
-    return content.trim();
-  }
-
-  return content
-    .filter((block) => block.type === "text" && typeof block.text === "string")
-    .map((block) => block.text ?? "")
-    .join("\n")
-    .trim();
-}
-
-export { parseQueryCheckResult };
+export { extractAssistantText, parseQueryCheckResult };

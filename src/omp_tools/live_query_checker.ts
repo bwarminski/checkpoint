@@ -66,7 +66,7 @@ export function parseQueryCheckResult(output: string): QueryCheckResult {
   };
 }
 
-function extractAssistantText(content: string | Array<{ type: string; text?: string }>): string {
+export function extractAssistantText(content: string | Array<{ type: string; text?: string }>): string {
   if (typeof content === "string") {
     return content.trim();
   }
