@@ -8,7 +8,7 @@ import test from "node:test";
 import {
   getWorkspaceRoot,
   resetWorkspace,
-  runWorkspacePrompt,
+  runWorkspaceSession,
   setupWorkspace,
 } from "../helpers/oh_my_pi_workspace.ts";
 
@@ -52,20 +52,20 @@ test("workspace setup and reset create the expected workspace skeleton", async (
   }
 });
 
-test("live oh-my-pi session exposes coarse SQL tools", async (t) => {
-  if (!process.env.OMP_MODEL) {
-    t.skip("OMP_MODEL is not set");
-    return;
-  }
-
+test("live oh-my-pi session exposes coarse SQL tools", {
+  skip: !process.env.OMP_MODEL || !("bun" in process.versions),
+  timeout: 30_000,
+}, async () => {
+  const model = process.env.OMP_MODEL;
+  assert.ok(model);
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-live-home-"));
 
   try {
     await setupWorkspace(fakeHome);
 
-    const output = await runWorkspacePrompt({
+    const output = await runWorkspaceSession({
       home: fakeHome,
-      model: process.env.OMP_MODEL,
+      model,
       prompt:
         "List the available database investigation tools by name only, one per line.",
     });

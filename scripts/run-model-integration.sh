@@ -9,4 +9,4 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 bash scripts/setup-oh-my-pi-workspace.sh
-npm test -- test/integration/oh_my_pi_session.test.ts
+bun test test/integration/oh_my_pi_session.test.ts

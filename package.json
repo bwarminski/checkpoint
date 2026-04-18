@@ -4,8 +4,12 @@
   "version": "0.4.0",
   "type": "module",
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "scripts": {
     "test": "node --import tsx --test test/**/*.test.ts",
@@ -13,6 +17,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@oh-my-pi/pi-coding-agent": "^14.1.2",
+    "@sinclair/typebox": "^0.34.49",
     "pg": "^8.20.0"
   },
   "devDependencies": {
