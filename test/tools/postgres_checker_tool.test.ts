@@ -6,10 +6,14 @@ import test from "node:test";
 import { createPostgresCheckerTool } from "../../src/tools/postgres/checker_tool.ts";
 
 test("postgres checker delegates to the injected subagent", async () => {
-  const calls: Array<{ prompt: string }> = [];
+  const calls: Array<{
+    dialect: "postgres" | "clickhouse";
+    question: string;
+    query: string;
+  }> = [];
   const tool = createPostgresCheckerTool({
-    runCheck: async (prompt) => {
-      calls.push({ prompt });
+    runCheck: async (input) => {
+      calls.push(input);
       return { verdict: "safe", rewrittenQuery: "select 1", notes: ["ok"] };
     },
   });
@@ -21,7 +25,11 @@ test("postgres checker delegates to the injected subagent", async () => {
   });
 
   assert.equal(calls.length, 1);
-  assert.match(calls[0]?.prompt ?? "", /select 1/);
+  assert.deepEqual(calls[0], {
+    dialect: "postgres",
+    question: "Validate this query",
+    query: "select 1",
+  });
   assert.deepEqual(result, {
     verdict: "safe",
     rewrittenQuery: "select 1",

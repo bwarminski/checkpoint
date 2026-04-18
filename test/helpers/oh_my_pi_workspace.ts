@@ -14,7 +14,7 @@ import { createPostgresCheckerTool } from "../../src/tools/postgres/checker_tool
 import { createPostgresListTablesTool } from "../../src/tools/postgres/list_tables_tool.ts";
 import { createPostgresQueryTool } from "../../src/tools/postgres/query_tool.ts";
 import { createPostgresSchemaTool } from "../../src/tools/postgres/schema_tool.ts";
-import type { QueryCheckResult } from "../../src/tools/shared/query_checker.ts";
+import type { QueryCheckInput, QueryCheckResult } from "../../src/tools/shared/query_checker.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,13 +39,7 @@ export async function runWorkspaceSession(input: {
   const { createAgentSession, SessionManager } = await import(sdkModuleName);
   const workspaceRoot = getWorkspaceRoot(input.home);
   const agentDir = join(input.home, ".omp", "agent");
-  const sqlTools = createSqlToolDefinitions({
-    agentDir,
-    createAgentSession,
-    model: input.model,
-    SessionManager,
-    workspaceRoot,
-  });
+  const sqlTools = createSqlToolDefinitions();
   const { session } = await createAgentSession({
     agentDir,
     contextFiles: [],
@@ -80,32 +74,19 @@ async function runWorkspaceScript(home: string, scriptPath: string): Promise<voi
   });
 }
 
-type SqlToolOptions = {
-  agentDir: string;
-  createAgentSession: (options?: Record<string, unknown>) => Promise<{ session: SessionLike }>;
-  model: string;
-  SessionManager: {
-    inMemory(): unknown;
-  };
-  workspaceRoot: string;
-};
-
-function createSqlToolDefinitions(input: SqlToolOptions) {
+function createSqlToolDefinitions() {
   const postgresRunner = createPostgresRunner();
   const clickHouseRunner = createClickHouseRunner();
   const postgresListRunner = async (sql: string): Promise<Array<{ table_name: string }>> =>
     postgresRunner(sql) as Promise<Array<{ table_name: string }>>;
   const clickHouseListRunner = async (sql: string): Promise<Array<{ name: string }>> =>
     clickHouseRunner(sql) as Promise<Array<{ name: string }>>;
-  const checker = createSessionQueryChecker(input);
 
   const postgresListTablesTool = createPostgresListTablesTool(postgresListRunner);
   const postgresSchemaTool = createPostgresSchemaTool(postgresRunner);
-  const postgresCheckerTool = createPostgresCheckerTool(checker);
   const postgresQueryTool = createPostgresQueryTool(postgresRunner);
   const clickHouseListTablesTool = createClickHouseListTablesTool(clickHouseListRunner);
   const clickHouseSchemaTool = createClickHouseSchemaTool(clickHouseRunner);
-  const clickHouseCheckerTool = createClickHouseCheckerTool(checker);
   const clickHouseQueryTool = createClickHouseQueryTool(clickHouseRunner);
 
   return [
@@ -139,7 +120,14 @@ function createSqlToolDefinitions(input: SqlToolOptions) {
         question: Type.String(),
         query: Type.String(),
       }),
-      async execute(_toolCallId: string, params: { dialect: "postgres"; question: string; query: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { dialect: "postgres"; question: string; query: string },
+        _signal: AbortSignal | undefined,
+        _onUpdate: unknown,
+        ctx: ToolContext,
+      ) {
+        const postgresCheckerTool = createPostgresCheckerTool(createLiveQueryChecker(ctx));
         return toTextResult(JSON.stringify(await postgresCheckerTool.execute(params), null, 2));
       },
     },
@@ -186,7 +174,14 @@ function createSqlToolDefinitions(input: SqlToolOptions) {
         question: Type.String(),
         query: Type.String(),
       }),
-      async execute(_toolCallId: string, params: { dialect: "clickhouse"; question: string; query: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { dialect: "clickhouse"; question: string; query: string },
+        _signal: AbortSignal | undefined,
+        _onUpdate: unknown,
+        ctx: ToolContext,
+      ) {
+        const clickHouseCheckerTool = createClickHouseCheckerTool(createLiveQueryChecker(ctx));
         return toTextResult(JSON.stringify(await clickHouseCheckerTool.execute(params), null, 2));
       },
     },
@@ -265,32 +260,40 @@ function createClickHouseRunner(): (sql: string) => Promise<Array<Record<string,
   };
 }
 
-function createSessionQueryChecker(input: SqlToolOptions): { runCheck(prompt: string): Promise<QueryCheckResult> } {
+function createLiveQueryChecker(ctx: ToolContext): { runCheck(input: QueryCheckInput): Promise<QueryCheckResult> } {
   return {
-    async runCheck(prompt: string) {
-      const { session } = await input.createAgentSession({
-        agentDir: input.agentDir,
-        contextFiles: [],
-        cwd: input.workspaceRoot,
-        disableExtensionDiscovery: true,
-        enableLsp: false,
-        enableMCP: false,
-        hasUI: false,
-        modelPattern: input.model,
-        promptTemplates: [],
-        sessionManager: input.SessionManager.inMemory(),
-        skills: [],
-        slashCommands: [],
-        systemPrompt:
-          'You validate SQL queries. Reply with JSON only in the form {"verdict":"safe|rewrite|reject","rewrittenQuery":"...","notes":["..."]}.',
-        toolNames: ["__none__"],
-      });
-
-      try {
-        return parseQueryCheckResult(await collectAssistantText(session, prompt));
-      } finally {
-        await session.dispose();
+    async runCheck(input: QueryCheckInput) {
+      const model = ctx.model;
+      if (!model) {
+        throw new Error("Checker requires an active model");
       }
+
+      const apiKey = await ctx.modelRegistry.getApiKey(model, ctx.sessionManager.getSessionId());
+      if (!apiKey) {
+        throw new Error(`Checker could not resolve API key for provider: ${model.provider}`);
+      }
+
+      const aiModuleName = "@oh-my-pi/pi-ai";
+      const { completeSimple } = await import(aiModuleName);
+      const result = await completeSimple(
+        model,
+        {
+          systemPrompt:
+            'You validate SQL queries. Reply with JSON only in the form {"verdict":"safe|rewrite|reject","rewrittenQuery":"...","notes":["..."]}.',
+          messages: [{
+            role: "user",
+            content: buildCheckerPrompt(input),
+            timestamp: Date.now(),
+          }],
+        },
+        {
+          apiKey,
+          sessionId: ctx.sessionManager.getSessionId(),
+          toolChoice: "none",
+        },
+      );
+
+      return parseQueryCheckResult(extractAssistantText(result.content));
     },
   };
 }
@@ -323,6 +326,20 @@ type SessionLike = {
   dispose(): Promise<void>;
   prompt(text: string, options?: { expandPromptTemplates?: boolean }): Promise<void>;
   subscribe(listener: (event: SessionEvent) => void): () => void;
+};
+
+type ToolModel = {
+  provider: string;
+} & Record<string, unknown>;
+
+type ToolContext = {
+  model: ToolModel | undefined;
+  modelRegistry: {
+    getApiKey(model: ToolModel, sessionId?: string): Promise<string | undefined>;
+  };
+  sessionManager: {
+    getSessionId(): string;
+  };
 };
 
 type SessionEvent = {
@@ -364,6 +381,16 @@ function parseQueryCheckResult(output: string): QueryCheckResult {
     rewrittenQuery: typeof parsed.rewrittenQuery === "string" ? parsed.rewrittenQuery : "",
     notes: Array.isArray(parsed.notes) ? parsed.notes.map((note) => String(note)) : [],
   };
+}
+
+function buildCheckerPrompt(input: QueryCheckInput): string {
+  return [
+    `Dialect: ${input.dialect}`,
+    `Question: ${input.question}`,
+    "Review the SQL for correctness and safety.",
+    `SQL:\n${input.query}`,
+    'Respond with JSON: {"verdict":"safe|rewrite|reject","rewrittenQuery":"...","notes":["..."]}',
+  ].join("\n\n");
 }
 
 function toTextResult(text: string) {

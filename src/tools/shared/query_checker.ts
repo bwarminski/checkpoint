@@ -9,20 +9,12 @@ export type QueryCheckResult = {
   notes: Array<string>;
 };
 
-export type QueryChecker = {
-  runCheck(prompt: string): Promise<QueryCheckResult>;
-};
-
-export function buildCheckerPrompt(input: {
+export type QueryCheckInput = {
   dialect: "postgres" | "clickhouse";
   question: string;
   query: string;
-}): string {
-  return [
-    `Dialect: ${input.dialect}`,
-    `Question: ${input.question}`,
-    "Review the SQL for correctness and safety.",
-    `SQL:\n${input.query}`,
-    'Respond with JSON: {"verdict":"safe|rewrite|reject","rewrittenQuery":"...","notes":["..."]}',
-  ].join("\n\n");
-}
+};
+
+export type QueryChecker = {
+  runCheck(input: QueryCheckInput): Promise<QueryCheckResult>;
+};
