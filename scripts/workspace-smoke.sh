@@ -20,7 +20,7 @@ Manual TUI loop
 2. Change into the generated workspace:
    cd "${WORKSPACE_ROOT}"
 3. Start the oh-my-pi TUI:
-   pi --model "\$OMP_MODEL"
+   omp --model "\$OMP_MODEL"
 4. Paste one of the scenario prompts below.
 5. Inspect the resulting diff or local commit in workdir after the run.
 
