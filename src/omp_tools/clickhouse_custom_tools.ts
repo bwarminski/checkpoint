@@ -19,69 +19,11 @@ type ClickHouseDefinition = ReturnType<typeof createClickHouseToolDefinitions>[n
 
 export function createClickHouseToolDefinitions(type: TypeFactory): Array<SdkToolDefinition> {
   const runner = createClickHouseRunner();
-  const clickHouseListTablesTool = createClickHouseListTablesTool(
-    async (sql) => runner(sql) as Promise<Array<{ name: string }>>,
-  );
-  const clickHouseSchemaTool = createClickHouseSchemaTool(runner);
-  const clickHouseQueryTool = createClickHouseQueryTool(runner);
-
   return [
-    {
-      name: "clickhouse_db_list_tables",
-      label: "ClickHouse Tables",
-      description: "List ClickHouse tables from the requested database.",
-      parameters: type.Object({ database: type.String() }),
-      async execute(_toolCallId: string, params: { database: string }) {
-        return toTextResult(await clickHouseListTablesTool.execute(params));
-      },
-    },
-    {
-      name: "clickhouse_db_schema",
-      label: "ClickHouse Schema",
-      description: "Show ClickHouse schema details and sample rows for the requested tables.",
-      parameters: type.Object({
-        database: type.String(),
-        tables: type.Array(type.String()),
-      }),
-      async execute(_toolCallId: string, params: { database: string; tables: Array<string> }) {
-        return toTextResult(await clickHouseSchemaTool.execute(params));
-      },
-    },
-    {
-      name: "clickhouse_db_checker",
-      label: "ClickHouse Checker",
-      description: "Validate a ClickHouse query and return a structured verdict.",
-      parameters: type.Object({
-        dialect: type.Literal("clickhouse"),
-        question: type.String(),
-        query: type.String(),
-      }),
-      async execute(
-        _toolCallId: string,
-        params: { dialect: "clickhouse"; question: string; query: string },
-        _signal: AbortSignal | undefined,
-        _onUpdate: unknown,
-        ctx,
-      ) {
-        const clickHouseCheckerTool = createClickHouseCheckerTool(
-          createLiveQueryChecker(requireToolContext("clickhouse_db_checker", ctx)),
-        );
-        return toTextResult(JSON.stringify(await clickHouseCheckerTool.execute(params), null, 2));
-      },
-    },
-    {
-      name: "clickhouse_db_query",
-      label: "ClickHouse Query",
-      description: "Run a bounded exploratory ClickHouse query.",
-      parameters: type.Object({
-        query: type.String(),
-        rowCap: type.Optional(type.Number()),
-        timeoutMs: type.Optional(type.Number()),
-      }),
-      async execute(_toolCallId: string, params: { query: string; rowCap?: number; timeoutMs?: number }) {
-        return toTextResult(await clickHouseQueryTool.execute(params));
-      },
-    },
+    createClickHouseListTablesDefinition(type, runner),
+    createClickHouseSchemaDefinition(type, runner),
+    createClickHouseCheckerDefinition(type),
+    createClickHouseQueryDefinition(type, runner),
   ];
 }
 
@@ -104,11 +46,97 @@ function createClickHouseNativeTools(type: TypeFactory): [NativeCustomTool, Nati
   ];
 }
 
-export const clickhouseDbListTables: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type)[0];
-export const clickhouseDbSchema: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type)[1];
-export const clickhouseDbChecker: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type)[2];
-export const clickhouseDbQuery: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type)[3];
+export const clickhouseDbListTables: NativeCustomToolFactory = (pi) =>
+  toCustomTool(createClickHouseListTablesDefinition(pi.typebox.Type, createClickHouseRunner()));
+export const clickhouseDbSchema: NativeCustomToolFactory = (pi) =>
+  toCustomTool(createClickHouseSchemaDefinition(pi.typebox.Type, createClickHouseRunner()));
+export const clickhouseDbChecker: NativeCustomToolFactory = (pi) =>
+  toCustomTool(createClickHouseCheckerDefinition(pi.typebox.Type));
+export const clickhouseDbQuery: NativeCustomToolFactory = (pi) =>
+  toCustomTool(createClickHouseQueryDefinition(pi.typebox.Type, createClickHouseRunner()));
 
 const clickHouseCustomTools: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type);
 
 export default clickHouseCustomTools;
+
+function createClickHouseListTablesDefinition(
+  type: TypeFactory,
+  runner: (sql: string) => Promise<Array<Record<string, unknown>>>,
+): SdkToolDefinition {
+  const clickHouseListTablesTool = createClickHouseListTablesTool(
+    async (sql) => runner(sql) as Promise<Array<{ name: string }>>,
+  );
+  return {
+    name: "clickhouse_db_list_tables",
+    label: "ClickHouse Tables",
+    description: "List ClickHouse tables from the requested database.",
+    parameters: type.Object({ database: type.String() }),
+    async execute(_toolCallId: string, params: { database: string }) {
+      return toTextResult(await clickHouseListTablesTool.execute(params));
+    },
+  };
+}
+
+function createClickHouseSchemaDefinition(
+  type: TypeFactory,
+  runner: (sql: string) => Promise<Array<Record<string, unknown>>>,
+): SdkToolDefinition {
+  const clickHouseSchemaTool = createClickHouseSchemaTool(runner);
+  return {
+    name: "clickhouse_db_schema",
+    label: "ClickHouse Schema",
+    description: "Show ClickHouse schema details and sample rows for the requested tables.",
+    parameters: type.Object({
+      database: type.String(),
+      tables: type.Array(type.String()),
+    }),
+    async execute(_toolCallId: string, params: { database: string; tables: Array<string> }) {
+      return toTextResult(await clickHouseSchemaTool.execute(params));
+    },
+  };
+}
+
+function createClickHouseCheckerDefinition(type: TypeFactory): SdkToolDefinition {
+  return {
+    name: "clickhouse_db_checker",
+    label: "ClickHouse Checker",
+    description: "Validate a ClickHouse query and return a structured verdict.",
+    parameters: type.Object({
+      dialect: type.Literal("clickhouse"),
+      question: type.String(),
+      query: type.String(),
+    }),
+    async execute(
+      _toolCallId: string,
+      params: { dialect: "clickhouse"; question: string; query: string },
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx,
+    ) {
+      const clickHouseCheckerTool = createClickHouseCheckerTool(
+        createLiveQueryChecker(requireToolContext("clickhouse_db_checker", ctx)),
+      );
+      return toTextResult(JSON.stringify(await clickHouseCheckerTool.execute(params), null, 2));
+    },
+  };
+}
+
+function createClickHouseQueryDefinition(
+  type: TypeFactory,
+  runner: (sql: string) => Promise<Array<Record<string, unknown>>>,
+): SdkToolDefinition {
+  const clickHouseQueryTool = createClickHouseQueryTool(runner);
+  return {
+    name: "clickhouse_db_query",
+    label: "ClickHouse Query",
+    description: "Run a bounded exploratory ClickHouse query.",
+    parameters: type.Object({
+      query: type.String(),
+      rowCap: type.Optional(type.Number()),
+      timeoutMs: type.Optional(type.Number()),
+    }),
+    async execute(_toolCallId: string, params: { query: string; rowCap?: number; timeoutMs?: number }) {
+      return toTextResult(await clickHouseQueryTool.execute(params));
+    },
+  };
+}

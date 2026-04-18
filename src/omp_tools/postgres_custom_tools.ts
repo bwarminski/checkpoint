@@ -19,69 +19,11 @@ type PostgresDefinition = ReturnType<typeof createPostgresToolDefinitions>[numbe
 
 export function createPostgresToolDefinitions(type: TypeFactory): Array<SdkToolDefinition> {
   const runner = createPostgresRunner();
-  const postgresListTablesTool = createPostgresListTablesTool(
-    async (sql) => runner(sql) as Promise<Array<{ table_name: string }>>,
-  );
-  const postgresSchemaTool = createPostgresSchemaTool(runner);
-  const postgresQueryTool = createPostgresQueryTool(runner);
-
   return [
-    {
-      name: "sql_db_list_tables",
-      label: "Postgres Tables",
-      description: "List PostgreSQL tables from the requested schema.",
-      parameters: type.Object({ schema: type.String() }),
-      async execute(_toolCallId: string, params: { schema: string }) {
-        return toTextResult(await postgresListTablesTool.execute(params));
-      },
-    },
-    {
-      name: "sql_db_schema",
-      label: "Postgres Schema",
-      description: "Show PostgreSQL schema details and sample rows for the requested tables.",
-      parameters: type.Object({
-        schema: type.String(),
-        tables: type.Array(type.String()),
-      }),
-      async execute(_toolCallId: string, params: { schema: string; tables: Array<string> }) {
-        return toTextResult(await postgresSchemaTool.execute(params));
-      },
-    },
-    {
-      name: "sql_db_checker",
-      label: "Postgres Checker",
-      description: "Validate a PostgreSQL query and return a structured verdict.",
-      parameters: type.Object({
-        dialect: type.Literal("postgres"),
-        question: type.String(),
-        query: type.String(),
-      }),
-      async execute(
-        _toolCallId: string,
-        params: { dialect: "postgres"; question: string; query: string },
-        _signal: AbortSignal | undefined,
-        _onUpdate: unknown,
-        ctx,
-      ) {
-        const postgresCheckerTool = createPostgresCheckerTool(
-          createLiveQueryChecker(requireToolContext("sql_db_checker", ctx)),
-        );
-        return toTextResult(JSON.stringify(await postgresCheckerTool.execute(params), null, 2));
-      },
-    },
-    {
-      name: "sql_db_query",
-      label: "Postgres Query",
-      description: "Run a bounded exploratory PostgreSQL query.",
-      parameters: type.Object({
-        query: type.String(),
-        rowCap: type.Optional(type.Number()),
-        timeoutMs: type.Optional(type.Number()),
-      }),
-      async execute(_toolCallId: string, params: { query: string; rowCap?: number; timeoutMs?: number }) {
-        return toTextResult(await postgresQueryTool.execute(params));
-      },
-    },
+    createPostgresListTablesDefinition(type, runner),
+    createPostgresSchemaDefinition(type, runner),
+    createPostgresCheckerDefinition(type),
+    createPostgresQueryDefinition(type, runner),
   ];
 }
 
@@ -104,11 +46,97 @@ function createPostgresNativeTools(type: TypeFactory): [NativeCustomTool, Native
   ];
 }
 
-export const sqlDbListTables: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type)[0];
-export const sqlDbSchema: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type)[1];
-export const sqlDbChecker: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type)[2];
-export const sqlDbQuery: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type)[3];
+export const sqlDbListTables: NativeCustomToolFactory = (pi) =>
+  toCustomTool(createPostgresListTablesDefinition(pi.typebox.Type, createPostgresRunner()));
+export const sqlDbSchema: NativeCustomToolFactory = (pi) =>
+  toCustomTool(createPostgresSchemaDefinition(pi.typebox.Type, createPostgresRunner()));
+export const sqlDbChecker: NativeCustomToolFactory = (pi) =>
+  toCustomTool(createPostgresCheckerDefinition(pi.typebox.Type));
+export const sqlDbQuery: NativeCustomToolFactory = (pi) =>
+  toCustomTool(createPostgresQueryDefinition(pi.typebox.Type, createPostgresRunner()));
 
 const postgresCustomTools: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type);
 
 export default postgresCustomTools;
+
+function createPostgresListTablesDefinition(
+  type: TypeFactory,
+  runner: (sql: string) => Promise<Array<Record<string, unknown>>>,
+): SdkToolDefinition {
+  const postgresListTablesTool = createPostgresListTablesTool(
+    async (sql) => runner(sql) as Promise<Array<{ table_name: string }>>,
+  );
+  return {
+    name: "sql_db_list_tables",
+    label: "Postgres Tables",
+    description: "List PostgreSQL tables from the requested schema.",
+    parameters: type.Object({ schema: type.String() }),
+    async execute(_toolCallId: string, params: { schema: string }) {
+      return toTextResult(await postgresListTablesTool.execute(params));
+    },
+  };
+}
+
+function createPostgresSchemaDefinition(
+  type: TypeFactory,
+  runner: (sql: string) => Promise<Array<Record<string, unknown>>>,
+): SdkToolDefinition {
+  const postgresSchemaTool = createPostgresSchemaTool(runner);
+  return {
+    name: "sql_db_schema",
+    label: "Postgres Schema",
+    description: "Show PostgreSQL schema details and sample rows for the requested tables.",
+    parameters: type.Object({
+      schema: type.String(),
+      tables: type.Array(type.String()),
+    }),
+    async execute(_toolCallId: string, params: { schema: string; tables: Array<string> }) {
+      return toTextResult(await postgresSchemaTool.execute(params));
+    },
+  };
+}
+
+function createPostgresCheckerDefinition(type: TypeFactory): SdkToolDefinition {
+  return {
+    name: "sql_db_checker",
+    label: "Postgres Checker",
+    description: "Validate a PostgreSQL query and return a structured verdict.",
+    parameters: type.Object({
+      dialect: type.Literal("postgres"),
+      question: type.String(),
+      query: type.String(),
+    }),
+    async execute(
+      _toolCallId: string,
+      params: { dialect: "postgres"; question: string; query: string },
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx,
+    ) {
+      const postgresCheckerTool = createPostgresCheckerTool(
+        createLiveQueryChecker(requireToolContext("sql_db_checker", ctx)),
+      );
+      return toTextResult(JSON.stringify(await postgresCheckerTool.execute(params), null, 2));
+    },
+  };
+}
+
+function createPostgresQueryDefinition(
+  type: TypeFactory,
+  runner: (sql: string) => Promise<Array<Record<string, unknown>>>,
+): SdkToolDefinition {
+  const postgresQueryTool = createPostgresQueryTool(runner);
+  return {
+    name: "sql_db_query",
+    label: "Postgres Query",
+    description: "Run a bounded exploratory PostgreSQL query.",
+    parameters: type.Object({
+      query: type.String(),
+      rowCap: type.Optional(type.Number()),
+      timeoutMs: type.Optional(type.Number()),
+    }),
+    async execute(_toolCallId: string, params: { query: string; rowCap?: number; timeoutMs?: number }) {
+      return toTextResult(await postgresQueryTool.execute(params));
+    },
+  };
+}
