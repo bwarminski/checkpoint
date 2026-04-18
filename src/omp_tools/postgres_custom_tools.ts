@@ -1,6 +1,6 @@
 // ABOUTME: Exposes native oh-my-pi custom tools for coarse Postgres investigation workflows.
 // ABOUTME: Shares one adapter layer between filesystem-discovered tools and SDK-backed tests.
-import { createLiveQueryChecker } from "./live_query_checker.ts";
+import { createLiveQueryCheckerWithCompletion } from "./live_query_checker.ts";
 import {
   createPostgresRunner,
   requireToolContext,
@@ -10,6 +10,7 @@ import {
   type SdkToolDefinition,
   type TypeFactory,
 } from "./runtime.ts";
+import { createQueryCheckerCompletion } from "../omp_extension/tool_runtime.ts";
 import { createPostgresCheckerTool } from "../tools/postgres/checker_tool.ts";
 import { createPostgresListTablesTool } from "../tools/postgres/list_tables_tool.ts";
 import { createPostgresQueryTool } from "../tools/postgres/query_tool.ts";
@@ -114,7 +115,10 @@ function createPostgresCheckerDefinition(type: TypeFactory): SdkToolDefinition {
       ctx,
     ) {
       const postgresCheckerTool = createPostgresCheckerTool(
-        createLiveQueryChecker(requireToolContext("sql_db_checker", ctx)),
+        createLiveQueryCheckerWithCompletion(
+          createQueryCheckerCompletion(),
+          requireToolContext("sql_db_checker", ctx),
+        ),
       );
       return toTextResult(JSON.stringify(await postgresCheckerTool.execute(params), null, 2));
     },

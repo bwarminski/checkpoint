@@ -11,36 +11,6 @@ import type { ToolContext } from "./runtime.ts";
 
 export type LiveCheckerContext = ToolContext;
 
-export function createLiveQueryChecker(ctx: LiveCheckerContext): {
-  runCheck(input: QueryCheckInput): Promise<QueryCheckResult>;
-} {
-  return createLiveQueryCheckerWithCompletion(
-    async ({ model, apiKey, sessionId, prompt }) => {
-      const { completeSimple } = await import("@oh-my-pi/pi-ai");
-      const result = await completeSimple(
-        model,
-        {
-          systemPrompt:
-            'You validate SQL queries. Reply with JSON only in the form {"verdict":"safe|rewrite|reject","rewrittenQuery":"...","notes":["..."]}.',
-          messages: [{
-            role: "user",
-            content: prompt,
-            timestamp: Date.now(),
-          }],
-        },
-        {
-          apiKey,
-          sessionId,
-          toolChoice: "none",
-        },
-      );
-
-      return extractAssistantText(result.content);
-    },
-    ctx,
-  );
-}
-
 export function createLiveQueryCheckerWithCompletion(
   runCompletion: QueryCompletion,
   ctx: LiveCheckerContext,

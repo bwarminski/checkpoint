@@ -1,6 +1,6 @@
 // ABOUTME: Exposes native oh-my-pi custom tools for coarse ClickHouse investigation workflows.
 // ABOUTME: Shares one adapter layer between filesystem-discovered tools and SDK-backed tests.
-import { createLiveQueryChecker } from "./live_query_checker.ts";
+import { createLiveQueryCheckerWithCompletion } from "./live_query_checker.ts";
 import {
   createClickHouseRunner,
   requireToolContext,
@@ -10,6 +10,7 @@ import {
   type SdkToolDefinition,
   type TypeFactory,
 } from "./runtime.ts";
+import { createQueryCheckerCompletion } from "../omp_extension/tool_runtime.ts";
 import { createClickHouseCheckerTool } from "../tools/clickhouse/checker_tool.ts";
 import { createClickHouseListTablesTool } from "../tools/clickhouse/list_tables_tool.ts";
 import { createClickHouseQueryTool } from "../tools/clickhouse/query_tool.ts";
@@ -114,7 +115,10 @@ function createClickHouseCheckerDefinition(type: TypeFactory): SdkToolDefinition
       ctx,
     ) {
       const clickHouseCheckerTool = createClickHouseCheckerTool(
-        createLiveQueryChecker(requireToolContext("clickhouse_db_checker", ctx)),
+        createLiveQueryCheckerWithCompletion(
+          createQueryCheckerCompletion(),
+          requireToolContext("clickhouse_db_checker", ctx),
+        ),
       );
       return toTextResult(JSON.stringify(await clickHouseCheckerTool.execute(params), null, 2));
     },
