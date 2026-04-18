@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import {
@@ -85,8 +86,10 @@ test("workspace setup and reset create an extension-based DB specialist runtime"
     await setupWorkspace(fakeHome);
 
     const extensionStats = await lstat(extensionEntry);
+    const extensionModule = await import(pathToFileURL(extensionEntry).href);
 
     assert.equal(extensionStats.isFile(), true);
+    assert.equal(typeof extensionModule.default, "function");
     await assert.rejects(() => lstat(postgresCheckerShim));
     await assert.rejects(() => lstat(clickHouseQueryShim));
 
