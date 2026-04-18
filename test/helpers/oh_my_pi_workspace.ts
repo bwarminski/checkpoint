@@ -350,7 +350,7 @@ type SessionEvent = {
   };
 };
 
-function extractAssistantText(content: string | Array<{ type: string; text?: string }>): string {
+export function extractAssistantText(content: string | Array<{ type: string; text?: string }>): string {
   if (typeof content === "string") {
     return content.trim();
   }
@@ -362,7 +362,7 @@ function extractAssistantText(content: string | Array<{ type: string; text?: str
     .trim();
 }
 
-function parseQueryCheckResult(output: string): QueryCheckResult {
+export function parseQueryCheckResult(output: string): QueryCheckResult {
   const trimmed = output.trim();
   const jsonText = trimmed.startsWith("```")
     ? trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")

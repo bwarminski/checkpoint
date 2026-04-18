@@ -33,6 +33,22 @@ if the machine is on a shared/public network or if Docker host networking change
 
 **Where:** `docker-compose.yml` clickhouse service. Confirmed by `/cso` audit 2026-04-05.
 
+## SDK internal types: request exports or add shape validation
+
+**What:** `ToolContext`, `SessionLike`, and `SessionEvent` in `test/helpers/oh_my_pi_workspace.ts`
+are local structural types that mirror internal oh-my-pi SDK shapes. TypeScript structural
+typing means a breaking SDK interface change would not produce a compile error — only a
+runtime failure (likely in the live integration test, not in unit tests).
+
+**Fix options:**
+- Ask the oh-my-pi team to export these types from `@oh-my-pi/pi-coding-agent`
+- Add a runtime shape-assertion test that validates the context object shape on session start
+
+**Why deferred:** The live integration test (`npm run test:model-integration`) would catch
+interface drift on any SDK upgrade. Low-frequency risk for a single-developer MVP.
+
+**Where:** `test/helpers/oh_my_pi_workspace.ts` — `ToolContext`, `SessionLike`, `SessionEvent` types.
+
 ## pg_stat_monitor upgrade path
 
 **What:** Evaluate `pg_stat_monitor` (Percona) as a drop-in replacement for
