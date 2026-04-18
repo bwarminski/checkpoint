@@ -17,9 +17,8 @@ test("workspace setup and reset create the expected workspace skeleton", async (
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-home-"));
   const workspaceRoot = getWorkspaceRoot(fakeHome);
   const skillsEntry = join(workspaceRoot, ".omp", "skills");
-  const toolsEntry = join(workspaceRoot, ".omp", "tools");
-  const postgresListEntry = join(toolsEntry, "sql_db_list_tables", "index.ts");
-  const clickHouseQueryEntry = join(toolsEntry, "clickhouse_db_query", "index.ts");
+  const postgresListEntry = join(workspaceRoot, ".omp", "tools", "sql_db_list_tables", "index.ts");
+  const clickHouseQueryEntry = join(workspaceRoot, ".omp", "tools", "clickhouse_db_query", "index.ts");
   const workdirEntry = join(workspaceRoot, "workdir");
 
   try {
@@ -29,7 +28,6 @@ test("workspace setup and reset create the expected workspace skeleton", async (
 
     let workspaceStats = await lstat(workspaceRoot);
     let skillsStats = await lstat(skillsEntry);
-    let toolsStats = await lstat(toolsEntry);
     let postgresListStats = await lstat(postgresListEntry);
     let clickHouseQueryStats = await lstat(clickHouseQueryEntry);
     let workdirStats = await lstat(workdirEntry);
@@ -37,8 +35,6 @@ test("workspace setup and reset create the expected workspace skeleton", async (
     assert.equal(workspaceStats.isDirectory(), true);
     assert.equal(skillsStats.isSymbolicLink(), true);
     assert.equal(await readlink(skillsEntry), join(process.cwd(), "skills"));
-    assert.equal(toolsStats.isDirectory(), true);
-    assert.equal(toolsStats.isSymbolicLink(), false);
     assert.equal(postgresListStats.isFile(), true);
     assert.equal(clickHouseQueryStats.isFile(), true);
     assert.equal(workdirStats.isDirectory(), true);
@@ -47,17 +43,10 @@ test("workspace setup and reset create the expected workspace skeleton", async (
 
     workspaceStats = await lstat(workspaceRoot);
     skillsStats = await lstat(skillsEntry);
-    toolsStats = await lstat(toolsEntry);
-    postgresListStats = await lstat(postgresListEntry);
-    clickHouseQueryStats = await lstat(clickHouseQueryEntry);
     workdirStats = await lstat(workdirEntry);
 
     assert.equal(workspaceStats.isDirectory(), true);
     assert.equal(skillsStats.isSymbolicLink(), true);
-    assert.equal(toolsStats.isDirectory(), true);
-    assert.equal(toolsStats.isSymbolicLink(), false);
-    assert.equal(postgresListStats.isFile(), true);
-    assert.equal(clickHouseQueryStats.isFile(), true);
     assert.equal(workdirStats.isDirectory(), true);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
