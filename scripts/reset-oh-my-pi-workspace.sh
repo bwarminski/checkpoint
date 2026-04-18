@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ABOUTME: Recreates the external oh-my-pi workspace from scratch for repeatable verification runs.
-# ABOUTME: Removes any generated workspace state and delegates to the setup script for the final layout.
+# ABOUTME: Removes any generated workspace state and delegates to the setup script for the extension-based layout.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

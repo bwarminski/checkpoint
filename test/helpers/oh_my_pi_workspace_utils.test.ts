@@ -1,9 +1,18 @@
-// ABOUTME: Unit tests for the pure utility functions in the oh-my-pi workspace test helper.
-// ABOUTME: Covers extractAssistantText and parseQueryCheckResult without requiring a live model.
+// ABOUTME: Unit tests for the oh-my-pi workspace test helper utilities and generated workspace shape.
+// ABOUTME: Covers extractAssistantText, parseQueryCheckResult, and the generated extension-based runtime.
 import assert from "node:assert/strict";
+import { lstat, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { extractAssistantText, parseQueryCheckResult } from "./oh_my_pi_workspace.ts";
+import {
+  extractAssistantText,
+  getWorkspaceRoot,
+  parseQueryCheckResult,
+  resetWorkspace,
+  setupWorkspace,
+} from "./oh_my_pi_workspace.ts";
 
 test("extractAssistantText returns trimmed string content as-is", () => {
   assert.equal(extractAssistantText("  hello world  "), "hello world");
@@ -63,4 +72,30 @@ test("parseQueryCheckResult throws on invalid verdict", () => {
     () => parseQueryCheckResult(JSON.stringify({ verdict: "unknown" })),
     /invalid verdict/,
   );
+});
+
+test("workspace setup and reset create an extension-based DB specialist runtime", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-home-"));
+  const workspaceRoot = getWorkspaceRoot(fakeHome);
+  const extensionEntry = join(workspaceRoot, ".omp", "extensions", "db-specialist.ts");
+  const postgresCheckerShim = join(workspaceRoot, ".omp", "tools", "sql_db_checker", "index.ts");
+  const clickHouseQueryShim = join(workspaceRoot, ".omp", "tools", "clickhouse_db_query", "index.ts");
+
+  try {
+    await setupWorkspace(fakeHome);
+
+    const extensionStats = await lstat(extensionEntry);
+
+    assert.equal(extensionStats.isFile(), true);
+    await assert.rejects(() => lstat(postgresCheckerShim));
+    await assert.rejects(() => lstat(clickHouseQueryShim));
+
+    await resetWorkspace(fakeHome);
+
+    assert.equal((await lstat(extensionEntry)).isFile(), true);
+    await assert.rejects(() => lstat(postgresCheckerShim));
+    await assert.rejects(() => lstat(clickHouseQueryShim));
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
 });
