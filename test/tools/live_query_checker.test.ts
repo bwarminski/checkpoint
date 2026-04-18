@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { toExtensionToolDefinition } from "../../src/omp_extension/tool_runtime.ts";
 import { createLiveQueryCheckerWithCompletion } from "../../src/omp_tools/live_query_checker.ts";
 import { buildQueryCheckPrompt, parseQueryCheckResult } from "../../src/tools/shared/query_checker.ts";
 
@@ -84,5 +85,49 @@ test("createLiveQueryCheckerWithCompletion delegates completion to the injected 
     verdict: "safe",
     rewrittenQuery: "select 1",
     notes: ["ok"],
+  });
+});
+
+test("toExtensionToolDefinition preserves the tool seam", async () => {
+  const tool = toExtensionToolDefinition({
+    name: "sql_db_checker",
+    label: "Postgres Checker",
+    description: "Validate a PostgreSQL query and return a structured verdict.",
+    parameters: { kind: "object" },
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      assert.deepEqual(params, { query: "select 1" });
+      assert.equal(ctx?.model?.provider, "openai");
+      return {
+        content: [{ type: "text", text: "ok" }],
+      };
+    },
+  });
+
+  assert.equal(tool.name, "sql_db_checker");
+  assert.equal(tool.label, "Postgres Checker");
+  assert.equal(tool.description, "Validate a PostgreSQL query and return a structured verdict.");
+
+  const result = await tool.execute(
+    "call-1",
+    { query: "select 1" },
+    undefined,
+    undefined,
+    {
+      model: { provider: "openai" },
+      modelRegistry: {
+        async getApiKey() {
+          return undefined;
+        },
+      },
+      sessionManager: {
+        getSessionId() {
+          return "session-123";
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    content: [{ type: "text", text: "ok" }],
   });
 });
