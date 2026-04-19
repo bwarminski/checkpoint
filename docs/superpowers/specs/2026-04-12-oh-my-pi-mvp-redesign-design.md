@@ -158,6 +158,36 @@ The repo should also provide a thin automated harness that creates an
 load the custom tools, follow the intended workflow, and complete constrained
 scenarios without the removed runtime stack.
 
+The main integration path should use the `@oh-my-pi/pi-coding-agent` SDK
+directly rather than spawning the `omp` CLI. This keeps the test focused on the
+repo's actual session wiring and injected SQL tool surface instead of CLI
+extension discovery behavior.
+
+That SDK integration test should:
+
+- create an in-process `oh-my-pi` session with `cwd` pointing at the generated
+  workspace
+- inject the eight coarse SQL tools explicitly using the real tool
+  implementations wired with real runners
+- use an in-memory or otherwise ephemeral session manager for isolation
+- remain live-model-based only when `OMP_MODEL` is provided
+- skip honestly when `OMP_MODEL` is unset instead of treating the live path as a
+  pass
+
+The generated workspace still matters because it remains the source of skills
+and project-local context for the session. The test changes only the session
+execution path, not the workspace contract.
+
+`cwd` and the generated workspace are sufficient for skill/context discovery,
+but they do not auto-materialize the repo's coarse SQL tools. The SDK test
+therefore needs explicit tool registration, with:
+
+- PostgreSQL tools using a real `pg`-backed runner configured by `PGHOST`,
+  `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`
+- ClickHouse tools using a real HTTP runner configured by `CLICKHOUSE_URL`
+- checker tools using the real in-process `oh-my-pi` path available to the SDK
+  session, not mocked checker responses
+
 ## Success Criteria
 
 The redesign is successful when:
@@ -188,6 +218,10 @@ Three verification layers (enriched from spec's two):
 1. **Unit tests** (mocked DB/subagent): Each of the 8 SQL tools gets its own test file. The `*_db_checker` tools take an injectable subagent dependency, mocked in unit tests. The schema and query tool tests should assert the LangChain-style formatted string outputs rather than raw rows.
 2. **Model-based integration tests** (live model, runs before each commit): Validate tool behavior end-to-end with a real oh-my-pi session against the generated workspace.
 3. **Workspace smoke tests** (manually runnable): Scripts in the workspace validate outcomes for a known set of problematic queries (N+1, LIKE leading-wildcard, etc.) against the demo app.
+
+The model-based integration test should use the SDK session path, not the `omp`
+binary, and should treat the CLI/extension-discovery path as a separate concern
+if it ever needs coverage later.
 
 Additional focused checks for the ergonomic shift:
 
