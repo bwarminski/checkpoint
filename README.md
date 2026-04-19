@@ -5,8 +5,8 @@ This repo owns the oh-my-pi-based DB specialist MVP.
 The generated oh-my-pi workspace skeleton lives at
 `~/.oh-my-pi-workspaces/checkpoint`.
 That skeleton keeps `.omp/skills` as a symlink into this repo, materializes
-discoverable `.omp/tools/<name>/index.ts` shims for the SQL tools, and provides
-a persistent `workdir` for the demo clone and local agent state.
+`.omp/extensions/db-specialist.ts` as the DB specialist runtime entrypoint, and
+provides a persistent `workdir` for the demo clone and local agent state.
 
 This checkout remains the source of truth for the DB specialist tools, skills,
 tests, and the local database stack that workspace uses.

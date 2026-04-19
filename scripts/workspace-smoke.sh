@@ -15,6 +15,9 @@ Manual workspace smoke verification
 Workspace ready at:
 ${WORKSPACE_ROOT}
 
+DB specialist runtime entrypoint:
+${WORKSPACE_ROOT}/.omp/extensions/db-specialist.ts
+
 Manual TUI loop
 1. Export a real model, for example: export OMP_MODEL=<provider/model>
 2. Change into the generated workspace:
