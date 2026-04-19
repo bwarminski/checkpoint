@@ -65,11 +65,9 @@ export function createQueryCheckerCompletion(): QueryCompletion {
 }
 
 export function toExtensionToolDefinition(definition: SdkToolDefinition): ExtensionToolDefinition {
+  const { execute, ...rest } = definition;
   return {
-    name: definition.name,
-    label: definition.label,
-    description: definition.description,
-    parameters: definition.parameters,
+    ...rest,
     async execute(
       toolCallId: string,
       params: Record<string, unknown>,
@@ -77,7 +75,7 @@ export function toExtensionToolDefinition(definition: SdkToolDefinition): Extens
       onUpdate?: unknown,
       ctx?: ToolContext,
     ) {
-      return definition.execute(toolCallId, params, signal, onUpdate, ctx as ToolContext);
+      return execute(toolCallId, params, signal, onUpdate, ctx as ToolContext);
     },
   };
 }

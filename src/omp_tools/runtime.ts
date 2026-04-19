@@ -55,7 +55,16 @@ export type ToolContext = {
   };
 };
 
-export type SdkToolDefinition = {
+export type ToolExtensionFields = {
+  hidden?: boolean;
+  defaultInactive?: boolean;
+  deferrable?: boolean;
+  onSession?: (event: unknown, ctx: unknown) => void | Promise<void>;
+  renderCall?: (...args: unknown[]) => unknown;
+  renderResult?: (...args: unknown[]) => unknown;
+};
+
+export type SdkToolDefinition = ToolExtensionFields & {
   name: string;
   label: string;
   description: string;
@@ -69,7 +78,7 @@ export type SdkToolDefinition = {
   ): Promise<ToolTextResult>;
 };
 
-export type ExtensionToolDefinition = {
+export type ExtensionToolDefinition = ToolExtensionFields & {
   name: string;
   label: string;
   description: string;
