@@ -64,28 +64,14 @@ export async function runWorkspaceChecker(input: {
   input: QueryCheckInput;
 }): Promise<QueryCheckResult> {
   const { session } = await createWorkspaceSession(input.home, input.model);
-  const checkerTool = await getWorkspaceRegisteredTool(input.home, input.toolName);
-  const resolvedModel = session.model ?? resolveRequestedModel(session.modelRegistry, input.model);
+  const checkerTool = session.getToolByName(input.toolName);
 
   if (!checkerTool) {
     throw new Error(`Missing checker tool definition: ${input.toolName}`);
   }
-  if (!resolvedModel) {
-    throw new Error(`Missing active model for checker tool: ${input.model}`);
-  }
 
   try {
-    const result = await checkerTool.execute(
-      "checker-test-call",
-      input.input,
-      undefined,
-      undefined,
-      {
-        model: resolvedModel,
-        modelRegistry: session.modelRegistry,
-        sessionManager: session.sessionManager,
-      },
-    );
+    const result = await checkerTool.execute("checker-test-call", input.input);
     return parseQueryCheckResult(extractAssistantText(result.content));
   } finally {
     await session.dispose();
@@ -141,9 +127,112 @@ async function createWorkspaceSession(home: string, model: string): Promise<{
     toolNames: ["__none__"],
   });
 
+  await session.setModelTemporary(resolvedModel);
+  const workspaceSession = session as WorkspaceSession;
+  workspaceSession.sessionManagerWithEntries =
+    session.sessionManager as WorkspaceSession["sessionManagerWithEntries"];
+  initializeWorkspaceExtensionRuntime(workspaceSession);
+
   return {
-    session: session as WorkspaceSession,
+    session: workspaceSession,
   };
+}
+
+function initializeWorkspaceExtensionRuntime(session: WorkspaceSession): void {
+  const extensionRunner = session.extensionRunner;
+  if (!extensionRunner) {
+    return;
+  }
+
+  extensionRunner.initialize(
+    {
+      sendMessage: (message: unknown, options?: unknown) => {
+        session.sendCustomMessage(message, options).catch(() => {});
+      },
+      sendUserMessage: (content: string, options?: unknown) => {
+        session.sendUserMessage(content, options).catch(() => {});
+      },
+      appendEntry: (customType: string, data: unknown) => {
+        session.sessionManagerWithEntries.appendCustomEntry(customType, data);
+      },
+      setLabel: (targetId: string, label: string) => {
+        session.sessionManagerWithEntries.appendLabelChange(targetId, label);
+      },
+      getActiveTools: () => session.getActiveToolNames(),
+      getAllTools: () => session.getAllToolNames(),
+      setActiveTools: (toolNames: Array<string>) => session.setActiveToolsByName(toolNames),
+      getCommands: () => [],
+      setModel: async (nextModel: ToolModel) => {
+        const key = await session.modelRegistry.getApiKey(nextModel);
+        if (!key) {
+          return false;
+        }
+
+        await session.setModel(nextModel);
+        return true;
+      },
+      getThinkingLevel: () => session.thinkingLevel,
+      setThinkingLevel: (level: unknown) => session.setThinkingLevel(level),
+      getSessionName: () => session.sessionManagerWithEntries.getSessionName(),
+      setSessionName: async (name: string) => {
+        await session.sessionManagerWithEntries.setSessionName(name, "user");
+      },
+    },
+    {
+      getModel: () => session.model,
+      isIdle: () => !session.isStreaming,
+      abort: () => session.abort(),
+      hasPendingMessages: () => session.queuedMessageCount > 0,
+      shutdown: () => {},
+      getContextUsage: () => session.getContextUsage(),
+      getSystemPrompt: () => session.systemPrompt,
+      compact: async (instructionsOrOptions?: string | Record<string, unknown>) => {
+        const instructions =
+          typeof instructionsOrOptions === "string" ? instructionsOrOptions : undefined;
+        const options =
+          instructionsOrOptions && typeof instructionsOrOptions === "object"
+            ? instructionsOrOptions
+            : undefined;
+        await session.compact(instructions, options);
+      },
+    },
+    {
+      getContextUsage: () => session.getContextUsage(),
+      waitForIdle: () => session.agent.waitForIdle(),
+      newSession: async (options?: { parentSession?: boolean; setup?: (sessionManager: ToolContext["sessionManager"]) => Promise<void> }) => {
+        const success = await session.newSession({ parentSession: options?.parentSession });
+        if (success && options?.setup) {
+          await options.setup(session.sessionManager);
+        }
+
+        return { cancelled: !success };
+      },
+      branch: async (entryId?: string) => {
+        const result = await session.branch(entryId);
+        return { cancelled: result.cancelled };
+      },
+      navigateTree: async (targetId: string, options?: { summarize?: boolean }) => {
+        const result = await session.navigateTree(targetId, { summarize: options?.summarize });
+        return { cancelled: result.cancelled };
+      },
+      switchSession: async (sessionPath: string) => {
+        const success = await session.switchSession(sessionPath);
+        return { cancelled: !success };
+      },
+      reload: async () => {
+        await session.reload();
+      },
+      compact: async (instructionsOrOptions?: string | Record<string, unknown>) => {
+        const instructions =
+          typeof instructionsOrOptions === "string" ? instructionsOrOptions : undefined;
+        const options =
+          instructionsOrOptions && typeof instructionsOrOptions === "object"
+            ? instructionsOrOptions
+            : undefined;
+        await session.compact(instructions, options);
+      },
+    },
+  );
 }
 
 function resolveRequestedModel(
@@ -169,22 +258,6 @@ async function loadWorkspaceExtension(extensionPath: string): Promise<void> {
 
 export async function validateWorkspaceExtension(home: string): Promise<void> {
   await loadWorkspaceExtension(getWorkspaceExtensionPath(home));
-}
-
-async function getWorkspaceRegisteredTool(
-  home: string,
-  toolName: "sql_db_checker" | "clickhouse_db_checker",
-): Promise<WorkspaceTool | undefined> {
-  const extensionModule = await import(pathToFileURL(getWorkspaceExtensionPath(home)).href);
-  const registeredTools = new Map<string, WorkspaceTool>();
-
-  extensionModule.default({
-    registerTool(tool: WorkspaceTool) {
-      registeredTools.set(tool.name, tool);
-    },
-  });
-
-  return registeredTools.get(toolName);
 }
 
 async function collectAssistantText(
@@ -218,12 +291,60 @@ type SessionLike = {
 };
 
 type WorkspaceSession = SessionLike & {
+  agent: {
+    waitForIdle(): Promise<void>;
+  };
+  branch(entryId?: string): Promise<{ cancelled: boolean }>;
+  compact(
+    instructions?: string,
+    options?: Record<string, unknown>,
+  ): Promise<void>;
+  extensionRunner?: {
+    initialize(
+      actions: Record<string, unknown>,
+      contextActions: Record<string, unknown>,
+      commandActions?: Record<string, unknown>,
+    ): void;
+  };
+  getActiveToolNames(): Array<string>;
   model: ToolModel | undefined;
   modelRegistry: ToolContext["modelRegistry"] & {
     find(provider: string, modelId: string): ToolModel | undefined;
+    getApiKey(model: ToolModel): Promise<string | undefined>;
   };
+  newSession(options?: { parentSession?: boolean }): Promise<boolean>;
+  navigateTree(
+    targetId: string,
+    options?: { summarize?: boolean },
+  ): Promise<{ cancelled: boolean }>;
+  queuedMessageCount: number;
+  reload(): Promise<void>;
+  sendCustomMessage(
+    message: unknown,
+    options?: unknown,
+  ): Promise<void>;
+  sendUserMessage(
+    content: string,
+    options?: unknown,
+  ): Promise<void>;
   sessionManager: ToolContext["sessionManager"];
+  sessionManagerWithEntries: ToolContext["sessionManager"] & {
+    appendCustomEntry(customType: string, data: unknown): void;
+    appendLabelChange(targetId: string, label: string): void;
+    getSessionName(): string | undefined;
+    setSessionName(name: string, source: string): Promise<void>;
+  };
+  setActiveToolsByName(toolNames: Array<string>): Promise<void>;
+  setModel(model: ToolModel): Promise<void>;
+  setThinkingLevel(level: unknown): void;
   getAllToolNames(): Array<string>;
+  getContextUsage(): unknown;
+  setModelTemporary(model: ToolModel): Promise<void>;
+  switchSession(sessionPath: string): Promise<boolean>;
+  systemPrompt: string;
+  thinkingLevel: unknown;
+  isStreaming: boolean;
+  abort(): void;
   getToolByName(name: string): {
     execute(
       toolCallId: string,
@@ -233,17 +354,6 @@ type WorkspaceSession = SessionLike & {
       context?: ToolContext,
     ): Promise<{ content: string | Array<{ type: string; text?: string }> }>;
   } | undefined;
-};
-
-type WorkspaceTool = {
-  name: string;
-  execute(
-    toolCallId: string,
-    params: Record<string, unknown>,
-    signal?: AbortSignal,
-    onUpdate?: unknown,
-    context?: ToolContext,
-  ): Promise<{ content: string | Array<{ type: string; text?: string }> }>;
 };
 
 type SessionEvent = {

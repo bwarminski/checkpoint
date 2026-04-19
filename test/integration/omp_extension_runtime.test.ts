@@ -40,9 +40,18 @@ test("workspace session tool names come from the generated extension runtime", {
 
   try {
     await setupWorkspace(fakeHome);
+
+    let toolNames = await getWorkspaceToolNames({
+      home: fakeHome,
+      model,
+    });
+
+    assert.equal(toolNames.includes("sql_db_list_tables"), true);
+    assert.equal(toolNames.includes("clickhouse_db_query"), true);
+
     await writeFile(extensionEntry, "export default function dbSpecialistExtension() {}\n");
 
-    const toolNames = await getWorkspaceToolNames({
+    toolNames = await getWorkspaceToolNames({
       home: fakeHome,
       model,
     });
