@@ -1,13 +1,19 @@
 // ABOUTME: Defines the shared contract for SQL query checker tools.
 // ABOUTME: Keeps checker prompt construction and result parsing reusable across runtimes.
 
+export const CHECKER_RESPONSE_FORMAT =
+  '{"verdict":"safe|rewrite|reject","rewrittenQuery":"...","notes":["..."]}';
+
+export const CHECKER_SYSTEM_PROMPT =
+  `You validate SQL queries. Reply with JSON only in the form ${CHECKER_RESPONSE_FORMAT}.`;
+
 export function buildQueryCheckPrompt(input: QueryCheckInput): string {
   return [
     `Dialect: ${input.dialect}`,
     `Question: ${input.question}`,
     "Review the SQL for correctness and safety.",
     `SQL:\n${input.query}`,
-    'Respond with JSON: {"verdict":"safe|rewrite|reject","rewrittenQuery":"...","notes":["..."]}',
+    `Respond with JSON: ${CHECKER_RESPONSE_FORMAT}`,
   ].join("\n\n");
 }
 

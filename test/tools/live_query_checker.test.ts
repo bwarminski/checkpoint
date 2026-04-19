@@ -5,7 +5,11 @@ import test from "node:test";
 
 import { toExtensionToolDefinition } from "../../src/omp_extension/tool_runtime.ts";
 import { createLiveQueryCheckerWithCompletion } from "../../src/omp_tools/live_query_checker.ts";
-import { buildQueryCheckPrompt, parseQueryCheckResult } from "../../src/tools/shared/query_checker.ts";
+import {
+  CHECKER_SYSTEM_PROMPT,
+  buildQueryCheckPrompt,
+  parseQueryCheckResult,
+} from "../../src/tools/shared/query_checker.ts";
 
 test("buildQueryCheckPrompt includes the expected checker instructions", () => {
   const prompt = buildQueryCheckPrompt({
@@ -86,6 +90,13 @@ test("createLiveQueryCheckerWithCompletion delegates completion to the injected 
     rewrittenQuery: "select 1",
     notes: ["ok"],
   });
+});
+
+test("CHECKER_SYSTEM_PROMPT keeps the JSON response contract in one shared export", () => {
+  assert.match(CHECKER_SYSTEM_PROMPT, /JSON only/);
+  assert.match(CHECKER_SYSTEM_PROMPT, /safe\|rewrite\|reject/);
+  assert.match(CHECKER_SYSTEM_PROMPT, /rewrittenQuery/);
+  assert.match(CHECKER_SYSTEM_PROMPT, /notes/);
 });
 
 test("createLiveQueryCheckerWithCompletion throws when model is undefined", async () => {

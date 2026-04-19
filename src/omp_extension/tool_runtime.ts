@@ -1,6 +1,6 @@
 // ABOUTME: Provides extension-owned runtime helpers for the DB specialist tools.
 // ABOUTME: Owns model invocation and tool-definition adaptation for the extension boundary.
-import { extractAssistantText } from "../tools/shared/query_checker.ts";
+import { CHECKER_SYSTEM_PROMPT, extractAssistantText } from "../tools/shared/query_checker.ts";
 import type {
   ExtensionToolDefinition,
   QueryCompletion,
@@ -45,8 +45,7 @@ export function createQueryCheckerCompletion(): QueryCompletion {
     const result = await completeSimple(
       model,
       {
-        systemPrompt:
-          'You validate SQL queries. Reply with JSON only in the form {"verdict":"safe|rewrite|reject","rewrittenQuery":"...","notes":["..."]}.',
+        systemPrompt: CHECKER_SYSTEM_PROMPT,
         messages: [{
           role: "user",
           content: prompt,
