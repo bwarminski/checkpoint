@@ -1,23 +1,18 @@
-// ABOUTME: Exposes native oh-my-pi custom tools for coarse ClickHouse investigation workflows.
-// ABOUTME: Shares one adapter layer between filesystem-discovered tools and SDK-backed tests.
+// ABOUTME: Exposes oh-my-pi tool definitions for coarse ClickHouse investigation workflows.
+// ABOUTME: Wraps pure tool logic with SDK type factories and injectable query completion.
 import { createLiveQueryCheckerWithCompletion } from "./live_query_checker.ts";
 import {
   createClickHouseRunner,
   requireToolContext,
   toTextResult,
-  type NativeCustomTool,
-  type NativeCustomToolFactory,
   type QueryCompletion,
   type SdkToolDefinition,
   type TypeFactory,
 } from "./runtime.ts";
-import { createQueryCheckerCompletion } from "../omp_extension/tool_runtime.ts";
 import { createClickHouseCheckerTool } from "../tools/clickhouse/checker_tool.ts";
 import { createClickHouseListTablesTool } from "../tools/clickhouse/list_tables_tool.ts";
 import { createClickHouseQueryTool } from "../tools/clickhouse/query_tool.ts";
 import { createClickHouseSchemaTool } from "../tools/clickhouse/schema_tool.ts";
-
-type ClickHouseDefinition = ReturnType<typeof createClickHouseToolDefinitions>[number];
 
 export function createClickHouseToolDefinitions(type: TypeFactory, runCompletion: QueryCompletion): Array<SdkToolDefinition> {
   const runner = createClickHouseRunner();
@@ -28,38 +23,6 @@ export function createClickHouseToolDefinitions(type: TypeFactory, runCompletion
     createClickHouseQueryDefinition(type, runner),
   ];
 }
-
-function toCustomTool(definition: ClickHouseDefinition): NativeCustomTool {
-  return {
-    ...definition,
-    async execute(toolCallId, params, onUpdate, ctx, signal) {
-      return definition.execute(toolCallId, params, signal, onUpdate, ctx);
-    },
-  };
-}
-
-function createClickHouseNativeTools(type: TypeFactory): [NativeCustomTool, NativeCustomTool, NativeCustomTool, NativeCustomTool] {
-  const definitions = createClickHouseToolDefinitions(type, createQueryCheckerCompletion());
-  return [
-    toCustomTool(definitions[0]),
-    toCustomTool(definitions[1]),
-    toCustomTool(definitions[2]),
-    toCustomTool(definitions[3]),
-  ];
-}
-
-export const clickhouseDbListTables: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createClickHouseListTablesDefinition(pi.typebox.Type, createClickHouseRunner()));
-export const clickhouseDbSchema: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createClickHouseSchemaDefinition(pi.typebox.Type, createClickHouseRunner()));
-export const clickhouseDbChecker: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createClickHouseCheckerDefinition(pi.typebox.Type, createQueryCheckerCompletion()));
-export const clickhouseDbQuery: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createClickHouseQueryDefinition(pi.typebox.Type, createClickHouseRunner()));
-
-const clickHouseCustomTools: NativeCustomToolFactory = (pi) => createClickHouseNativeTools(pi.typebox.Type);
-
-export default clickHouseCustomTools;
 
 function createClickHouseListTablesDefinition(
   type: TypeFactory,

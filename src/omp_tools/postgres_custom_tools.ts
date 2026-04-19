@@ -1,23 +1,18 @@
-// ABOUTME: Exposes native oh-my-pi custom tools for coarse Postgres investigation workflows.
-// ABOUTME: Shares one adapter layer between filesystem-discovered tools and SDK-backed tests.
+// ABOUTME: Exposes oh-my-pi tool definitions for coarse Postgres investigation workflows.
+// ABOUTME: Wraps pure tool logic with SDK type factories and injectable query completion.
 import { createLiveQueryCheckerWithCompletion } from "./live_query_checker.ts";
 import {
   createPostgresRunner,
   requireToolContext,
   toTextResult,
-  type NativeCustomTool,
-  type NativeCustomToolFactory,
   type QueryCompletion,
   type SdkToolDefinition,
   type TypeFactory,
 } from "./runtime.ts";
-import { createQueryCheckerCompletion } from "../omp_extension/tool_runtime.ts";
 import { createPostgresCheckerTool } from "../tools/postgres/checker_tool.ts";
 import { createPostgresListTablesTool } from "../tools/postgres/list_tables_tool.ts";
 import { createPostgresQueryTool } from "../tools/postgres/query_tool.ts";
 import { createPostgresSchemaTool } from "../tools/postgres/schema_tool.ts";
-
-type PostgresDefinition = ReturnType<typeof createPostgresToolDefinitions>[number];
 
 export function createPostgresToolDefinitions(type: TypeFactory, runCompletion: QueryCompletion): Array<SdkToolDefinition> {
   const runner = createPostgresRunner();
@@ -28,38 +23,6 @@ export function createPostgresToolDefinitions(type: TypeFactory, runCompletion: 
     createPostgresQueryDefinition(type, runner),
   ];
 }
-
-function toCustomTool(definition: PostgresDefinition): NativeCustomTool {
-  return {
-    ...definition,
-    async execute(toolCallId, params, onUpdate, ctx, signal) {
-      return definition.execute(toolCallId, params, signal, onUpdate, ctx);
-    },
-  };
-}
-
-function createPostgresNativeTools(type: TypeFactory): [NativeCustomTool, NativeCustomTool, NativeCustomTool, NativeCustomTool] {
-  const definitions = createPostgresToolDefinitions(type, createQueryCheckerCompletion());
-  return [
-    toCustomTool(definitions[0]),
-    toCustomTool(definitions[1]),
-    toCustomTool(definitions[2]),
-    toCustomTool(definitions[3]),
-  ];
-}
-
-export const sqlDbListTables: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createPostgresListTablesDefinition(pi.typebox.Type, createPostgresRunner()));
-export const sqlDbSchema: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createPostgresSchemaDefinition(pi.typebox.Type, createPostgresRunner()));
-export const sqlDbChecker: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createPostgresCheckerDefinition(pi.typebox.Type, createQueryCheckerCompletion()));
-export const sqlDbQuery: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createPostgresQueryDefinition(pi.typebox.Type, createPostgresRunner()));
-
-const postgresCustomTools: NativeCustomToolFactory = (pi) => createPostgresNativeTools(pi.typebox.Type);
-
-export default postgresCustomTools;
 
 function createPostgresListTablesDefinition(
   type: TypeFactory,

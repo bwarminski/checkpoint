@@ -127,6 +127,8 @@ export function createPostgresRunner(): (sql: string) => Promise<Array<Record<st
       database,
       user,
       password,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
     });
     return pool;
   };
@@ -150,7 +152,9 @@ export function createClickHouseRunner(): (sql: string) => Promise<Array<Record<
     }
 
     const separator = url.includes("?") ? "&" : "?";
-    const response = await fetch(`${url}${separator}query=${encodeURIComponent(`${sql} FORMAT JSONEachRow`)}`);
+    const response = await fetch(`${url}${separator}query=${encodeURIComponent(`${sql} FORMAT JSONEachRow`)}`, {
+      signal: AbortSignal.timeout(30000),
+    });
     if (!response.ok) {
       throw new Error(`ClickHouse query failed: ${response.status} ${response.statusText}`);
     }
