@@ -1,22 +1,29 @@
 {
   "name": "@checkpoint/db-specialist",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "scripts": {
     "test": "node --import tsx --test test/**/*.test.ts",
+    "test:model-integration": "bash scripts/run-model-integration.sh",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "pg": "^8.20.0"
-  },
+  "dependencies": {},
   "devDependencies": {
+    "@oh-my-pi/pi-ai": "^14.1.2",
+    "@oh-my-pi/pi-coding-agent": "^14.1.2",
+    "@sinclair/typebox": "^0.34.49",
     "@types/node": "^25.5.2",
     "@types/pg": "^8.20.0",
+    "pg": "^8.20.0",
     "tsx": "4.21.0",
     "typescript": "^6.0.2"
   }

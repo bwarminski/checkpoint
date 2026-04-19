@@ -1,84 +1,57 @@
 # Checkpoint DB Specialist
 
-This repo owns the checkpoint agent runtime and orchestration glue.
+This repo owns the oh-my-pi-based DB specialist MVP.
 
-The collector source of truth now lives in the sibling repo at
+The generated oh-my-pi workspace skeleton lives at
+`~/.oh-my-pi-workspaces/checkpoint`.
+That skeleton keeps `.omp/skills` as a symlink into this repo, materializes
+`.omp/extensions/db-specialist.ts` as the DB specialist runtime entrypoint, and
+provides a persistent `workdir` for the demo clone and local agent state.
+
+This checkout remains the source of truth for the DB specialist tools, skills,
+tests, and the local database stack that workspace uses.
+
+Create or refresh the workspace skeleton with
+`bash scripts/setup-oh-my-pi-workspace.sh`.
+Reset it to a clean generated state with
+`bash scripts/reset-oh-my-pi-workspace.sh`.
+Run the live model-backed integration path with
+`npm run test:model-integration`.
+That command skips cleanly when `OMP_MODEL` is unset and otherwise runs the
+SDK-backed session test under Bun against the generated workspace.
+Before opening a pull request or merging to `main`, run that command when the
+required oh-my-pi live model environment is available. If the live environment
+is unavailable, stop and report the PR or merge gate as blocked instead of
+treating the skip as a pass. Intermediate local commits on working branches do
+not need that live-model gate.
+Print the manual workspace smoke loop with
+`bash scripts/workspace-smoke.sh`.
+
+The collector source of truth lives in the sibling repo at
 `/home/bjw/checkpoint-collector`. That repo owns the collector pipeline, the
-ClickHouse DDLs, the demo Postgres image, and the load harness. Brett can
-create the GitHub remote for that repo while the follow-on tasks proceed.
+ClickHouse DDLs, the demo Postgres image, and the load harness.
 
-The Rails demo app is no longer stored here. Its source of truth is the sibling
-repo at `/home/bjw/db-specialist-demo`.
+## Manual TUI Loop
 
-## Demo setup
+1. Run `bash scripts/setup-oh-my-pi-workspace.sh`.
+2. Export the database connection env the tools expect:
 
-Clone or update the sibling demo repo at `/home/bjw/db-specialist-demo` and make
-sure you have push access if you want the fix flow to open real branches and pull
-requests against it.
+   ```bash
+   export PGHOST=127.0.0.1
+   export PGPORT=5432
+   export PGDATABASE=checkpoint_demo
+   export PGUSER=postgres
+   export PGPASSWORD=postgres
+   export CLICKHOUSE_URL=http://127.0.0.1:8123
+   ```
 
-The key demo configuration variables are:
-
-- `DEMO_APP_ROOT`
-  Optional override for the sibling demo repo path. Default:
-  `/home/bjw/db-specialist-demo`.
-- `DEMO_REPO`
-  GitHub repository slug for real pull request creation.
-- `DEMO_BASE_REF`
-  Base branch used for fix branches and pull requests.
-- `GITHUB_TOKEN`
-  Optional token for real pull request creation. Leave unset to keep the local
-  fallback URL path.
-
-If the demo repo drifts or you want a clean rerun, reset it in the sibling repo:
-
-```bash
-cd /home/bjw/db-specialist-demo
-git fetch origin
-git reset --hard origin/main
-git clean -fd
-```
-
-## Standalone Pi Runtime
-
-Build the package image from this repo root:
-
-```bash
-docker build -t checkpoint-db-specialist .
-```
-
-Run a standalone Pi session with the runtime environment the package uses for
-its database and repo tools, plus an explicit Pi provider/model selection:
-
-```bash
-docker run --rm \
-  --add-host host.docker.internal:host-gateway \
-  -e OPENAI_API_KEY=... \
-  -e CLICKHOUSE_URL=http://host.docker.internal:8123 \
-  -e POSTGRES_URL=postgresql://... \
-  -e DEMO_BASE_REF=main \
-  -e CODE_SEARCH_ROOT=/work/db-specialist-demo \
-  -v /path/to/db-specialist-demo:/work/db-specialist-demo \
-  checkpoint-db-specialist \
-  -e ./extensions/db-specialist.ts \
-  --provider openai \
-  --model gpt-4o-mini \
-  -p "List the available DB specialist tools."
-```
-
-This image uses `@mariozechner/pi-coding-agent`, which provides the `pi`
-binary. `@mariozechner/pi` exposes `pi-pods` instead.
-
-The standalone runtime uses `CLICKHOUSE_URL`, `POSTGRES_URL`,
-`DEMO_BASE_REF`, and `CODE_SEARCH_ROOT` for its tool integrations.
-Set `GITHUB_TOKEN` and `DEMO_REPO` only when you want real GitHub pull request
-creation instead of the local fallback URL. Choose the Pi model with CLI flags
-such as `--provider openai --model gpt-4o-mini` plus the matching provider API
-key env var.
-
-For the existing agent loop and manual validation harness, `LLM_MODEL` remains
-the provider-agnostic model selector. Use provider/model format such as
-`openai/gpt-4o-mini` or `anthropic/claude-sonnet-4-20250514`, and set the
-matching provider key too, for example `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
+3. Set `OMP_MODEL` to the real model you want to use.
+4. Start the oh-my-pi TUI from `~/.oh-my-pi-workspaces/checkpoint` with
+   `omp --model "$OMP_MODEL"`.
+5. Use the DB investigation skill with one of the prompts printed by
+   `bash scripts/workspace-smoke.sh`.
+6. Inspect the resulting diff or local commit in
+   `~/.oh-my-pi-workspaces/checkpoint/workdir`.
 
 ## Session Configuration
 
@@ -104,22 +77,3 @@ docker compose up -d
 
 Use the load harness from `/home/bjw/checkpoint-collector` when you need to
 generate database traffic.
-
-## Live Validation
-
-For a manual live-provider proof, run:
-
-```bash
-bash scripts/validate.sh
-```
-
-The script brings up the local stack, seeds fixture ClickHouse data, sends a
-real `message/stream` A2A request to the agent, and prints the completed tool
-results plus the agent response. It skips cleanly if `LLM_MODEL` is unset or if
-the selected provider key is missing.
-
-For the same flow as a manual node test, run:
-
-```bash
-cd agent && node --import tsx --test test/e2e/live_provider_validation.test.ts
-```

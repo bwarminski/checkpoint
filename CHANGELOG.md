@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-04-19
+
+oh-my-pi MVP: replace A2A/pi-mono runtime with 8 coarse SQL tools exposed through the oh-my-pi extension API.
+
+### Removed
+- `src/a2a_bridge/` — A2A server and all protocol handlers
+- `src/agent_tools.ts` — fine-grained specialist tool aggregator
+- `agent/` package — pi-mono / pi-agent-core runtime
+- `clickhouse_tool.ts`, `demo_repo_tool.ts`, `github_tool.ts` — specialist tools
+
+### Added
+- `src/omp_extension/db_specialist_extension.ts` — oh-my-pi extension entry point registering all 8 tools
+- `src/omp_extension/tool_runtime.ts` — extension-owned model invocation and tool adaptation
+- `src/omp_tools/` — SDK adapter layer: Postgres and ClickHouse tool definitions with injectable completion
+- 8 coarse SQL tools (4 Postgres + 4 ClickHouse): query, schema, list_tables, checker
+- `src/tools/shared/` — shared contracts: result_formatter, schema_formatter, identifier, query_limits, query_checker
+- `scripts/setup-oh-my-pi-workspace.sh` and `scripts/reset-oh-my-pi-workspace.sh`
+- `skills/db-investigation/SKILL.md` — ClickHouse catalog and investigation workflow
+- `omp-walkthrough.md` — showboat code walkthrough of the three-layer architecture
+- `AGENTS.md` — model integration gate policy
+
+### Changed
+- Query tools enforce row caps and timeouts (LangChain SQL agent pattern)
+- Schema tools fetch 3 sample rows and return formatted text
+- Postgres pool now configured with `idleTimeoutMillis` and `connectionTimeoutMillis`
+- ClickHouse HTTP fetch now has a 30-second abort timeout
+- `@oh-my-pi/pi-ai` declared as explicit devDependency (was implicit via hoisting)
+- ESM module cache busted in extension load and workspace session creation
+
+### Fixed
+- SQL checker prompt extracted to shared constant (`CHECKER_SYSTEM_PROMPT`)
+- SDK extension fields mirrored in local ToolDefinition types (`hidden`, `defaultInactive`, `deferrable`, etc.)
+- Dead NativeCustomToolFactory exports removed, eliminating omp_tools → omp_extension layering violation
+
 ## [0.1.0.0] - 2026-04-12
 
 Collector correctness: adopt queryid, comment_metadata, and postgres_logs source-location join.

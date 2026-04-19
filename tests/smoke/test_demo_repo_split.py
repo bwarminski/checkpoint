@@ -19,7 +19,9 @@ def test_env_example_documents_provider_agnostic_llm_model():
     assert "DEMO_HEAD_REF" not in text
 
 
-def test_validate_script_exists_for_manual_live_provider_checks():
-    text = Path("scripts/validate.sh").read_text()
-    assert "message/stream" in text
-    assert "LLM_MODEL" in text
+def test_workspace_smoke_script_replaces_removed_validate_script():
+    assert not Path("scripts/validate.sh").exists()
+
+    text = Path("scripts/workspace-smoke.sh").read_text()
+    assert "OMP_MODEL" in text
+    assert 'pi --model "\\$OMP_MODEL"' in text

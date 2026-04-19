@@ -3,8 +3,6 @@
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { basename, resolve, sep } from "node:path";
 
-import { defaultDemoAppRoot } from "./demo_repo_tool.ts";
-
 type ReadFileResult =
   | string
   | {
@@ -44,8 +42,8 @@ export class CodeSearchTool {
   }
 
   async locate(input: CodeSearchInput): Promise<CodeSearchResult> {
-    const client = await this.getClient();
     const sourceFile = toRelativeSourceFile(input);
+    const client = await this.getClient();
     const content = await client.read_file(
       sourceFile,
       this.options.contextLines ?? 3,
@@ -132,7 +130,13 @@ async function createLocalClient(): Promise<CodeSearchClient> {
 }
 
 function resolveCodeSearchRoot(): string {
-  return process.env.CODE_SEARCH_ROOT ?? process.env.DEMO_APP_ROOT ?? defaultDemoAppRoot();
+  const root = process.env.CODE_SEARCH_ROOT ?? process.env.DEMO_APP_ROOT;
+
+  if (!root) {
+    throw new Error("CODE_SEARCH_ROOT or DEMO_APP_ROOT is required");
+  }
+
+  return root;
 }
 
 function toRelativeSourceFile(input: CodeSearchInput): string {
