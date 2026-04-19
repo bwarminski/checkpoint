@@ -1,8 +1,12 @@
 // ABOUTME: Provides extension-owned runtime helpers for the DB specialist tools.
 // ABOUTME: Owns model invocation and tool-definition adaptation for the extension boundary.
-import type { ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { extractAssistantText } from "../tools/shared/query_checker.ts";
-import type { ToolContext, ToolModel, SdkToolDefinition } from "../omp_tools/runtime.ts";
+import type {
+  ExtensionToolDefinition,
+  ToolContext,
+  ToolModel,
+  SdkToolDefinition,
+} from "../omp_tools/runtime.ts";
 
 export type QueryCompletionInput = {
   model: ToolModel;
@@ -13,9 +17,35 @@ export type QueryCompletionInput = {
 
 export type QueryCompletion = (input: QueryCompletionInput) => Promise<string>;
 
+type CompleteSimpleModule = {
+  completeSimple(
+    model: ToolModel,
+    request: {
+      systemPrompt: string;
+      messages: Array<{
+        role: "user";
+        content: string;
+        timestamp: number;
+      }>;
+    },
+    options: {
+      apiKey: string;
+      sessionId: string;
+      toolChoice: "none";
+    },
+  ): Promise<{
+    content: string | Array<{ type: string; text?: string }>;
+  }>;
+};
+
+const loadModule = new Function(
+  "specifier",
+  "return import(specifier);",
+) as (specifier: string) => Promise<unknown>;
+
 export function createQueryCheckerCompletion(): QueryCompletion {
   return async ({ model, apiKey, sessionId, prompt }) => {
-    const { completeSimple } = await import("@oh-my-pi/pi-ai");
+    const { completeSimple } = await loadModule("@oh-my-pi/pi-ai") as CompleteSimpleModule;
     const result = await completeSimple(
       model,
       {
@@ -38,13 +68,19 @@ export function createQueryCheckerCompletion(): QueryCompletion {
   };
 }
 
-export function toExtensionToolDefinition(definition: SdkToolDefinition): ToolDefinition {
+export function toExtensionToolDefinition(definition: SdkToolDefinition): ExtensionToolDefinition {
   return {
     name: definition.name,
     label: definition.label,
     description: definition.description,
-    parameters: definition.parameters as ToolDefinition["parameters"],
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
+    parameters: definition.parameters,
+    async execute(
+      toolCallId: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+      onUpdate?: unknown,
+      ctx?: ToolContext,
+    ) {
       return definition.execute(toolCallId, params, signal, onUpdate, ctx as ToolContext);
     },
   };

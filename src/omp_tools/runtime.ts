@@ -60,6 +60,24 @@ export type SdkToolDefinition = {
   ): Promise<ToolTextResult>;
 };
 
+export type ExtensionToolDefinition = {
+  name: string;
+  label: string;
+  description: string;
+  parameters: unknown;
+  execute(
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+    onUpdate?: unknown,
+    ctx?: ToolContext,
+  ): Promise<ToolTextResult>;
+};
+
+export type ExtensionAPI = {
+  registerTool(tool: ExtensionToolDefinition): void;
+};
+
 export type TypeFactory = {
   Object(properties: Record<string, unknown>): unknown;
   String(options?: Record<string, unknown>): unknown;
