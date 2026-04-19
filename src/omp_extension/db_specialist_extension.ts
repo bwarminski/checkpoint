@@ -4,10 +4,11 @@ import { Type } from "@sinclair/typebox";
 import { createClickHouseToolDefinitions } from "../omp_tools/clickhouse_custom_tools.ts";
 import type { ExtensionAPI } from "../omp_tools/runtime.ts";
 import { createPostgresToolDefinitions } from "../omp_tools/postgres_custom_tools.ts";
-import { toExtensionToolDefinition } from "./tool_runtime.ts";
+import { createQueryCheckerCompletion, toExtensionToolDefinition } from "./tool_runtime.ts";
 
 export default function dbSpecialistExtension(pi: ExtensionAPI): void {
-  for (const definition of [...createPostgresToolDefinitions(Type), ...createClickHouseToolDefinitions(Type)]) {
+  const runCompletion = createQueryCheckerCompletion();
+  for (const definition of [...createPostgresToolDefinitions(Type, runCompletion), ...createClickHouseToolDefinitions(Type, runCompletion)]) {
     pi.registerTool(toExtensionToolDefinition(definition));
   }
 }

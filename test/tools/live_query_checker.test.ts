@@ -88,6 +88,32 @@ test("createLiveQueryCheckerWithCompletion delegates completion to the injected 
   });
 });
 
+test("createLiveQueryCheckerWithCompletion throws when model is undefined", async () => {
+  const checker = createLiveQueryCheckerWithCompletion(async () => "", {
+    model: undefined,
+    modelRegistry: { async getApiKey() { return "key"; } },
+    sessionManager: { getSessionId() { return "session"; } },
+  });
+
+  await assert.rejects(
+    () => checker.runCheck({ dialect: "postgres", question: "safe?", query: "select 1" }),
+    /Checker requires an active model/,
+  );
+});
+
+test("createLiveQueryCheckerWithCompletion throws when API key cannot be resolved", async () => {
+  const checker = createLiveQueryCheckerWithCompletion(async () => "", {
+    model: { provider: "anthropic" },
+    modelRegistry: { async getApiKey() { return undefined; } },
+    sessionManager: { getSessionId() { return "session"; } },
+  });
+
+  await assert.rejects(
+    () => checker.runCheck({ dialect: "postgres", question: "safe?", query: "select 1" }),
+    /could not resolve API key/i,
+  );
+});
+
 test("toExtensionToolDefinition preserves the tool seam", async () => {
   const tool = toExtensionToolDefinition({
     name: "sql_db_checker",

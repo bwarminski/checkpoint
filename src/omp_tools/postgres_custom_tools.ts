@@ -7,6 +7,7 @@ import {
   toTextResult,
   type NativeCustomTool,
   type NativeCustomToolFactory,
+  type QueryCompletion,
   type SdkToolDefinition,
   type TypeFactory,
 } from "./runtime.ts";
@@ -18,12 +19,12 @@ import { createPostgresSchemaTool } from "../tools/postgres/schema_tool.ts";
 
 type PostgresDefinition = ReturnType<typeof createPostgresToolDefinitions>[number];
 
-export function createPostgresToolDefinitions(type: TypeFactory): Array<SdkToolDefinition> {
+export function createPostgresToolDefinitions(type: TypeFactory, runCompletion: QueryCompletion): Array<SdkToolDefinition> {
   const runner = createPostgresRunner();
   return [
     createPostgresListTablesDefinition(type, runner),
     createPostgresSchemaDefinition(type, runner),
-    createPostgresCheckerDefinition(type),
+    createPostgresCheckerDefinition(type, runCompletion),
     createPostgresQueryDefinition(type, runner),
   ];
 }
@@ -38,7 +39,7 @@ function toCustomTool(definition: PostgresDefinition): NativeCustomTool {
 }
 
 function createPostgresNativeTools(type: TypeFactory): [NativeCustomTool, NativeCustomTool, NativeCustomTool, NativeCustomTool] {
-  const definitions = createPostgresToolDefinitions(type);
+  const definitions = createPostgresToolDefinitions(type, createQueryCheckerCompletion());
   return [
     toCustomTool(definitions[0]),
     toCustomTool(definitions[1]),
@@ -52,7 +53,7 @@ export const sqlDbListTables: NativeCustomToolFactory = (pi) =>
 export const sqlDbSchema: NativeCustomToolFactory = (pi) =>
   toCustomTool(createPostgresSchemaDefinition(pi.typebox.Type, createPostgresRunner()));
 export const sqlDbChecker: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createPostgresCheckerDefinition(pi.typebox.Type));
+  toCustomTool(createPostgresCheckerDefinition(pi.typebox.Type, createQueryCheckerCompletion()));
 export const sqlDbQuery: NativeCustomToolFactory = (pi) =>
   toCustomTool(createPostgresQueryDefinition(pi.typebox.Type, createPostgresRunner()));
 
@@ -97,7 +98,7 @@ function createPostgresSchemaDefinition(
   };
 }
 
-function createPostgresCheckerDefinition(type: TypeFactory): SdkToolDefinition {
+function createPostgresCheckerDefinition(type: TypeFactory, runCompletion: QueryCompletion): SdkToolDefinition {
   return {
     name: "sql_db_checker",
     label: "Postgres Checker",
@@ -116,7 +117,7 @@ function createPostgresCheckerDefinition(type: TypeFactory): SdkToolDefinition {
     ) {
       const postgresCheckerTool = createPostgresCheckerTool(
         createLiveQueryCheckerWithCompletion(
-          createQueryCheckerCompletion(),
+          runCompletion,
           requireToolContext("sql_db_checker", ctx),
         ),
       );

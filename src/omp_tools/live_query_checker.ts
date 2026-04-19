@@ -6,8 +6,7 @@ import {
   extractAssistantText,
   parseQueryCheckResult,
 } from "../tools/shared/query_checker.ts";
-import type { QueryCompletion } from "../omp_extension/tool_runtime.ts";
-import type { ToolContext } from "./runtime.ts";
+import type { QueryCompletion, ToolContext } from "./runtime.ts";
 
 export type LiveCheckerContext = ToolContext;
 

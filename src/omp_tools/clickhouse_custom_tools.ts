@@ -7,6 +7,7 @@ import {
   toTextResult,
   type NativeCustomTool,
   type NativeCustomToolFactory,
+  type QueryCompletion,
   type SdkToolDefinition,
   type TypeFactory,
 } from "./runtime.ts";
@@ -18,12 +19,12 @@ import { createClickHouseSchemaTool } from "../tools/clickhouse/schema_tool.ts";
 
 type ClickHouseDefinition = ReturnType<typeof createClickHouseToolDefinitions>[number];
 
-export function createClickHouseToolDefinitions(type: TypeFactory): Array<SdkToolDefinition> {
+export function createClickHouseToolDefinitions(type: TypeFactory, runCompletion: QueryCompletion): Array<SdkToolDefinition> {
   const runner = createClickHouseRunner();
   return [
     createClickHouseListTablesDefinition(type, runner),
     createClickHouseSchemaDefinition(type, runner),
-    createClickHouseCheckerDefinition(type),
+    createClickHouseCheckerDefinition(type, runCompletion),
     createClickHouseQueryDefinition(type, runner),
   ];
 }
@@ -38,7 +39,7 @@ function toCustomTool(definition: ClickHouseDefinition): NativeCustomTool {
 }
 
 function createClickHouseNativeTools(type: TypeFactory): [NativeCustomTool, NativeCustomTool, NativeCustomTool, NativeCustomTool] {
-  const definitions = createClickHouseToolDefinitions(type);
+  const definitions = createClickHouseToolDefinitions(type, createQueryCheckerCompletion());
   return [
     toCustomTool(definitions[0]),
     toCustomTool(definitions[1]),
@@ -52,7 +53,7 @@ export const clickhouseDbListTables: NativeCustomToolFactory = (pi) =>
 export const clickhouseDbSchema: NativeCustomToolFactory = (pi) =>
   toCustomTool(createClickHouseSchemaDefinition(pi.typebox.Type, createClickHouseRunner()));
 export const clickhouseDbChecker: NativeCustomToolFactory = (pi) =>
-  toCustomTool(createClickHouseCheckerDefinition(pi.typebox.Type));
+  toCustomTool(createClickHouseCheckerDefinition(pi.typebox.Type, createQueryCheckerCompletion()));
 export const clickhouseDbQuery: NativeCustomToolFactory = (pi) =>
   toCustomTool(createClickHouseQueryDefinition(pi.typebox.Type, createClickHouseRunner()));
 
@@ -97,7 +98,7 @@ function createClickHouseSchemaDefinition(
   };
 }
 
-function createClickHouseCheckerDefinition(type: TypeFactory): SdkToolDefinition {
+function createClickHouseCheckerDefinition(type: TypeFactory, runCompletion: QueryCompletion): SdkToolDefinition {
   return {
     name: "clickhouse_db_checker",
     label: "ClickHouse Checker",
@@ -116,7 +117,7 @@ function createClickHouseCheckerDefinition(type: TypeFactory): SdkToolDefinition
     ) {
       const clickHouseCheckerTool = createClickHouseCheckerTool(
         createLiveQueryCheckerWithCompletion(
-          createQueryCheckerCompletion(),
+          runCompletion,
           requireToolContext("clickhouse_db_checker", ctx),
         ),
       );

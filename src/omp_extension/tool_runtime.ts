@@ -3,20 +3,16 @@
 import { extractAssistantText } from "../tools/shared/query_checker.ts";
 import type {
   ExtensionToolDefinition,
+  QueryCompletion,
+  QueryCompletionInput,
   ToolContext,
   ToolModel,
   SdkToolDefinition,
 } from "../omp_tools/runtime.ts";
 
-export type QueryCompletionInput = {
-  model: ToolModel;
-  apiKey: string;
-  sessionId: string;
-  prompt: string;
-};
+export type { QueryCompletion, QueryCompletionInput };
 
-export type QueryCompletion = (input: QueryCompletionInput) => Promise<string>;
-
+// Mirrors @oh-my-pi/pi-ai@14.1.2 completeSimple. Verify on SDK upgrade.
 type CompleteSimpleModule = {
   completeSimple(
     model: ToolModel,

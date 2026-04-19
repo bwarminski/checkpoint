@@ -36,6 +36,15 @@ export type ToolModel = {
   provider: string;
 } & Record<string, unknown>;
 
+export type QueryCompletionInput = {
+  model: ToolModel;
+  apiKey: string;
+  sessionId: string;
+  prompt: string;
+};
+
+export type QueryCompletion = (input: QueryCompletionInput) => Promise<string>;
+
 export type ToolContext = {
   model: ToolModel | undefined;
   modelRegistry: {
@@ -152,10 +161,6 @@ export function requireToolContext(toolName: string, ctx: ToolContext | undefine
   }
 
   return ctx;
-}
-
-export function renderToolShim(importPath: string): string {
-  return `export { default } from ${JSON.stringify(importPath)};\n`;
 }
 
 export function toTextResult(text: string): ToolTextResult {
