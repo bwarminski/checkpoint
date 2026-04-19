@@ -34,12 +34,23 @@ ClickHouse DDLs, the demo Postgres image, and the load harness.
 ## Manual TUI Loop
 
 1. Run `bash scripts/setup-oh-my-pi-workspace.sh`.
-2. Set `OMP_MODEL` to the real model you want to use.
-3. Start the oh-my-pi TUI from `~/.oh-my-pi-workspaces/checkpoint` with
+2. Export the database connection env the tools expect:
+
+   ```bash
+   export PGHOST=127.0.0.1
+   export PGPORT=5432
+   export PGDATABASE=checkpoint_demo
+   export PGUSER=postgres
+   export PGPASSWORD=postgres
+   export CLICKHOUSE_URL=http://127.0.0.1:8123
+   ```
+
+3. Set `OMP_MODEL` to the real model you want to use.
+4. Start the oh-my-pi TUI from `~/.oh-my-pi-workspaces/checkpoint` with
    `omp --model "$OMP_MODEL"`.
-4. Use the DB investigation skill with one of the prompts printed by
+5. Use the DB investigation skill with one of the prompts printed by
    `bash scripts/workspace-smoke.sh`.
-5. Inspect the resulting diff or local commit in
+6. Inspect the resulting diff or local commit in
    `~/.oh-my-pi-workspaces/checkpoint/workdir`.
 
 ## Session Configuration

@@ -15,7 +15,9 @@ def test_readme_documents_demo_setup_and_reset():
     text = Path("README.md").read_text()
 
     assert "## Manual TUI Loop" in text
-    assert 'pi --model "$OMP_MODEL"' in text
+    assert 'omp --model "$OMP_MODEL"' in text
+    assert "PGHOST=127.0.0.1" in text
+    assert "CLICKHOUSE_URL=http://127.0.0.1:8123" in text
     assert "scripts/workspace-smoke.sh" in text
 
 
@@ -24,7 +26,6 @@ def test_readme_documents_provider_agnostic_llm_model_contract():
 
     assert "npm run test:model-integration" in text
     assert "OMP_MODEL" in text
-    assert "OH_MY_PI_COMMAND" in text
 
 
 def test_readme_documents_manual_validation_harness():
