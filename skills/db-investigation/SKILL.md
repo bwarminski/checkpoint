@@ -1,3 +1,8 @@
+---
+name: db-investigation
+description: Investigate database performance issues in the demo app using Postgres and ClickHouse evidence.
+---
+
 # DB Investigation
 
 Use this skill when asked to identify and fix a database performance issue in the demo app.
@@ -23,7 +28,7 @@ ClickHouse catalog:
 - `total_exec_time_ms Float64` — cumulative wall-clock execution time in ms
 - `mean_exec_time_ms Float64` — cumulative mean time per call
 - `rows_returned_or_affected Int64` — cumulative rows produced or affected
-- `shared_blks_hit / shared_blks_read UInt64` — cumulative buffer cache hits and disk reads
+- `shared_blks_hit / shared_blks_read UInt64` — cumulative buffer accesses and disk reads
 - `total_block_accesses UInt64` — sum of all six block counter columns
 - `temp_blks_written UInt64` — cumulative temp file writes; high values indicate sort spills
 

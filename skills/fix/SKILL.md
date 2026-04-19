@@ -1,3 +1,8 @@
+---
+name: fix
+description: Use validated findings to make the smallest safe code fix and prepare a reviewable branch.
+---
+
 # Fix
 
 Call `apply_fix` only with a validated finding, the concrete source file, and a minimal fix proposal.

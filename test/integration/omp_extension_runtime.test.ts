@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  getWorkspaceSkillNames,
   getWorkspaceToolNames,
   getWorkspaceRoot,
   validateWorkspaceExtension,
@@ -58,6 +59,30 @@ test("workspace session tool names come from the generated extension runtime", {
 
     assert.equal(toolNames.includes("sql_db_list_tables"), false);
     assert.equal(toolNames.includes("clickhouse_db_query"), false);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("workspace session skills come from the generated workspace", {
+  skip: !process.env.OMP_MODEL || !("bun" in process.versions),
+  timeout: 30_000,
+}, async () => {
+  const model = process.env.OMP_MODEL;
+  assert.ok(model);
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-home-"));
+
+  try {
+    await setupWorkspace(fakeHome);
+
+    const skillNames = await getWorkspaceSkillNames({
+      home: fakeHome,
+      model,
+    });
+
+    assert.equal(skillNames.includes("db-investigation"), true);
+    assert.equal(skillNames.includes("fix"), true);
+    assert.equal(skillNames.includes("investigation"), true);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }

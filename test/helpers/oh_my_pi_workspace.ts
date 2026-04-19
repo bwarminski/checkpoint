@@ -57,6 +57,19 @@ export async function getWorkspaceToolNames(input: {
   }
 }
 
+export async function getWorkspaceSkillNames(input: {
+  home: string;
+  model: string;
+}): Promise<Array<string>> {
+  const { session } = await createWorkspaceSession(input.home, input.model);
+
+  try {
+    return session.skills.map((skill) => skill.name);
+  } finally {
+    await session.dispose();
+  }
+}
+
 export async function runWorkspaceChecker(input: {
   home: string;
   model: string;
@@ -123,7 +136,6 @@ async function createWorkspaceSession(home: string, model: string): Promise<{
     modelRegistry,
     promptTemplates: [],
     sessionManager: SessionManager.inMemory(),
-    skills: [],
     slashCommands: [],
     toolNames: ["__none__"],
   });
@@ -321,6 +333,7 @@ type WorkspaceSession = SessionLike & {
   ): Promise<{ cancelled: boolean }>;
   queuedMessageCount: number;
   reload(): Promise<void>;
+  skills: Array<{ name: string }>;
   sendCustomMessage(
     message: unknown,
     options?: unknown,
