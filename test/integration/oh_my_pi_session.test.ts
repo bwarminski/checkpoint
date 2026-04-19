@@ -7,17 +7,19 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   getWorkspaceRoot,
+  getWorkspaceExtensionPath,
   runWorkspaceChecker,
   resetWorkspace,
   runWorkspaceSession,
   setupWorkspace,
+  validateWorkspaceExtension,
 } from "../helpers/oh_my_pi_workspace.ts";
 
-test("workspace setup creates a real .omp/tools directory", async () => {
+test("workspace setup creates a loadable db specialist extension", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-home-"));
   const workspaceRoot = getWorkspaceRoot(fakeHome);
   const skillsEntry = join(workspaceRoot, ".omp", "skills");
-  const toolsEntry = join(workspaceRoot, ".omp", "tools");
+  const extensionEntry = getWorkspaceExtensionPath(fakeHome);
   const workdirEntry = join(workspaceRoot, "workdir");
 
   try {
@@ -27,34 +29,33 @@ test("workspace setup creates a real .omp/tools directory", async () => {
 
     let workspaceStats = await lstat(workspaceRoot);
     let skillsStats = await lstat(skillsEntry);
-    let toolsStats = await lstat(toolsEntry);
+    let extensionStats = await lstat(extensionEntry);
     let workdirStats = await lstat(workdirEntry);
 
     assert.equal(workspaceStats.isDirectory(), true);
     assert.equal(skillsStats.isSymbolicLink(), true);
     assert.equal(await readlink(skillsEntry), join(process.cwd(), "skills"));
-    assert.equal(toolsStats.isDirectory(), true);
-    assert.equal(toolsStats.isSymbolicLink(), false);
+    assert.equal(extensionStats.isFile(), true);
     assert.equal(workdirStats.isDirectory(), true);
+    await validateWorkspaceExtension(fakeHome);
 
     await resetWorkspace(fakeHome);
 
     workspaceStats = await lstat(workspaceRoot);
     skillsStats = await lstat(skillsEntry);
-    toolsStats = await lstat(toolsEntry);
+    extensionStats = await lstat(extensionEntry);
     workdirStats = await lstat(workdirEntry);
 
     assert.equal(workspaceStats.isDirectory(), true);
     assert.equal(skillsStats.isSymbolicLink(), true);
-    assert.equal(toolsStats.isDirectory(), true);
-    assert.equal(toolsStats.isSymbolicLink(), false);
+    assert.equal(extensionStats.isFile(), true);
     assert.equal(workdirStats.isDirectory(), true);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }
 });
 
-test("workspace setup creates discoverable tool entrypoints", async () => {
+test("workspace setup does not generate db specialist tool shims", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-oh-my-pi-home-"));
   const workspaceRoot = getWorkspaceRoot(fakeHome);
   const postgresListEntry = join(workspaceRoot, ".omp", "tools", "sql_db_list_tables", "index.ts");
@@ -63,16 +64,8 @@ test("workspace setup creates discoverable tool entrypoints", async () => {
   try {
     await setupWorkspace(fakeHome);
 
-    const postgresListStats = await lstat(postgresListEntry);
-    const clickHouseQueryStats = await lstat(clickHouseQueryEntry);
-    const postgresListSource = await readFile(postgresListEntry, "utf8");
-
-    assert.equal(postgresListStats.isFile(), true);
-    assert.equal(clickHouseQueryStats.isFile(), true);
-    assert.match(
-      postgresListSource,
-      /^export \{ sqlDbListTables as default \} from "[^"\n]+";\n$/,
-    );
+    await assert.rejects(() => lstat(postgresListEntry));
+    await assert.rejects(() => lstat(clickHouseQueryEntry));
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }

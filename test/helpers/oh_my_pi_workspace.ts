@@ -3,18 +3,20 @@
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { Type } from "@sinclair/typebox";
+import { pathToFileURL } from "node:url";
 
 import { extractAssistantText, parseQueryCheckResult } from "../../src/omp_tools/live_query_checker.ts";
-import { createClickHouseToolDefinitions } from "../../src/omp_tools/clickhouse_custom_tools.ts";
-import { createPostgresToolDefinitions } from "../../src/omp_tools/postgres_custom_tools.ts";
-import type { SdkToolDefinition, ToolContext, ToolModel } from "../../src/omp_tools/runtime.ts";
+import type { ToolContext, ToolModel } from "../../src/omp_tools/runtime.ts";
 import type { QueryCheckInput, QueryCheckResult } from "../../src/tools/shared/query_checker.ts";
 
 const execFileAsync = promisify(execFile);
 
 export function getWorkspaceRoot(home: string): string {
   return join(home, ".oh-my-pi-workspaces", "checkpoint");
+}
+
+export function getWorkspaceExtensionPath(home: string): string {
+  return join(getWorkspaceRoot(home), ".omp", "extensions", "db-specialist.ts");
 }
 
 export async function setupWorkspace(home: string): Promise<void> {
@@ -42,17 +44,34 @@ export async function runWorkspaceSession(input: {
   }
 }
 
+export async function getWorkspaceToolNames(input: {
+  home: string;
+  model: string;
+}): Promise<Array<string>> {
+  const { session } = await createWorkspaceSession(input.home, input.model);
+
+  try {
+    return session.getAllToolNames();
+  } finally {
+    await session.dispose();
+  }
+}
+
 export async function runWorkspaceChecker(input: {
   home: string;
   model: string;
   toolName: "sql_db_checker" | "clickhouse_db_checker";
   input: QueryCheckInput;
 }): Promise<QueryCheckResult> {
-  const { session, sqlTools } = await createWorkspaceSession(input.home, input.model);
-  const checkerTool = sqlTools.find((tool) => tool.name === input.toolName);
+  const { session } = await createWorkspaceSession(input.home, input.model);
+  const checkerTool = await getWorkspaceRegisteredTool(input.home, input.toolName);
+  const resolvedModel = session.model ?? resolveRequestedModel(session.modelRegistry, input.model);
 
   if (!checkerTool) {
     throw new Error(`Missing checker tool definition: ${input.toolName}`);
+  }
+  if (!resolvedModel) {
+    throw new Error(`Missing active model for checker tool: ${input.model}`);
   }
 
   try {
@@ -62,7 +81,7 @@ export async function runWorkspaceChecker(input: {
       undefined,
       undefined,
       {
-        model: session.model,
+        model: resolvedModel,
         modelRegistry: session.modelRegistry,
         sessionManager: session.sessionManager,
       },
@@ -82,23 +101,39 @@ async function runWorkspaceScript(home: string, scriptPath: string): Promise<voi
 
 async function createWorkspaceSession(home: string, model: string): Promise<{
   session: WorkspaceSession;
-  sqlTools: Array<SdkToolDefinition>;
 }> {
   const sdkModuleName = "@oh-my-pi/pi-coding-agent";
-  const { createAgentSession, SessionManager } = await import(sdkModuleName);
+  const {
+    createAgentSession,
+    SessionManager,
+    ModelRegistry,
+    discoverAuthStorage,
+  } = await import(sdkModuleName);
   const workspaceRoot = getWorkspaceRoot(home);
   const agentDir = join(home, ".omp", "agent");
-  const sqlTools = createSqlToolDefinitions();
+  const extensionPath = getWorkspaceExtensionPath(home);
+  await validateWorkspaceExtension(home);
+  const authStorage = await discoverAuthStorage(agentDir);
+  const modelRegistry = new ModelRegistry(authStorage);
+  await modelRegistry.refresh();
+  const resolvedModel = resolveRequestedModel(modelRegistry, model);
+
+  if (!resolvedModel) {
+    throw new Error(`Could not resolve requested model: ${model}`);
+  }
+
   const { session } = await createAgentSession({
     agentDir,
+    authStorage,
     contextFiles: [],
     cwd: workspaceRoot,
-    customTools: sqlTools,
+    additionalExtensionPaths: [extensionPath],
     disableExtensionDiscovery: true,
     enableLsp: false,
     enableMCP: false,
     hasUI: false,
-    modelPattern: model,
+    model: resolvedModel,
+    modelRegistry,
     promptTemplates: [],
     sessionManager: SessionManager.inMemory(),
     skills: [],
@@ -108,15 +143,48 @@ async function createWorkspaceSession(home: string, model: string): Promise<{
 
   return {
     session: session as WorkspaceSession,
-    sqlTools,
   };
 }
 
-function createSqlToolDefinitions(): Array<SdkToolDefinition> {
-  return [
-    ...createPostgresToolDefinitions(Type),
-    ...createClickHouseToolDefinitions(Type),
-  ];
+function resolveRequestedModel(
+  modelRegistry: WorkspaceSession["modelRegistry"],
+  modelPattern: string,
+): ToolModel | undefined {
+  const [provider, ...idParts] = modelPattern.split("/");
+  const modelId = idParts.join("/");
+  if (!provider || !modelId) {
+    return undefined;
+  }
+
+  return modelRegistry.find(provider, modelId) as ToolModel | undefined;
+}
+
+async function loadWorkspaceExtension(extensionPath: string): Promise<void> {
+  const extensionModule = await import(pathToFileURL(extensionPath).href);
+
+  if (typeof extensionModule.default !== "function") {
+    throw new Error(`Workspace extension must export a factory function: ${extensionPath}`);
+  }
+}
+
+export async function validateWorkspaceExtension(home: string): Promise<void> {
+  await loadWorkspaceExtension(getWorkspaceExtensionPath(home));
+}
+
+async function getWorkspaceRegisteredTool(
+  home: string,
+  toolName: "sql_db_checker" | "clickhouse_db_checker",
+): Promise<WorkspaceTool | undefined> {
+  const extensionModule = await import(pathToFileURL(getWorkspaceExtensionPath(home)).href);
+  const registeredTools = new Map<string, WorkspaceTool>();
+
+  extensionModule.default({
+    registerTool(tool: WorkspaceTool) {
+      registeredTools.set(tool.name, tool);
+    },
+  });
+
+  return registeredTools.get(toolName);
 }
 
 async function collectAssistantText(
@@ -151,8 +219,31 @@ type SessionLike = {
 
 type WorkspaceSession = SessionLike & {
   model: ToolModel | undefined;
-  modelRegistry: ToolContext["modelRegistry"];
+  modelRegistry: ToolContext["modelRegistry"] & {
+    find(provider: string, modelId: string): ToolModel | undefined;
+  };
   sessionManager: ToolContext["sessionManager"];
+  getAllToolNames(): Array<string>;
+  getToolByName(name: string): {
+    execute(
+      toolCallId: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+      onUpdate?: unknown,
+      context?: ToolContext,
+    ): Promise<{ content: string | Array<{ type: string; text?: string }> }>;
+  } | undefined;
+};
+
+type WorkspaceTool = {
+  name: string;
+  execute(
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+    onUpdate?: unknown,
+    context?: ToolContext,
+  ): Promise<{ content: string | Array<{ type: string; text?: string }> }>;
 };
 
 type SessionEvent = {
