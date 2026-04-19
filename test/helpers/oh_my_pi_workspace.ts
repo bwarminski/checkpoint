@@ -99,6 +99,7 @@ async function createWorkspaceSession(home: string, model: string): Promise<{
   const agentDir = join(home, ".omp", "agent");
   const extensionPath = getWorkspaceExtensionPath(home);
   await validateWorkspaceExtension(home);
+  const extensionUrl = `${pathToFileURL(extensionPath).href}?t=${Date.now()}`;
   const authStorage = await discoverAuthStorage(agentDir);
   const modelRegistry = new ModelRegistry(authStorage);
   await modelRegistry.refresh();
@@ -113,7 +114,7 @@ async function createWorkspaceSession(home: string, model: string): Promise<{
     authStorage,
     contextFiles: [],
     cwd: workspaceRoot,
-    additionalExtensionPaths: [extensionPath],
+    additionalExtensionPaths: [extensionUrl],
     disableExtensionDiscovery: true,
     enableLsp: false,
     enableMCP: false,
@@ -249,7 +250,8 @@ function resolveRequestedModel(
 }
 
 async function loadWorkspaceExtension(extensionPath: string): Promise<void> {
-  const extensionModule = await import(pathToFileURL(extensionPath).href);
+  const url = `${pathToFileURL(extensionPath).href}?t=${Date.now()}`;
+  const extensionModule = await import(url);
 
   if (typeof extensionModule.default !== "function") {
     throw new Error(`Workspace extension must export a factory function: ${extensionPath}`);
