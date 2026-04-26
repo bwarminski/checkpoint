@@ -352,6 +352,28 @@ test("control dry run mounts only the neutral workspace and shared service env",
   }
 });
 
+test("control script reads Gemini key from home key file without leaking it", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+
+  try {
+    await writeFile(join(fakeHome, ".gemini-key"), "file gemini key\n");
+    const output = await runScript("run-omp-control-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+      GEMINI_API_KEY: "",
+    });
+    const args = await parseDryRunArgs(output);
+
+    assert.ok(args.includes("GEMINI_API_KEY"));
+    assert.ok(!args.includes("GEMINI_API_KEY=file gemini key"));
+    assert.doesNotMatch(output, /file gemini key/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
 test("control SSH mode mounts only id_rsa read-only and forwards GitHub token when present", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
@@ -377,6 +399,26 @@ test("control SSH mode mounts only id_rsa read-only and forwards GitHub token wh
     assert.ok(args.includes("OMP_LAB_ENABLE_SSH=1"));
     assert.ok(!args.includes(`type=bind,source=${fakeSshDir},target=/home/codespace/.ssh,readonly`));
     assert.doesNotMatch(output, /\.gitconfig/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("SSH mode fails before docker run when id_rsa is missing", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+
+  try {
+    await assert.rejects(
+      () =>
+        runScript("run-omp-control-container.sh", {
+          HOME: fakeHome,
+          OMP_LAB_WORKSPACE: fakeWorkspace,
+          OMP_LAB_ENABLE_SSH: "1",
+        }),
+      /SSH key .* does not exist/,
+    );
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
     await rm(fakeWorkspace, { recursive: true, force: true });
@@ -423,6 +465,25 @@ test("control dry run ignores scoped host env by default", async () => {
         process.env[name] = value;
       }
     }
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("control reset mode clears existing workspace contents before dry run", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+  const staleFile = join(fakeWorkspace, "stale.txt");
+
+  try {
+    await writeFile(staleFile, "stale\n");
+    await runScript("run-omp-control-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+      OMP_LAB_RESET_WORKSPACE: "1",
+    });
+    await assert.rejects(readFile(staleFile, "utf8"), { code: "ENOENT" });
+  } finally {
     await rm(fakeHome, { recursive: true, force: true });
     await rm(fakeWorkspace, { recursive: true, force: true });
   }
