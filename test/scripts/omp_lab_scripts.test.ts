@@ -82,10 +82,15 @@ test(
 );
 
 async function runScript(scriptName: string, env: Record<string, string>) {
+  const scriptEnv = { ...process.env };
+  for (const name of ["GITHUB_TOKEN", "OMP_LAB_ENABLE_SSH", "OMP_LAB_SSH_KEY", "OMP_LAB_CONTAINER_USER"]) {
+    delete scriptEnv[name];
+  }
+
   const result = await execFileAsync("bash", [join(repoRoot, "scripts", scriptName)], {
     cwd: repoRoot,
     env: {
-      ...process.env,
+      ...scriptEnv,
       OMP_LAB_DRY_RUN: "1",
       OMP_MODEL: "google/gemini-2.5-pro",
       GEMINI_API_KEY: "test-gemini-key",
@@ -161,11 +166,58 @@ test("control SSH mode mounts only id_rsa read-only and forwards GitHub token wh
     const args = await parseDryRunArgs(output);
 
     assert.ok(args.includes(`type=bind,source=${fakeKey},target=/home/codespace/.ssh/id_rsa,readonly`));
-    assert.ok(args.includes("GITHUB_TOKEN=test-gh-token"));
+    assert.ok(args.includes("GITHUB_TOKEN"));
+    assert.ok(!args.includes("GITHUB_TOKEN=test-gh-token"));
+    assert.doesNotMatch(output, /test-gh-token/);
     assert.ok(args.includes("OMP_LAB_ENABLE_SSH=1"));
     assert.ok(!args.includes(`type=bind,source=${fakeSshDir},target=/home/codespace/.ssh,readonly`));
     assert.doesNotMatch(output, /\.gitconfig/);
   } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("control dry run ignores scoped host env by default", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+  const fakeSshDir = join(fakeHome, ".ssh");
+  const fakeKey = join(fakeSshDir, "id_rsa");
+  const originalEnv = {
+    GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+    OMP_LAB_CONTAINER_USER: process.env.OMP_LAB_CONTAINER_USER,
+    OMP_LAB_ENABLE_SSH: process.env.OMP_LAB_ENABLE_SSH,
+    OMP_LAB_SSH_KEY: process.env.OMP_LAB_SSH_KEY,
+  };
+
+  try {
+    await mkdir(fakeSshDir, { recursive: true });
+    await writeFile(fakeKey, "fake-key\n", { mode: 0o600 });
+    process.env.GITHUB_TOKEN = "host-gh-token";
+    process.env.OMP_LAB_CONTAINER_USER = "hostuser";
+    process.env.OMP_LAB_ENABLE_SSH = "1";
+    process.env.OMP_LAB_SSH_KEY = fakeKey;
+
+    const output = await runScript("run-omp-control-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+    });
+    const args = await parseDryRunArgs(output);
+
+    assert.ok(!args.includes("GITHUB_TOKEN"));
+    assert.ok(!args.some((arg) => arg.startsWith("GITHUB_TOKEN=")));
+    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
+    assert.doesNotMatch(output, /host-gh-token/);
+    assert.doesNotMatch(output, /hostuser/);
+    assert.doesNotMatch(output, /\.ssh/);
+  } finally {
+    for (const [name, value] of Object.entries(originalEnv)) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
     await rm(fakeHome, { recursive: true, force: true });
     await rm(fakeWorkspace, { recursive: true, force: true });
   }

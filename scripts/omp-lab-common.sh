@@ -59,7 +59,7 @@ append_base_docker_args() {
   )
 
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    args_ref+=(--env "GITHUB_TOKEN=${GITHUB_TOKEN}")
+    args_ref+=(--env GITHUB_TOKEN)
   fi
 }
 
