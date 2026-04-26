@@ -246,3 +246,32 @@ test("control dry run shell-escapes arguments containing spaces", async () => {
     await rm(fakeParent, { recursive: true, force: true });
   }
 });
+
+test("skills dry run mounts generated workspace plus checkpoint skill and extension sources", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-skilled-"));
+
+  try {
+    const output = await runScript("run-omp-skilled-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+    });
+    const args = await parseDryRunArgs(output);
+
+    assert.ok(args.includes(`type=bind,source=${fakeWorkspace},target=/workspace`));
+    assert.ok(args.includes(`type=bind,source=${repoRoot}/skills,target=/workspace/.omp/skills,readonly`));
+    assert.ok(args.includes(`type=bind,source=${repoRoot}/src,target=/checkpoint-src/src,readonly`));
+    assert.ok(args.includes("CHECKPOINT_EXTENSION_SOURCE=/checkpoint-src/src/omp_extension/db_specialist_extension.ts"));
+    assert.ok(args.includes("PGHOST=host.docker.internal"));
+    assert.ok(args.includes("checkpoint.omp-lab.mode=skilled"));
+    assert.ok(args.includes("checkpoint-omp-lab:local"));
+    assert.ok(args.includes("--model"));
+    assert.ok(args.includes("google/gemini-2.5-pro"));
+
+    const extensionEntry = join(fakeWorkspace, ".omp", "extensions", "db-specialist.ts");
+    assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
