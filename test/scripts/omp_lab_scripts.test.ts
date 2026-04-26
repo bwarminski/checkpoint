@@ -2,7 +2,7 @@
 // ABOUTME: Verifies source isolation, optional credential mounts, and shared image contracts.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -117,6 +117,17 @@ async function runScript(scriptName: string, env: Record<string, string>) {
     }),
   });
   return result.stdout;
+}
+
+async function runScriptWithoutDryRun(scriptName: string, env: Record<string, string>) {
+  return execFileAsync("/bin/bash", [join(repoRoot, "scripts", scriptName)], {
+    cwd: repoRoot,
+    env: cleanLabEnv({
+      OMP_MODEL: "google/gemini-2.5-pro",
+      GEMINI_API_KEY: "test-gemini-key",
+      ...env,
+    }),
+  });
 }
 
 test("model integration runner skips before bun when OMP_MODEL is unset", async () => {
@@ -435,6 +446,36 @@ test("control dry run mounts only the neutral workspace and shared service env",
   }
 });
 
+test("control mode refuses checkpoint repo workspaces before docker run", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const repoChild = join(repoRoot, ".tmp-control-workspace");
+  const dangerousWorkspaces = [repoRoot, repoChild];
+
+  try {
+    for (const workspace of dangerousWorkspaces) {
+      let error: Error & { code?: number; stdout?: string; stderr?: string };
+      try {
+        await runScript("run-omp-control-container.sh", {
+          HOME: fakeHome,
+          OMP_LAB_WORKSPACE: workspace,
+        });
+        assert.fail("control mode should reject checkpoint repo workspaces");
+      } catch (caught) {
+        error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+      }
+
+      assert.equal(error.code, 2);
+      assert.doesNotMatch(error.stdout ?? "", /docker run/);
+      assert.match(error.stderr ?? "", /Refusing source-visible control workspace/);
+    }
+
+    await assert.rejects(stat(repoChild), { code: "ENOENT" });
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(repoChild, { recursive: true, force: true });
+  }
+});
+
 test("control script reads Gemini key from home key file without leaking it", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
@@ -664,7 +705,7 @@ test("reset mode refuses unsafe workspaces before deleting markers", async () =>
       assert.equal(error.code, 2);
       assert.equal(await readFile(dangerousCase.marker, "utf8"), "keep\n");
       assert.doesNotMatch(error.stdout ?? "", /docker run/);
-      assert.match(error.stderr ?? "", /Refusing to remove unsafe workspace path/);
+      assert.match(error.stderr ?? "", /Refusing (to remove unsafe workspace path|non-lab-owned skilled workspace)/);
     }
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
@@ -691,7 +732,7 @@ test("reset mode refuses an explicit empty workspace before docker run", async (
 
       assert.equal(error.code, 2);
       assert.doesNotMatch(error.stdout ?? "", /docker run/);
-      assert.match(error.stderr ?? "", /Refusing to remove unsafe workspace path .*<empty>/);
+      assert.match(error.stderr ?? "", /Refusing .*<empty>/);
     }
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
@@ -750,7 +791,7 @@ test("control dry run does not expose database connection values", async () => {
 
 test("skills dry run mounts generated workspace plus checkpoint skill and extension sources", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
-  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-skilled-"));
+  const fakeWorkspace = join(fakeHome, ".oh-my-pi-lab", "skilled-workspace");
 
   try {
     const output = await runScript("run-omp-skilled-container.sh", {
@@ -776,13 +817,42 @@ test("skills dry run mounts generated workspace plus checkpoint skill and extens
     assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
-    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("skills mode refuses outside workspaces before replacing OMP state", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const outsideWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-skilled-outside-"));
+  const outsideMarker = join(outsideWorkspace, ".omp", "skills", "marker.txt");
+
+  try {
+    await mkdir(join(outsideWorkspace, ".omp", "skills"), { recursive: true });
+    await writeFile(outsideMarker, "keep\n");
+
+    let error: Error & { code?: number; stdout?: string; stderr?: string };
+    try {
+      await runScript("run-omp-skilled-container.sh", {
+        HOME: fakeHome,
+        OMP_LAB_WORKSPACE: outsideWorkspace,
+      });
+      assert.fail("skills mode should reject outside workspaces");
+    } catch (caught) {
+      error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+    }
+
+    assert.equal(error.code, 2);
+    assert.equal(await readFile(outsideMarker, "utf8"), "keep\n");
+    assert.doesNotMatch(error.stdout ?? "", /docker run/);
+    assert.match(error.stderr ?? "", /Refusing non-lab-owned skilled workspace/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(outsideWorkspace, { recursive: true, force: true });
   }
 });
 
 test("skills dry run replaces stale generated OMP state", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
-  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-skilled-"));
+  const fakeWorkspace = join(fakeHome, ".oh-my-pi-lab", "skilled-workspace");
   const staleSkills = join(fakeWorkspace, ".omp", "skills");
   const staleTool = join(fakeWorkspace, ".omp", "tools", "stale-tool", "index.ts");
   const staleExtension = join(fakeWorkspace, ".omp", "extensions", "extra.ts");
@@ -807,6 +877,45 @@ test("skills dry run replaces stale generated OMP state", async () => {
     assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
-    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("run scripts require docker before mutating workspaces outside dry run", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "checkpoint-omp-bin-"));
+  const controlWorkspace = join(fakeHome, ".oh-my-pi-lab", "control-workspace");
+  const skilledWorkspace = join(fakeHome, ".oh-my-pi-lab", "skilled-workspace");
+  const skilledMarker = join(skilledWorkspace, ".omp", "skills", "marker.txt");
+
+  try {
+    await symlink("/usr/bin/dirname", join(fakeBin, "dirname"));
+    await symlink("/usr/bin/realpath", join(fakeBin, "realpath"));
+    await symlink("/usr/bin/mkdir", join(fakeBin, "mkdir"));
+    await symlink("/usr/bin/rm", join(fakeBin, "rm"));
+    await mkdir(join(skilledWorkspace, ".omp", "skills"), { recursive: true });
+    await writeFile(skilledMarker, "keep\n");
+
+    for (const scriptName of ["run-omp-control-container.sh", "run-omp-skilled-container.sh"]) {
+      let error: Error & { code?: number; stdout?: string; stderr?: string };
+      try {
+        await runScriptWithoutDryRun(scriptName, {
+          HOME: fakeHome,
+          PATH: fakeBin,
+        });
+        assert.fail(`${scriptName} should require docker before workspace mutation`);
+      } catch (caught) {
+        error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+      }
+
+      assert.equal(error.code, 127);
+      assert.equal(error.stdout ?? "", "");
+      assert.match(error.stderr ?? "", /docker not found/);
+    }
+
+    await assert.rejects(stat(controlWorkspace), { code: "ENOENT" });
+    assert.equal(await readFile(skilledMarker, "utf8"), "keep\n");
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeBin, { recursive: true, force: true });
   }
 });

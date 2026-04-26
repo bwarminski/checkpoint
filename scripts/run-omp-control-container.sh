@@ -11,6 +11,9 @@ GEMINI_KEY="$(resolve_gemini_api_key)"
 export GEMINI_API_KEY="${GEMINI_KEY}"
 export_default_db_env
 WORKSPACE="$(resolve_lab_workspace_path OMP_LAB_WORKSPACE "${HOME}/.oh-my-pi-lab/control-workspace")"
+validate_control_workspace_path OMP_LAB_WORKSPACE "${WORKSPACE}"
+require_git_ssh_key_if_enabled
+require_docker_for_container_run
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
   reset_lab_workspace OMP_LAB_WORKSPACE "${WORKSPACE}"
 else
