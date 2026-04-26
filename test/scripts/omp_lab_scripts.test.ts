@@ -2,7 +2,8 @@
 // ABOUTME: Verifies source isolation, optional credential mounts, and shared image contracts.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -79,3 +80,44 @@ test(
     }
   },
 );
+
+async function runScript(scriptName: string, env: Record<string, string>) {
+  const result = await execFileAsync("bash", [join(repoRoot, "scripts", scriptName)], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      ...env,
+      OMP_LAB_DRY_RUN: "1",
+      OMP_MODEL: "google/gemini-2.5-pro",
+      GEMINI_API_KEY: "test-gemini-key",
+    },
+  });
+  return result.stdout;
+}
+
+test("control dry run mounts only the neutral workspace and shared service env", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+
+  try {
+    const output = await runScript("run-omp-control-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+    });
+
+    assert.match(output, /docker run --rm -it/);
+    assert.match(output, /--add-host host\.docker\.internal:host-gateway/);
+    assert.match(output, new RegExp(`--mount type=bind,source=${fakeWorkspace},target=/workspace`));
+    assert.match(output, /--env GEMINI_API_KEY=test-gemini-key/);
+    assert.match(output, /--env OMP_MODEL=google\/gemini-2\.5-pro/);
+    assert.match(output, /--env PGHOST=host\.docker\.internal/);
+    assert.match(output, /--env CLICKHOUSE_URL=http:\/\/host\.docker\.internal:8123/);
+    assert.match(output, /--label checkpoint\.omp-lab=true/);
+    assert.match(output, /--label checkpoint\.omp-lab\.mode=control/);
+    assert.doesNotMatch(output, new RegExp(repoRoot));
+    assert.doesNotMatch(output, /\.ssh/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
