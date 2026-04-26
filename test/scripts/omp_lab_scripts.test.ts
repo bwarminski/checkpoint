@@ -10,6 +10,19 @@ import test from "node:test";
 
 const repoRoot = process.cwd();
 const execFileAsync = promisify(execFile);
+const labEnvNames = [
+  "GITHUB_TOKEN",
+  "OMP_LAB_IMAGE",
+  "OMP_LAB_CONTROL_WORKSPACE",
+  "OMP_LAB_SKILLED_WORKSPACE",
+  "OMP_LAB_WORKSPACE",
+  "OMP_LAB_RESET_WORKSPACE",
+  "OMP_LAB_CONTAINER_NAME",
+  "OMP_LAB_DRY_RUN",
+  "OMP_LAB_ENABLE_SSH",
+  "OMP_LAB_SSH_KEY",
+  "OMP_LAB_CONTAINER_USER",
+];
 
 test("lab Dockerfile uses the universal dev container base and does not copy the repo", async () => {
   const dockerfile = await readFile(join(repoRoot, "Dockerfile"), "utf8");
@@ -81,21 +94,26 @@ test(
   },
 );
 
-async function runScript(scriptName: string, env: Record<string, string>) {
+function cleanLabEnv(env: Record<string, string> = {}) {
   const scriptEnv = { ...process.env };
-  for (const name of ["GITHUB_TOKEN", "OMP_LAB_ENABLE_SSH", "OMP_LAB_SSH_KEY", "OMP_LAB_CONTAINER_USER"]) {
+  for (const name of labEnvNames) {
     delete scriptEnv[name];
   }
+  return {
+    ...scriptEnv,
+    ...env,
+  };
+}
 
+async function runScript(scriptName: string, env: Record<string, string>) {
   const result = await execFileAsync("bash", [join(repoRoot, "scripts", scriptName)], {
     cwd: repoRoot,
-    env: {
-      ...scriptEnv,
+    env: cleanLabEnv({
       OMP_LAB_DRY_RUN: "1",
       OMP_MODEL: "google/gemini-2.5-pro",
       GEMINI_API_KEY: "test-gemini-key",
       ...env,
-    },
+    }),
   });
   return result.stdout;
 }
@@ -117,10 +135,7 @@ async function parseDryRunArgs(output: string) {
 }
 
 async function runCleanScript(args: string[], env: Record<string, string>, options: { dryRun?: boolean } = {}) {
-  const scriptEnv = {
-    ...process.env,
-    ...env,
-  };
+  const scriptEnv = cleanLabEnv(env);
   if (options.dryRun ?? true) {
     scriptEnv.OMP_LAB_DRY_RUN = "1";
   } else {
@@ -158,6 +173,36 @@ test("cleanup image flag includes shared image removal", async () => {
     assert.match(output, /docker image rm checkpoint-omp-lab:local/);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("script helpers ignore host lab image overrides by default", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+  const originalLabImage = process.env.OMP_LAB_IMAGE;
+
+  try {
+    process.env.OMP_LAB_IMAGE = "custom-lab-image:review";
+
+    const runOutput = await runScript("run-omp-control-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+    });
+    const args = await parseDryRunArgs(runOutput);
+    assert.ok(args.includes("checkpoint-omp-lab:local"));
+    assert.ok(!args.includes("custom-lab-image:review"));
+
+    const cleanOutput = await runCleanScript(["--image"], { HOME: fakeHome });
+    assert.match(cleanOutput, /docker image rm checkpoint-omp-lab:local/);
+    assert.doesNotMatch(cleanOutput, /custom-lab-image:review/);
+  } finally {
+    if (originalLabImage === undefined) {
+      delete process.env.OMP_LAB_IMAGE;
+    } else {
+      process.env.OMP_LAB_IMAGE = originalLabImage;
+    }
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
   }
 });
 
@@ -214,11 +259,10 @@ test("cleanup skips docker artifacts when docker is unavailable after workspace 
 
     const result = await execFileAsync("/bin/bash", [join(repoRoot, "scripts", "clean-omp-lab.sh")], {
       cwd: repoRoot,
-      env: {
-        ...process.env,
+      env: cleanLabEnv({
         HOME: fakeHome,
         PATH: fakeBin,
-      },
+      }),
     });
 
     assert.equal(result.stdout, "");
@@ -254,12 +298,11 @@ test("cleanup image flag skips absent shared image", async () => {
 
     const result = await execFileAsync("/bin/bash", [join(repoRoot, "scripts", "clean-omp-lab.sh"), "--image"], {
       cwd: repoRoot,
-      env: {
-        ...process.env,
+      env: cleanLabEnv({
         HOME: fakeHome,
         PATH: `${fakeBin}:${process.env.PATH}`,
         DOCKER_LOG: dockerLog,
-      },
+      }),
     });
 
     const dockerCalls = await readFile(dockerLog, "utf8");
@@ -296,11 +339,10 @@ test("cleanup skips docker artifacts when docker daemon is unavailable after wor
 
     const result = await execFileAsync("/bin/bash", [join(repoRoot, "scripts", "clean-omp-lab.sh"), "--image"], {
       cwd: repoRoot,
-      env: {
-        ...process.env,
+      env: cleanLabEnv({
         HOME: fakeHome,
         PATH: `${fakeBin}:${process.env.PATH}`,
-      },
+      }),
     });
 
     assert.equal(result.stdout, "");
@@ -444,16 +486,11 @@ test("SSH missing-key failure does not invoke docker outside dry run", async () 
     );
     await chmod(fakeDocker, 0o755);
 
-    const scriptEnv = { ...process.env };
-    delete scriptEnv.OMP_LAB_DRY_RUN;
-    delete scriptEnv.OMP_LAB_SSH_KEY;
-
     await assert.rejects(
       () =>
         execFileAsync("bash", [join(repoRoot, "scripts", "run-omp-control-container.sh")], {
           cwd: repoRoot,
-          env: {
-            ...scriptEnv,
+          env: cleanLabEnv({
             HOME: fakeHome,
             PATH: `${fakeBin}:${process.env.PATH}`,
             DOCKER_LOG: dockerLog,
@@ -461,7 +498,7 @@ test("SSH missing-key failure does not invoke docker outside dry run", async () 
             GEMINI_API_KEY: "test-gemini-key",
             OMP_LAB_WORKSPACE: fakeWorkspace,
             OMP_LAB_ENABLE_SSH: "1",
-          },
+          }),
         }),
       (error: Error & { stderr?: string }) => {
         assert.match(error.stderr ?? "", /SSH key .* does not exist/);

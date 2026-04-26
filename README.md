@@ -77,6 +77,11 @@ GEMINI_API_KEY="$(cat ~/.gemini-key)" \
 bash scripts/run-omp-skilled-container.sh
 ```
 
+The control runner mounts only the neutral workspace and does not mount this
+checkpoint checkout, repo skills, or repo source. The skilled runner mounts the
+repo `skills/` and `src/` directories read-only so the container can load the DB
+specialist skill and extension source while keeping the lab workspace separate.
+
 Both runners connect from the container to the host compose stack through
 `host.docker.internal`. The default Postgres and ClickHouse env values point at
 that host name, and the Docker args add the host-gateway mapping for Linux.
@@ -109,9 +114,9 @@ only `~/.ssh/id_rsa` read-only into the container. They do not mount the host
 `.ssh` directory or git config. Set `GITHUB_TOKEN` when you want `gh` API
 access inside the container.
 
-Dry-run mode avoids printing secret values where possible by passing Docker env
-names, such as `GEMINI_API_KEY`, `GITHUB_TOKEN`, and database password vars,
-instead of `KEY=value` arguments.
+Dry-run mode does not print forwarded Gemini, GitHub, or database secret values
+because Docker receives env names such as `GEMINI_API_KEY`, `GITHUB_TOKEN`, and
+database password vars instead of `KEY=value` arguments.
 
 ## Session Configuration
 
