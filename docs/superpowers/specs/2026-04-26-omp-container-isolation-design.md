@@ -30,6 +30,11 @@ The image should start from `mcr.microsoft.com/devcontainers/universal:2-linux` 
 
 The image should not copy the checkpoint repo. Runtime scripts provide all task-specific inputs through bind mounts and environment variables.
 
+Lab workspaces are disposable state owned by these scripts. The default control
+and skills workspaces should live under `~/.oh-my-pi-lab/`, and deleting them
+must be safe. Brett should put durable source checkouts elsewhere and mount or
+clone them into a fresh lab workspace intentionally.
+
 ## Runtime Modes
 
 `scripts/run-omp-control-container.sh` runs the source-blind control.
@@ -39,6 +44,7 @@ It should:
 - Build or use the shared OMP lab image.
 - Create a neutral host workspace outside the checkpoint checkout.
 - Mount that neutral workspace at `/workspace`.
+- Reset the neutral workspace before starting when `OMP_LAB_RESET_WORKSPACE=1`.
 - Pass `GEMINI_API_KEY` from `~/.gemini-key` by default.
 - Pass the selected model through `OMP_MODEL` or an explicit script argument.
 - Configure Postgres and ClickHouse connection environment variables that resolve to the host compose stack from inside Docker.
@@ -51,6 +57,7 @@ It should:
 
 - Use the same image as the control script.
 - Create a container-visible generated workspace with `.omp/skills` and `.omp/extensions/db-specialist.ts` matching the current local setup semantics.
+- Reset the generated workspace before starting when `OMP_LAB_RESET_WORKSPACE=1`.
 - Mount only the repo paths needed to load those skills and extension modules.
 - Use the same model, API key, and database connection environment contract as the control script.
 - Use the same optional Git SSH and GitHub CLI credential contract as the control script.
@@ -67,6 +74,25 @@ From the container, Postgres and ClickHouse should be reachable through Docker's
 - ClickHouse native: `host.docker.internal:9000`
 
 The scripts should add `--add-host host.docker.internal:host-gateway` so this works on Linux Docker.
+
+## Cleanup
+
+`scripts/clean-omp-lab.sh` should remove lab-created artifacts so Brett can
+force a fresh control or skills run.
+
+By default it should remove:
+
+- Lab containers labeled with `checkpoint.omp-lab=true`.
+- The default control workspace under `~/.oh-my-pi-lab/control-workspace`.
+- The default skills workspace under `~/.oh-my-pi-lab/skilled-workspace`.
+- Any named Docker volumes labeled with `checkpoint.omp-lab=true` if future work adds them.
+
+It should remove the shared `checkpoint-omp-lab:local` image only when Brett
+passes an explicit image cleanup option such as `--image`, because image rebuilds
+are slower than workspace cleanup.
+
+The run scripts should label containers with `checkpoint.omp-lab=true` and a
+mode-specific label so cleanup can target only the lab's Docker artifacts.
 
 ## Secret Handling
 
@@ -95,7 +121,7 @@ The run scripts should fail before starting the container when required inputs a
 - Docker is missing.
 - `~/.gemini-key` is missing and `GEMINI_API_KEY` is unset.
 - Git SSH access is requested but `~/.ssh/id_rsa` is missing.
-- The neutral or skilled workspace cannot be created.
+- The neutral or skilled workspace cannot be created, reset, or removed when requested.
 
 They should warn, but not fail, when the host database ports do not appear reachable, because Brett may intentionally start the agent before the collector stack.
 
@@ -106,6 +132,8 @@ Add focused tests for the script contracts rather than trying to automate the in
 - The control script's generated `docker run` arguments do not mount the checkpoint repo and do include the neutral workspace, `GEMINI_API_KEY`, model env, database env, and host gateway mapping.
 - The skills script's generated `docker run` arguments use the same image and DB/model/secret contract, and mount the checkpoint paths needed for `.omp` skills and extension loading.
 - The optional SSH mode mounts only `~/.ssh/id_rsa` read-only, does not mount the host `.ssh` directory, and passes `GITHUB_TOKEN` only when present.
+- The reset mode removes and recreates the selected lab workspace before building Docker arguments.
+- The cleanup script removes only labeled lab containers, labeled lab volumes, and default lab workspace directories unless image removal is explicitly requested.
 - The shared Dockerfile starts from Dev Containers Universal and does not copy the repo into the image.
 
 Manual verification remains an interactive smoke loop:
@@ -122,5 +150,6 @@ Update `README.md` or a dedicated script output so Brett can run both modes with
 - Start the checkpoint compose stack.
 - Run the control container.
 - Run the skills-enabled container.
+- Reset or clean lab state before a fresh run.
 - Pass `GEMINI_API_KEY=$(cat ~/.gemini-key)` explicitly or rely on the default key-file lookup.
 - Enable Git SSH access explicitly when the lab agent needs to pull private repos.

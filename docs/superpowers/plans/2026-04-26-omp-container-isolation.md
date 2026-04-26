@@ -4,7 +4,7 @@
 
 **Goal:** Build two Docker-based OMP lab run modes that share the same workstation image and service wiring while keeping the control run source-blind.
 
-**Architecture:** Replace the repo-copying standalone Dockerfile with a Dev Containers Universal lab image. Add one shared shell library that resolves secrets, workspaces, database env, optional SSH mounts, and Docker arguments; then add separate control and skills scripts that call the shared library with different workspace/source mounts. Tests use a dry-run mode that prints the computed Docker command without starting the interactive TUI.
+**Architecture:** Replace the repo-copying standalone Dockerfile with a Dev Containers Universal lab image. Add one shared shell library that resolves secrets, disposable workspaces, database env, optional SSH mounts, and Docker arguments; then add separate control and skills scripts that call the shared library with different workspace/source mounts. Tests use a dry-run mode that prints the computed Docker command without starting the interactive TUI, plus cleanup dry runs that prove only lab-owned artifacts are targeted.
 
 **Tech Stack:** Bash, Docker, Dev Containers Universal, Bun, npm, oh-my-pi, Node test runner, TypeScript.
 
@@ -16,6 +16,7 @@
 - `scripts/omp-lab-common.sh`: create a focused shell library for image names, workspace paths, model/key resolution, database env, optional SSH/GitHub auth arguments, and Docker command assembly.
 - `scripts/run-omp-control-container.sh`: run the source-blind control container by mounting only a neutral workspace.
 - `scripts/run-omp-skilled-container.sh`: run the skills-enabled container by preparing a generated `.omp` workspace and mounting only the repo paths required for skills and extension loading.
+- `scripts/clean-omp-lab.sh`: remove lab-owned disposable workspaces, labeled containers, labeled volumes, and optionally the shared image.
 - `test/scripts/omp_lab_scripts.test.ts`: exercise the dry-run command contracts for both runtime modes and the Dockerfile contract.
 - `README.md`: document build/run commands, DB connectivity, Gemini key behavior, and opt-in Git SSH access.
 - `JOURNAL.md`: record implementation decisions and any verification caveats.
@@ -275,6 +276,7 @@ append_base_docker_args() {
   args_ref+=(
     docker run --rm -it
     --name "${OMP_LAB_CONTAINER_NAME:-oh-my-pi-lab}"
+    --label checkpoint.omp-lab=true
     --add-host host.docker.internal:host-gateway
     --mount "type=bind,source=${workspace},target=/workspace"
     --env "GEMINI_API_KEY=${gemini_api_key}"
@@ -348,9 +350,14 @@ require_omp_model
 GEMINI_KEY="$(resolve_gemini_api_key)"
 WORKSPACE="${OMP_LAB_WORKSPACE:-${HOME}/.oh-my-pi-lab/control-workspace}"
 ensure_workspace "${WORKSPACE}"
+if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
+  rm -rf "${WORKSPACE}"
+  ensure_workspace "${WORKSPACE}"
+fi
 
 docker_args=()
 append_base_docker_args docker_args "${WORKSPACE}" "${GEMINI_KEY}"
+docker_args+=(--label checkpoint.omp-lab.mode=control)
 append_git_ssh_args docker_args
 finish_docker_args docker_args
 run_or_print_docker_args docker_args
@@ -519,6 +526,10 @@ require_omp_model
 GEMINI_KEY="$(resolve_gemini_api_key)"
 WORKSPACE="${OMP_LAB_WORKSPACE:-${HOME}/.oh-my-pi-lab/skilled-workspace}"
 ensure_workspace "${WORKSPACE}"
+if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
+  rm -rf "${WORKSPACE}"
+  ensure_workspace "${WORKSPACE}"
+fi
 mkdir -p "${WORKSPACE}/.omp/extensions"
 
 cat > "${WORKSPACE}/.omp/extensions/db-specialist.ts" <<'ENTRYPOINT'
@@ -528,6 +539,7 @@ ENTRYPOINT
 docker_args=()
 append_base_docker_args docker_args "${WORKSPACE}" "${GEMINI_KEY}"
 docker_args+=(
+  --label checkpoint.omp-lab.mode=skilled
   --mount "type=bind,source=${REPO_ROOT}/skills,target=/workspace/.omp/skills,readonly"
   --mount "type=bind,source=${REPO_ROOT}/src,target=/checkpoint-src/src,readonly"
   --env "CHECKPOINT_EXTENSION_SOURCE=/checkpoint-src/src/omp_extension/db_specialist_extension.ts"
@@ -557,7 +569,146 @@ git add scripts/run-omp-skilled-container.sh test/scripts/omp_lab_scripts.test.t
 git commit -m "feat: add omp skilled lab runner"
 ```
 
-## Task 5: Script Ergonomics And Documentation
+## Task 5: Cleanup Runner
+
+**Files:**
+- Create: `scripts/clean-omp-lab.sh`
+- Modify: `test/scripts/omp_lab_scripts.test.ts`
+
+- [ ] **Step 1: Add failing cleanup dry-run tests**
+
+Append to `test/scripts/omp_lab_scripts.test.ts`:
+
+```ts
+test("cleanup dry run removes disposable workspaces and labeled docker artifacts", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+
+  try {
+    const result = await execFileAsync("bash", [join(repoRoot, "scripts", "clean-omp-lab.sh")], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        OMP_LAB_DRY_RUN: "1",
+      },
+    });
+
+    assert.match(result.stdout, new RegExp(`rm -rf ${fakeHome}/\\.oh-my-pi-lab/control-workspace`));
+    assert.match(result.stdout, new RegExp(`rm -rf ${fakeHome}/\\.oh-my-pi-lab/skilled-workspace`));
+    assert.match(result.stdout, /docker ps -aq --filter label=checkpoint\.omp-lab=true/);
+    assert.match(result.stdout, /docker volume ls -q --filter label=checkpoint\.omp-lab=true/);
+    assert.doesNotMatch(result.stdout, /docker image rm checkpoint-omp-lab:local/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("cleanup image flag includes shared image removal", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+
+  try {
+    const result = await execFileAsync("bash", [join(repoRoot, "scripts", "clean-omp-lab.sh"), "--image"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        OMP_LAB_DRY_RUN: "1",
+      },
+    });
+
+    assert.match(result.stdout, /docker image rm checkpoint-omp-lab:local/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+```
+
+- [ ] **Step 2: Run the failing cleanup tests**
+
+Run:
+
+```bash
+npm test -- test/scripts/omp_lab_scripts.test.ts
+```
+
+Expected: FAIL because `scripts/clean-omp-lab.sh` does not exist.
+
+- [ ] **Step 3: Create the cleanup script**
+
+Create `scripts/clean-omp-lab.sh`:
+
+```bash
+#!/usr/bin/env bash
+# ABOUTME: Removes disposable OMP lab workspaces and labeled Docker artifacts.
+# ABOUTME: Keeps image removal explicit so routine cleanup stays fast.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/omp-lab-common.sh"
+
+REMOVE_IMAGE=0
+for arg in "$@"; do
+  case "${arg}" in
+    --image)
+      REMOVE_IMAGE=1
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "${arg}" >&2
+      exit 2
+      ;;
+  esac
+done
+
+CONTROL_WORKSPACE="${OMP_LAB_CONTROL_WORKSPACE:-${HOME}/.oh-my-pi-lab/control-workspace}"
+SKILLED_WORKSPACE="${OMP_LAB_SKILLED_WORKSPACE:-${HOME}/.oh-my-pi-lab/skilled-workspace}"
+
+run_cleanup_command() {
+  if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
+    printf '%q ' "$@"
+    printf '\n'
+    return
+  fi
+
+  "$@"
+}
+
+run_cleanup_command rm -rf "${CONTROL_WORKSPACE}"
+run_cleanup_command rm -rf "${SKILLED_WORKSPACE}"
+
+if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
+  printf '%s\n' 'docker ps -aq --filter label=checkpoint.omp-lab=true | xargs -r docker rm -f'
+  printf '%s\n' 'docker volume ls -q --filter label=checkpoint.omp-lab=true | xargs -r docker volume rm'
+else
+  docker ps -aq --filter label=checkpoint.omp-lab=true | xargs -r docker rm -f
+  docker volume ls -q --filter label=checkpoint.omp-lab=true | xargs -r docker volume rm
+fi
+
+if [[ "${REMOVE_IMAGE}" == "1" ]]; then
+  run_cleanup_command docker image rm "${OMP_LAB_IMAGE}"
+fi
+```
+
+- [ ] **Step 4: Make script executable and run tests**
+
+Run:
+
+```bash
+chmod +x scripts/clean-omp-lab.sh
+npm test -- test/scripts/omp_lab_scripts.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+Run:
+
+```bash
+git add scripts/clean-omp-lab.sh test/scripts/omp_lab_scripts.test.ts scripts/omp-lab-common.sh scripts/run-omp-control-container.sh scripts/run-omp-skilled-container.sh
+git commit -m "feat: add omp lab cleanup"
+```
+
+## Task 6: Script Ergonomics And Documentation
 
 **Files:**
 - Modify: `scripts/omp-lab-common.sh`
@@ -565,7 +716,7 @@ git commit -m "feat: add omp skilled lab runner"
 - Modify: `JOURNAL.md`
 - Modify: `test/scripts/omp_lab_scripts.test.ts`
 
-- [ ] **Step 1: Add failing tests for key-file fallback and missing SSH key**
+- [ ] **Step 1: Add failing tests for key-file fallback, missing SSH key, and workspace reset**
 
 Append to `test/scripts/omp_lab_scripts.test.ts`:
 
@@ -614,6 +765,27 @@ test("SSH mode fails before docker run when id_rsa is missing", async () => {
     await rm(fakeWorkspace, { recursive: true, force: true });
   }
 });
+
+test("control reset mode clears existing workspace contents before dry run", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+  const staleFile = join(fakeWorkspace, "stale.txt");
+
+  try {
+    await writeFile(staleFile, "stale\n");
+
+    await runScript("run-omp-control-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+      OMP_LAB_RESET_WORKSPACE: "1",
+    });
+
+    await assert.rejects(() => readFile(staleFile, "utf8"));
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
 ```
 
 - [ ] **Step 2: Run the tests**
@@ -624,7 +796,7 @@ Run:
 npm test -- test/scripts/omp_lab_scripts.test.ts
 ```
 
-Expected: PASS if previous tasks already cover the behavior. If they fail, fix only the failing helper behavior in `scripts/omp-lab-common.sh`.
+Expected: PASS if previous tasks already cover the behavior. If they fail, fix only the failing helper behavior in the relevant script.
 
 - [ ] **Step 3: Update README**
 
@@ -659,6 +831,27 @@ Both scripts connect to the host checkpoint compose stack through
 `host.docker.internal`, so start the stack before asking the agent to inspect
 Postgres or ClickHouse.
 
+Lab workspaces are disposable. Start a run from a clean workspace with:
+
+```bash
+OMP_MODEL=google/gemini-2.5-pro \
+GEMINI_API_KEY="$(cat ~/.gemini-key)" \
+OMP_LAB_RESET_WORKSPACE=1 \
+bash scripts/run-omp-control-container.sh
+```
+
+Remove lab workspaces, labeled lab containers, and labeled lab volumes:
+
+```bash
+bash scripts/clean-omp-lab.sh
+```
+
+Also remove the shared image:
+
+```bash
+bash scripts/clean-omp-lab.sh --image
+```
+
 Git SSH access is off by default. Enable it only for runs that need private
 repo access:
 
@@ -679,7 +872,7 @@ API access.
 Add a dated entry to the top of `JOURNAL.md`:
 
 ```markdown
-- 2026-04-26: Implemented the OMP lab container runners with a shared Docker image, dry-run-tested command construction, source-blind control mode, checkpoint skills mode, and opt-in read-only `id_rsa` mounting. The scripts pass `GITHUB_TOKEN` only when present; `gh` API auth still requires Brett to provide that token explicitly.
+- 2026-04-26: Implemented the OMP lab container runners with a shared Docker image, dry-run-tested command construction, source-blind control mode, checkpoint skills mode, disposable workspace reset, cleanup tooling, and opt-in read-only `id_rsa` mounting. The scripts pass `GITHUB_TOKEN` only when present; `gh` API auth still requires Brett to provide that token explicitly.
 ```
 
 - [ ] **Step 5: Run focused tests**
@@ -701,7 +894,7 @@ git add README.md JOURNAL.md scripts/omp-lab-common.sh test/scripts/omp_lab_scri
 git commit -m "docs: document omp lab containers"
 ```
 
-## Task 6: Full Verification
+## Task 7: Full Verification
 
 **Files:**
 - No planned source changes unless verification exposes a real issue.
@@ -749,6 +942,14 @@ bash scripts/run-omp-skilled-container.sh
 ```
 
 Expected: Output contains one `docker run` command with `/workspace`, read-only `skills` and `src` mounts, host gateway mapping, and the shared image.
+
+Run:
+
+```bash
+OMP_LAB_DRY_RUN=1 bash scripts/clean-omp-lab.sh --image
+```
+
+Expected: Output contains removal commands for both default workspaces, labeled lab containers, labeled lab volumes, and `checkpoint-omp-lab:local`.
 
 - [ ] **Step 4: Build the lab image if Docker is available**
 
