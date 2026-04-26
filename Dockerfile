@@ -35,7 +35,8 @@ RUN apt-get update \
     wget \
   && rm -rf /var/lib/apt/lists/*
 
-RUN bun install -g @oh-my-pi/pi-coding-agent
+RUN bun install -g @oh-my-pi/pi-coding-agent \
+  && ln -s /root/.bun/bin/omp /usr/local/bin/omp
 
 RUN mkdir -p /checkpoint-src \
   && cd /checkpoint-src \
@@ -48,15 +49,15 @@ RUN mkdir -p /checkpoint-src \
 RUN mkdir -p /etc/ssh/ssh_known_hosts.d \
   && ssh-keyscan github.com > /etc/ssh/ssh_known_hosts
 
-RUN mkdir -p /home/vscode/.ssh \
-  && printf 'Host github.com\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/id_rsa\n  IdentitiesOnly yes\n' > /home/vscode/.ssh/config \
-  && chown -R vscode:vscode /home/vscode/.ssh \
-  && chmod 700 /home/vscode/.ssh \
-  && chmod 600 /home/vscode/.ssh/config
+RUN mkdir -p /home/codespace/.ssh \
+  && printf 'Host github.com\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/id_rsa\n  IdentitiesOnly yes\n' > /home/codespace/.ssh/config \
+  && chown -R codespace:codespace /home/codespace/.ssh \
+  && chmod 700 /home/codespace/.ssh \
+  && chmod 600 /home/codespace/.ssh/config
 
 ENV PATH="/root/.bun/bin:${PATH}"
 WORKDIR /workspace
 
-USER vscode
+USER codespace
 
 ENTRYPOINT ["omp"]
