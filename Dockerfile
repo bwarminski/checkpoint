@@ -9,7 +9,8 @@ COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 ENV BUN_INSTALL="/usr/local"
 ENV PATH="/usr/local/bin:${PATH}"
 
-RUN apt-get update \
+RUN rm -f /etc/apt/sources.list.d/yarn.list \
+  && apt-get update \
   && apt-get install -y --no-install-recommends \
     bash \
     build-essential \
@@ -56,6 +57,9 @@ RUN mkdir -p /home/codespace/.ssh \
   && chown -R codespace:codespace /home/codespace/.ssh \
   && chmod 700 /home/codespace/.ssh \
   && chmod 600 /home/codespace/.ssh/config
+
+RUN mkdir -p /workspace \
+  && chown codespace:codespace /workspace
 
 WORKDIR /workspace
 
