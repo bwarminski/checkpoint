@@ -97,22 +97,31 @@ run_cleanup_command() {
 run_cleanup_command rm -rf "${CONTROL_WORKSPACE}"
 run_cleanup_command rm -rf "${SKILLED_WORKSPACE}"
 
-if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
-  printf '%s\n' 'docker ps -aq --filter label=checkpoint.omp-lab=true | xargs -r docker rm -f'
-  printf '%s\n' 'docker volume ls -q --filter label=checkpoint.omp-lab=true | xargs -r docker volume rm'
-else
+DOCKER_AVAILABLE=0
+if [[ "${OMP_LAB_DRY_RUN:-0}" != "1" ]]; then
   if command -v docker >/dev/null 2>&1; then
-    docker ps -aq --filter label=checkpoint.omp-lab=true | xargs -r docker rm -f
-    docker volume ls -q --filter label=checkpoint.omp-lab=true | xargs -r docker volume rm
+    if docker info >/dev/null 2>&1; then
+      DOCKER_AVAILABLE=1
+    else
+      printf 'Docker daemon unavailable; skipping Docker artifact cleanup\n' >&2
+    fi
   else
     printf 'docker not found; skipping Docker artifact cleanup\n' >&2
   fi
 fi
 
+if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
+  printf '%s\n' 'docker ps -aq --filter label=checkpoint.omp-lab=true | xargs -r docker rm -f'
+  printf '%s\n' 'docker volume ls -q --filter label=checkpoint.omp-lab=true | xargs -r docker volume rm'
+elif [[ "${DOCKER_AVAILABLE}" == "1" ]]; then
+  docker ps -aq --filter label=checkpoint.omp-lab=true | xargs -r docker rm -f
+  docker volume ls -q --filter label=checkpoint.omp-lab=true | xargs -r docker volume rm
+fi
+
 if [[ "${REMOVE_IMAGE}" == "1" ]]; then
   if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
     run_cleanup_command docker image rm "${OMP_LAB_IMAGE}"
-  elif command -v docker >/dev/null 2>&1; then
+  elif [[ "${DOCKER_AVAILABLE}" == "1" ]]; then
     if docker image inspect "${OMP_LAB_IMAGE}" >/dev/null 2>&1; then
       run_cleanup_command docker image rm "${OMP_LAB_IMAGE}"
     else

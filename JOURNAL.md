@@ -1,5 +1,6 @@
 # JOURNAL
 
+- 2026-04-26: Task 5 daemon-availability review fix added a `docker info` probe to cleanup. When the Docker client exists but the daemon/API is unavailable, cleanup now removes workspaces, prints a skip message, and skips all container/volume/image operations without failing.
 - 2026-04-26: Task 5 review fix tightened `scripts/clean-omp-lab.sh` so cleanup validates both workspace paths before deletion and refuses empty, root, home, repo-root, lab-root, or outside-lab paths. Real Docker cleanup now skips cleanly when Docker is unavailable, and `--image` checks image presence before removal.
 - 2026-04-26: Task 5 for OMP container isolation added `scripts/clean-omp-lab.sh`, which removes the disposable control/skilled lab workspaces and labeled lab containers/volumes in routine cleanup. The shared `checkpoint-omp-lab:local` image is removed only with `--image`, and dry-run output prints commands without exposing secret values.
 - 2026-04-26: Task 4 final blocker fix cleared stale `.omp/skills` in skilled lab workspaces along with generated tools/extensions. This prevents prior file or symlink state at `/workspace/.omp/skills` from interfering with the container bind mount target.

@@ -272,6 +272,47 @@ test("cleanup image flag skips absent shared image", async () => {
   }
 });
 
+test("cleanup skips docker artifacts when docker daemon is unavailable after workspace cleanup", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "checkpoint-omp-bin-"));
+  const controlWorkspace = join(fakeHome, ".oh-my-pi-lab", "control-workspace");
+  const skilledWorkspace = join(fakeHome, ".oh-my-pi-lab", "skilled-workspace");
+  const fakeDocker = join(fakeBin, "docker");
+
+  try {
+    await writeFile(
+      fakeDocker,
+      [
+        "#!/usr/bin/env bash",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    await chmod(fakeDocker, 0o755);
+    await mkdir(controlWorkspace, { recursive: true });
+    await mkdir(skilledWorkspace, { recursive: true });
+    await writeFile(join(controlWorkspace, "marker"), "control\n");
+    await writeFile(join(skilledWorkspace, "marker"), "skilled\n");
+
+    const result = await execFileAsync("/bin/bash", [join(repoRoot, "scripts", "clean-omp-lab.sh"), "--image"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+      },
+    });
+
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Docker daemon unavailable; skipping Docker artifact cleanup/);
+    await assert.rejects(readFile(join(controlWorkspace, "marker"), "utf8"), { code: "ENOENT" });
+    await assert.rejects(readFile(join(skilledWorkspace, "marker"), "utf8"), { code: "ENOENT" });
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeBin, { recursive: true, force: true });
+  }
+});
+
 test("control dry run mounts only the neutral workspace and shared service env", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
