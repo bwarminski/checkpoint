@@ -136,8 +136,14 @@ test("control dry run mounts only the neutral workspace and shared service env",
     assert.ok(!args.includes("GEMINI_API_KEY=test-gemini-key"));
     assert.doesNotMatch(output, /test-gemini-key/);
     assert.ok(args.includes("OMP_MODEL=google/gemini-2.5-pro"));
-    assert.ok(args.includes("PGHOST=host.docker.internal"));
-    assert.ok(args.includes("CLICKHOUSE_URL=http://host.docker.internal:8123"));
+    assert.ok(args.includes("PGHOST"));
+    assert.ok(args.includes("PGPORT"));
+    assert.ok(args.includes("PGDATABASE"));
+    assert.ok(args.includes("PGUSER"));
+    assert.ok(args.includes("PGPASSWORD"));
+    assert.ok(args.includes("CLICKHOUSE_URL"));
+    assert.ok(args.includes("CLICKHOUSE_HOST"));
+    assert.ok(args.includes("CLICKHOUSE_PORT"));
     assert.ok(args.includes("checkpoint.omp-lab=true"));
     assert.ok(args.includes("checkpoint.omp-lab.mode=control"));
     assert.ok(!args.some((arg) => arg.startsWith("GITHUB_TOKEN=")));
@@ -250,6 +256,31 @@ test("control dry run shell-escapes arguments containing spaces", async () => {
   }
 });
 
+test("control dry run does not expose database connection values", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+
+  try {
+    const output = await runScript("run-omp-control-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+      PGPASSWORD: "secret db password",
+      CLICKHOUSE_URL: "http://user:secret@host:8123",
+    });
+    const args = await parseDryRunArgs(output);
+
+    assert.ok(args.includes("PGPASSWORD"));
+    assert.ok(args.includes("CLICKHOUSE_URL"));
+    assert.ok(!args.includes("PGPASSWORD=secret db password"));
+    assert.ok(!args.includes("CLICKHOUSE_URL=http://user:secret@host:8123"));
+    assert.doesNotMatch(output, /secret db password/);
+    assert.doesNotMatch(output, /user:secret/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
 test("skills dry run mounts generated workspace plus checkpoint skill and extension sources", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-skilled-"));
@@ -265,7 +296,7 @@ test("skills dry run mounts generated workspace plus checkpoint skill and extens
     assert.ok(args.includes(`type=bind,source=${repoRoot}/skills,target=/workspace/.omp/skills,readonly`));
     assert.ok(args.includes(`type=bind,source=${repoRoot}/src,target=/checkpoint-src/src,readonly`));
     assert.ok(args.includes("CHECKPOINT_EXTENSION_SOURCE=/checkpoint-src/src/omp_extension/db_specialist_extension.ts"));
-    assert.ok(args.includes("PGHOST=host.docker.internal"));
+    assert.ok(args.includes("PGHOST"));
     assert.ok(args.includes("checkpoint.omp-lab.mode=skilled"));
     assert.ok(args.includes("checkpoint-omp-lab:local"));
     assert.ok(args.includes("--model"));
@@ -275,6 +306,33 @@ test("skills dry run mounts generated workspace plus checkpoint skill and extens
     assert.doesNotMatch(output, /test-gemini-key/);
 
     const extensionEntry = join(fakeWorkspace, ".omp", "extensions", "db-specialist.ts");
+    assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("skills dry run replaces stale generated OMP state", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-skilled-"));
+  const staleTool = join(fakeWorkspace, ".omp", "tools", "stale-tool", "index.ts");
+  const staleExtension = join(fakeWorkspace, ".omp", "extensions", "extra.ts");
+  const extensionEntry = join(fakeWorkspace, ".omp", "extensions", "db-specialist.ts");
+
+  try {
+    await mkdir(join(fakeWorkspace, ".omp", "tools", "stale-tool"), { recursive: true });
+    await mkdir(join(fakeWorkspace, ".omp", "extensions"), { recursive: true });
+    await writeFile(staleTool, "export default {};\n");
+    await writeFile(staleExtension, "export default {};\n");
+
+    await runScript("run-omp-skilled-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+    });
+
+    await assert.rejects(readFile(staleTool, "utf8"), { code: "ENOENT" });
+    await assert.rejects(readFile(staleExtension, "utf8"), { code: "ENOENT" });
     assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
   } finally {
     await rm(fakeHome, { recursive: true, force: true });

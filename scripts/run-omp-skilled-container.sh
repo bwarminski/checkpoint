@@ -10,12 +10,14 @@ source "${SCRIPT_DIR}/omp-lab-common.sh"
 require_omp_model
 GEMINI_KEY="$(resolve_gemini_api_key)"
 export GEMINI_API_KEY="${GEMINI_KEY}"
+export_default_db_env
 WORKSPACE="${OMP_LAB_WORKSPACE:-${HOME}/.oh-my-pi-lab/skilled-workspace}"
 ensure_workspace "${WORKSPACE}"
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
   rm -rf "${WORKSPACE}"
   ensure_workspace "${WORKSPACE}"
 fi
+rm -rf "${WORKSPACE}/.omp/tools" "${WORKSPACE}/.omp/extensions"
 mkdir -p "${WORKSPACE}/.omp/extensions"
 
 cat > "${WORKSPACE}/.omp/extensions/db-specialist.ts" <<'ENTRYPOINT'

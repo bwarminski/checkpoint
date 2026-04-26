@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/omp-lab-common.sh"
 require_omp_model
 GEMINI_KEY="$(resolve_gemini_api_key)"
 export GEMINI_API_KEY="${GEMINI_KEY}"
+export_default_db_env
 WORKSPACE="${OMP_LAB_WORKSPACE:-${HOME}/.oh-my-pi-lab/control-workspace}"
 ensure_workspace "${WORKSPACE}"
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then

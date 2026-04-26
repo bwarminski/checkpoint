@@ -35,6 +35,17 @@ ensure_workspace() {
   mkdir -p "${workspace}"
 }
 
+export_default_db_env() {
+  export PGHOST="${PGHOST:-host.docker.internal}"
+  export PGPORT="${PGPORT:-5432}"
+  export PGDATABASE="${PGDATABASE:-checkpoint_demo}"
+  export PGUSER="${PGUSER:-postgres}"
+  export PGPASSWORD="${PGPASSWORD:-postgres}"
+  export CLICKHOUSE_URL="${CLICKHOUSE_URL:-http://host.docker.internal:8123}"
+  export CLICKHOUSE_HOST="${CLICKHOUSE_HOST:-host.docker.internal}"
+  export CLICKHOUSE_PORT="${CLICKHOUSE_PORT:-9000}"
+}
+
 append_base_docker_args() {
   local -n args_ref="$1"
   local workspace="$2"
@@ -47,14 +58,14 @@ append_base_docker_args() {
     --mount "type=bind,source=${workspace},target=/workspace"
     --env GEMINI_API_KEY
     --env "OMP_MODEL=${OMP_MODEL}"
-    --env "PGHOST=${PGHOST:-host.docker.internal}"
-    --env "PGPORT=${PGPORT:-5432}"
-    --env "PGDATABASE=${PGDATABASE:-checkpoint_demo}"
-    --env "PGUSER=${PGUSER:-postgres}"
-    --env "PGPASSWORD=${PGPASSWORD:-postgres}"
-    --env "CLICKHOUSE_URL=${CLICKHOUSE_URL:-http://host.docker.internal:8123}"
-    --env "CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-host.docker.internal}"
-    --env "CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}"
+    --env PGHOST
+    --env PGPORT
+    --env PGDATABASE
+    --env PGUSER
+    --env PGPASSWORD
+    --env CLICKHOUSE_URL
+    --env CLICKHOUSE_HOST
+    --env CLICKHOUSE_PORT
   )
 
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
