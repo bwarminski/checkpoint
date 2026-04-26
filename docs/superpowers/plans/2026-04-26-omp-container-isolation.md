@@ -121,16 +121,15 @@ RUN mkdir -p /checkpoint-src \
 RUN mkdir -p /etc/ssh/ssh_known_hosts.d \
   && ssh-keyscan github.com > /etc/ssh/ssh_known_hosts
 
-RUN mkdir -p /home/vscode/.ssh \
-  && printf 'Host github.com\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/id_rsa\n  IdentitiesOnly yes\n' > /home/vscode/.ssh/config \
-  && chown -R vscode:vscode /home/vscode/.ssh \
-  && chmod 700 /home/vscode/.ssh \
-  && chmod 600 /home/vscode/.ssh/config
+RUN mkdir -p /home/codespace/.ssh \
+  && printf 'Host github.com\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/id_rsa\n  IdentitiesOnly yes\n' > /home/codespace/.ssh/config \
+  && chown -R codespace:codespace /home/codespace/.ssh \
+  && chmod 700 /home/codespace/.ssh \
+  && chmod 600 /home/codespace/.ssh/config
 
-ENV PATH="/root/.bun/bin:${PATH}"
 WORKDIR /workspace
 
-USER vscode
+USER codespace
 
 ENTRYPOINT ["omp"]
 ```
@@ -203,10 +202,10 @@ test("control dry run mounts only the neutral workspace and shared service env",
     assert.match(output, /docker run --rm -it/);
     assert.match(output, /--add-host host\.docker\.internal:host-gateway/);
     assert.match(output, new RegExp(`--mount type=bind,source=${fakeWorkspace},target=/workspace`));
-    assert.match(output, /--env GEMINI_API_KEY=test-gemini-key/);
+    assert.match(output, /--env GEMINI_API_KEY/);
     assert.match(output, /--env OMP_MODEL=google\/gemini-2\.5-pro/);
-    assert.match(output, /--env PGHOST=host\.docker\.internal/);
-    assert.match(output, /--env CLICKHOUSE_URL=http:\/\/host\.docker\.internal:8123/);
+    assert.match(output, /--env PGHOST/);
+    assert.match(output, /--env CLICKHOUSE_URL/);
     assert.doesNotMatch(output, new RegExp(repoRoot));
     assert.doesNotMatch(output, /\.ssh/);
   } finally {
@@ -238,7 +237,7 @@ Create `scripts/omp-lab-common.sh`:
 set -euo pipefail
 
 OMP_LAB_IMAGE="${OMP_LAB_IMAGE:-checkpoint-omp-lab:local}"
-OMP_LAB_CONTAINER_USER="${OMP_LAB_CONTAINER_USER:-vscode}"
+OMP_LAB_CONTAINER_USER="${OMP_LAB_CONTAINER_USER:-codespace}"
 OMP_LAB_CONTAINER_HOME="/home/${OMP_LAB_CONTAINER_USER}"
 
 resolve_gemini_api_key() {
@@ -271,28 +270,26 @@ ensure_workspace() {
 append_base_docker_args() {
   local -n args_ref="$1"
   local workspace="$2"
-  local gemini_api_key="$3"
-
   args_ref+=(
     docker run --rm -it
     --name "${OMP_LAB_CONTAINER_NAME:-oh-my-pi-lab}"
     --label checkpoint.omp-lab=true
     --add-host host.docker.internal:host-gateway
     --mount "type=bind,source=${workspace},target=/workspace"
-    --env "GEMINI_API_KEY=${gemini_api_key}"
+    --env GEMINI_API_KEY
     --env "OMP_MODEL=${OMP_MODEL}"
-    --env "PGHOST=${PGHOST:-host.docker.internal}"
-    --env "PGPORT=${PGPORT:-5432}"
-    --env "PGDATABASE=${PGDATABASE:-checkpoint_demo}"
-    --env "PGUSER=${PGUSER:-postgres}"
-    --env "PGPASSWORD=${PGPASSWORD:-postgres}"
-    --env "CLICKHOUSE_URL=${CLICKHOUSE_URL:-http://host.docker.internal:8123}"
-    --env "CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-host.docker.internal}"
-    --env "CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}"
+    --env PGHOST
+    --env PGPORT
+    --env PGDATABASE
+    --env PGUSER
+    --env PGPASSWORD
+    --env CLICKHOUSE_URL
+    --env CLICKHOUSE_HOST
+    --env CLICKHOUSE_PORT
   )
 
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    args_ref+=(--env "GITHUB_TOKEN=${GITHUB_TOKEN}")
+    args_ref+=(--env GITHUB_TOKEN)
   fi
 }
 
@@ -311,7 +308,6 @@ append_git_ssh_args() {
 
   args_ref+=(
     --mount "type=bind,source=${ssh_key},target=${OMP_LAB_CONTAINER_HOME}/.ssh/id_rsa,readonly"
-    --env OMP_LAB_ENABLE_SSH=1
   )
 }
 
@@ -411,8 +407,8 @@ test("control SSH mode mounts only id_rsa read-only and forwards GitHub token wh
       GITHUB_TOKEN: "test-gh-token",
     });
 
-    assert.match(output, new RegExp(`source=${fakeKey},target=/home/vscode/\\.ssh/id_rsa,readonly`));
-    assert.match(output, /--env GITHUB_TOKEN=test-gh-token/);
+    assert.match(output, new RegExp(`source=${fakeKey},target=/home/codespace/\\.ssh/id_rsa,readonly`));
+    assert.match(output, /--env GITHUB_TOKEN/);
     assert.doesNotMatch(output, new RegExp(`source=${fakeSshDir},`));
     assert.doesNotMatch(output, /\.gitconfig/);
   } finally {
@@ -439,7 +435,6 @@ If the test failed, adjust `append_git_ssh_args()` in `scripts/omp-lab-common.sh
 ```bash
 args_ref+=(
   --mount "type=bind,source=${ssh_key},target=${OMP_LAB_CONTAINER_HOME}/.ssh/id_rsa,readonly"
-  --env OMP_LAB_ENABLE_SSH=1
 )
 ```
 
@@ -489,7 +484,7 @@ test("skills dry run mounts generated workspace plus checkpoint skill and extens
     assert.match(output, new RegExp(`source=${repoRoot}/skills,target=/workspace/.omp/skills,readonly`));
     assert.match(output, new RegExp(`source=${repoRoot}/src,target=/checkpoint-src/src,readonly`));
     assert.match(output, /--env CHECKPOINT_EXTENSION_SOURCE=\/checkpoint-src\/src\/omp_extension\/db_specialist_extension\.ts/);
-    assert.match(output, /--env PGHOST=host\.docker\.internal/);
+    assert.match(output, /--env PGHOST/);
     assert.match(output, /checkpoint-omp-lab:local --model google\/gemini-2\.5-pro/);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
@@ -740,7 +735,7 @@ test("control script reads Gemini key from home key file when env is unset", asy
       },
     });
 
-    assert.match(result.stdout, /--env GEMINI_API_KEY=file-gemini-key/);
+    assert.match(result.stdout, /--env GEMINI_API_KEY/);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
     await rm(fakeWorkspace, { recursive: true, force: true });

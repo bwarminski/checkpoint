@@ -466,7 +466,7 @@ test("control mode refuses checkpoint repo workspaces before docker run", async 
 
       assert.equal(error.code, 2);
       assert.doesNotMatch(error.stdout ?? "", /docker run/);
-      assert.match(error.stderr ?? "", /Refusing source-visible control workspace/);
+      assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
     }
 
     await assert.rejects(stat(repoChild), { code: "ENOENT" });
@@ -495,7 +495,7 @@ test("control mode refuses checkpoint repo ancestor workspaces before docker run
 
     assert.equal(error.code, 2);
     assert.doesNotMatch(error.stdout ?? "", /docker run/);
-    assert.match(error.stderr ?? "", /Refusing source-visible control workspace/);
+    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
     await assert.rejects(stat(repoChild), { code: "ENOENT" });
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
@@ -520,7 +520,7 @@ test("control mode refuses filesystem root workspace before docker args", async 
 
     assert.equal(error.code, 2);
     assert.doesNotMatch(error.stdout ?? "", /docker run/);
-    assert.match(error.stderr ?? "", /Refusing source-visible control workspace/);
+    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }
@@ -570,7 +570,7 @@ test("control SSH mode mounts only id_rsa read-only and forwards GitHub token wh
     assert.ok(args.includes("GITHUB_TOKEN"));
     assert.ok(!args.includes("GITHUB_TOKEN=test-gh-token"));
     assert.doesNotMatch(output, /test-gh-token/);
-    assert.ok(args.includes("OMP_LAB_ENABLE_SSH=1"));
+    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
     assert.ok(!args.includes(`type=bind,source=${fakeSshDir},target=/home/codespace/.ssh,readonly`));
     assert.doesNotMatch(output, /\.gitconfig/);
   } finally {
@@ -755,7 +755,7 @@ test("reset mode refuses unsafe workspaces before deleting markers", async () =>
       assert.equal(error.code, 2);
       assert.equal(await readFile(dangerousCase.marker, "utf8"), "keep\n");
       assert.doesNotMatch(error.stdout ?? "", /docker run/);
-      assert.match(error.stderr ?? "", /Refusing (to remove unsafe workspace path|non-lab-owned skilled workspace)/);
+      assert.match(error.stderr ?? "", /Refusing to remove unsafe workspace path/);
     }
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
@@ -870,30 +870,57 @@ test("skills dry run mounts generated workspace plus checkpoint skill and extens
   }
 });
 
-test("skills mode refuses outside workspaces before replacing OMP state", async () => {
+test("skills mode refuses source-visible workspaces before replacing OMP state", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
-  const outsideWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-skilled-outside-"));
-  const outsideMarker = join(outsideWorkspace, ".omp", "skills", "marker.txt");
+  const repoChild = join(repoRoot, ".tmp-skilled-workspace");
+  const repoAncestor = dirname(repoRoot);
+  const dangerousCases = [
+    { workspace: "", expected: /Refusing source-visible workspace .*<empty>/ },
+    { workspace: "/", expected: /Refusing source-visible workspace/ },
+    { workspace: repoRoot, expected: /Refusing source-visible workspace/ },
+    { workspace: repoChild, expected: /Refusing source-visible workspace/ },
+    { workspace: repoAncestor, expected: /Refusing source-visible workspace/ },
+  ];
 
   try {
-    await mkdir(join(outsideWorkspace, ".omp", "skills"), { recursive: true });
-    await writeFile(outsideMarker, "keep\n");
+    for (const dangerousCase of dangerousCases) {
+      let error: Error & { code?: number; stdout?: string; stderr?: string };
+      try {
+        await runScript("run-omp-skilled-container.sh", {
+          HOME: fakeHome,
+          OMP_LAB_WORKSPACE: dangerousCase.workspace,
+        });
+        assert.fail("skills mode should reject source-visible workspaces");
+      } catch (caught) {
+        error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+      }
 
-    let error: Error & { code?: number; stdout?: string; stderr?: string };
-    try {
-      await runScript("run-omp-skilled-container.sh", {
-        HOME: fakeHome,
-        OMP_LAB_WORKSPACE: outsideWorkspace,
-      });
-      assert.fail("skills mode should reject outside workspaces");
-    } catch (caught) {
-      error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+      assert.equal(error.code, 2);
+      assert.doesNotMatch(error.stdout ?? "", /docker run/);
+      assert.match(error.stderr ?? "", dangerousCase.expected);
     }
 
-    assert.equal(error.code, 2);
-    assert.equal(await readFile(outsideMarker, "utf8"), "keep\n");
-    assert.doesNotMatch(error.stdout ?? "", /docker run/);
-    assert.match(error.stderr ?? "", /Refusing non-lab-owned skilled workspace/);
+    await assert.rejects(stat(repoChild), { code: "ENOENT" });
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(repoChild, { recursive: true, force: true });
+  }
+});
+
+test("skills mode allows neutral outside workspaces", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const outsideWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-skilled-outside-"));
+
+  try {
+    const output = await runScript("run-omp-skilled-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: outsideWorkspace,
+    });
+    const args = await parseDryRunArgs(output);
+    const extensionEntry = join(outsideWorkspace, ".omp", "extensions", "db-specialist.ts");
+
+    assert.ok(args.includes(`type=bind,source=${outsideWorkspace},target=/workspace`));
+    assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
     await rm(outsideWorkspace, { recursive: true, force: true });

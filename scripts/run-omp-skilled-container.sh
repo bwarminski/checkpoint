@@ -12,8 +12,19 @@ GEMINI_KEY="$(resolve_gemini_api_key)"
 export GEMINI_API_KEY="${GEMINI_KEY}"
 export_default_db_env
 WORKSPACE="$(resolve_lab_workspace_path OMP_LAB_WORKSPACE "${HOME}/.oh-my-pi-lab/skilled-workspace")"
-validate_lab_owned_workspace_path OMP_LAB_WORKSPACE "${WORKSPACE}"
-require_git_ssh_key_if_enabled
+validate_source_hidden_workspace_path OMP_LAB_WORKSPACE "${WORKSPACE}"
+
+docker_args=()
+append_base_docker_args docker_args "${WORKSPACE}"
+docker_args+=(
+  --label checkpoint.omp-lab.mode=skilled
+  --mount "type=bind,source=${REPO_ROOT}/skills,target=/workspace/.omp/skills,readonly"
+  --mount "type=bind,source=${REPO_ROOT}/src,target=/checkpoint-src/src,readonly"
+  --env "CHECKPOINT_EXTENSION_SOURCE=/checkpoint-src/src/omp_extension/db_specialist_extension.ts"
+)
+append_git_ssh_args docker_args
+finish_docker_args docker_args
+
 require_docker_for_container_run
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
   reset_lab_workspace OMP_LAB_WORKSPACE "${WORKSPACE}"
@@ -27,14 +38,4 @@ cat > "${WORKSPACE}/.omp/extensions/db-specialist.ts" <<'ENTRYPOINT'
 export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";
 ENTRYPOINT
 
-docker_args=()
-append_base_docker_args docker_args "${WORKSPACE}"
-docker_args+=(
-  --label checkpoint.omp-lab.mode=skilled
-  --mount "type=bind,source=${REPO_ROOT}/skills,target=/workspace/.omp/skills,readonly"
-  --mount "type=bind,source=${REPO_ROOT}/src,target=/checkpoint-src/src,readonly"
-  --env "CHECKPOINT_EXTENSION_SOURCE=/checkpoint-src/src/omp_extension/db_specialist_extension.ts"
-)
-append_git_ssh_args docker_args
-finish_docker_args docker_args
 run_or_print_docker_args docker_args

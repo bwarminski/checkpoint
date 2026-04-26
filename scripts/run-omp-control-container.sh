@@ -11,8 +11,14 @@ GEMINI_KEY="$(resolve_gemini_api_key)"
 export GEMINI_API_KEY="${GEMINI_KEY}"
 export_default_db_env
 WORKSPACE="$(resolve_lab_workspace_path OMP_LAB_WORKSPACE "${HOME}/.oh-my-pi-lab/control-workspace")"
-validate_control_workspace_path OMP_LAB_WORKSPACE "${WORKSPACE}"
-require_git_ssh_key_if_enabled
+validate_source_hidden_workspace_path OMP_LAB_WORKSPACE "${WORKSPACE}"
+
+docker_args=()
+append_base_docker_args docker_args "${WORKSPACE}"
+docker_args+=(--label checkpoint.omp-lab.mode=control)
+append_git_ssh_args docker_args
+finish_docker_args docker_args
+
 require_docker_for_container_run
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
   reset_lab_workspace OMP_LAB_WORKSPACE "${WORKSPACE}"
@@ -20,9 +26,4 @@ else
   ensure_workspace "${WORKSPACE}"
 fi
 
-docker_args=()
-append_base_docker_args docker_args "${WORKSPACE}"
-docker_args+=(--label checkpoint.omp-lab.mode=control)
-append_git_ssh_args docker_args
-finish_docker_args docker_args
 run_or_print_docker_args docker_args

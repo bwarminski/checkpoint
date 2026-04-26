@@ -77,7 +77,7 @@ refuse_unsafe_lab_workspace_path() {
   exit 2
 }
 
-refuse_source_visible_control_workspace_path() {
+refuse_source_visible_workspace_path() {
   local env_name="$1"
   local workspace="$2"
 
@@ -85,63 +85,33 @@ refuse_source_visible_control_workspace_path() {
     workspace="<empty>"
   fi
 
-  printf 'Refusing source-visible control workspace for %s: %s\n' "${env_name}" "${workspace}" >&2
+  printf 'Refusing source-visible workspace for %s: %s\n' "${env_name}" "${workspace}" >&2
   exit 2
 }
 
-validate_control_workspace_path() {
+validate_source_hidden_workspace_path() {
   local env_name="$1"
   local workspace="$2"
   local normalized_repo
   local normalized_workspace
 
   if [[ -z "${workspace}" ]]; then
-    refuse_source_visible_control_workspace_path "${env_name}" "${workspace}"
+    refuse_source_visible_workspace_path "${env_name}" "${workspace}"
   fi
 
   normalized_repo="$(realpath -m -- "${OMP_LAB_REPO_ROOT}")"
   normalized_workspace="$(realpath -m -- "${workspace}")"
 
   if [[ "${normalized_workspace}" == "/" ]]; then
-    refuse_source_visible_control_workspace_path "${env_name}" "${workspace}"
+    refuse_source_visible_workspace_path "${env_name}" "${workspace}"
   fi
 
   if [[ "${normalized_workspace}" == "${normalized_repo}" || "${normalized_workspace}" == "${normalized_repo}/"* ]]; then
-    refuse_source_visible_control_workspace_path "${env_name}" "${workspace}"
+    refuse_source_visible_workspace_path "${env_name}" "${workspace}"
   fi
 
   if [[ "${normalized_repo}" == "${normalized_workspace}/"* ]]; then
-    refuse_source_visible_control_workspace_path "${env_name}" "${workspace}"
-  fi
-}
-
-refuse_non_lab_owned_skilled_workspace_path() {
-  local env_name="$1"
-  local workspace="$2"
-
-  if [[ -z "${workspace}" ]]; then
-    workspace="<empty>"
-  fi
-
-  printf 'Refusing non-lab-owned skilled workspace for %s: %s\n' "${env_name}" "${workspace}" >&2
-  exit 2
-}
-
-validate_lab_owned_workspace_path() {
-  local env_name="$1"
-  local workspace="$2"
-  local lab_root
-  local normalized_workspace
-
-  if [[ -z "${workspace}" ]]; then
-    refuse_non_lab_owned_skilled_workspace_path "${env_name}" "${workspace}"
-  fi
-
-  lab_root="$(realpath -m -- "${HOME}/.oh-my-pi-lab")"
-  normalized_workspace="$(realpath -m -- "${workspace}")"
-
-  if [[ "${normalized_workspace}" == "${lab_root}" || "${normalized_workspace}" != "${lab_root}/"* ]]; then
-    refuse_non_lab_owned_skilled_workspace_path "${env_name}" "${workspace}"
+    refuse_source_visible_workspace_path "${env_name}" "${workspace}"
   fi
 }
 
@@ -241,20 +211,7 @@ append_git_ssh_args() {
 
   args_ref+=(
     --mount "type=bind,source=${ssh_key},target=${OMP_LAB_CONTAINER_HOME}/.ssh/id_rsa,readonly"
-    --env OMP_LAB_ENABLE_SSH=1
   )
-}
-
-require_git_ssh_key_if_enabled() {
-  if [[ "${OMP_LAB_ENABLE_SSH:-0}" != "1" ]]; then
-    return
-  fi
-
-  local ssh_key="${OMP_LAB_SSH_KEY:-${HOME}/.ssh/id_rsa}"
-  if [[ ! -f "${ssh_key}" ]]; then
-    printf 'OMP_LAB_ENABLE_SSH=1 but SSH key %s does not exist\n' "${ssh_key}" >&2
-    return 1
-  fi
 }
 
 finish_docker_args() {
