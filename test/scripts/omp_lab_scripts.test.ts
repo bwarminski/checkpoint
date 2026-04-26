@@ -560,10 +560,11 @@ test("control dry run ignores scoped host env by default", async () => {
 
 test("control reset mode clears existing workspace contents before dry run", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
-  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+  const fakeWorkspace = join(fakeHome, ".oh-my-pi-lab", "control-workspace");
   const staleFile = join(fakeWorkspace, "stale.txt");
 
   try {
+    await mkdir(fakeWorkspace, { recursive: true });
     await writeFile(staleFile, "stale\n");
     await runScript("run-omp-control-container.sh", {
       HOME: fakeHome,
@@ -574,6 +575,85 @@ test("control reset mode clears existing workspace contents before dry run", asy
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
     await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("reset mode refuses unsafe workspaces before deleting markers", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const outsideWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-outside-"));
+  const dangerousCases = [
+    {
+      scriptName: "run-omp-control-container.sh",
+      workspace: fakeHome,
+      marker: join(fakeHome, "durable-marker.txt"),
+    },
+    {
+      scriptName: "run-omp-control-container.sh",
+      workspace: outsideWorkspace,
+      marker: join(outsideWorkspace, "durable-marker.txt"),
+    },
+    {
+      scriptName: "run-omp-skilled-container.sh",
+      workspace: fakeHome,
+      marker: join(fakeHome, "skilled-durable-marker.txt"),
+    },
+    {
+      scriptName: "run-omp-skilled-container.sh",
+      workspace: outsideWorkspace,
+      marker: join(outsideWorkspace, "skilled-durable-marker.txt"),
+    },
+  ];
+
+  try {
+    for (const dangerousCase of dangerousCases) {
+      await writeFile(dangerousCase.marker, "keep\n");
+
+      let error: Error & { code?: number; stdout?: string; stderr?: string };
+      try {
+        await runScript(dangerousCase.scriptName, {
+          HOME: fakeHome,
+          OMP_LAB_WORKSPACE: dangerousCase.workspace,
+          OMP_LAB_RESET_WORKSPACE: "1",
+        });
+        assert.fail(`${dangerousCase.scriptName} should reject unsafe reset workspace`);
+      } catch (caught) {
+        error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+      }
+
+      assert.equal(error.code, 2);
+      assert.equal(await readFile(dangerousCase.marker, "utf8"), "keep\n");
+      assert.doesNotMatch(error.stdout ?? "", /docker run/);
+      assert.match(error.stderr ?? "", /Refusing to remove unsafe workspace path/);
+    }
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(outsideWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("reset mode refuses an explicit empty workspace before docker run", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+
+  try {
+    for (const scriptName of ["run-omp-control-container.sh", "run-omp-skilled-container.sh"]) {
+      let error: Error & { code?: number; stdout?: string; stderr?: string };
+      try {
+        await runScript(scriptName, {
+          HOME: fakeHome,
+          OMP_LAB_WORKSPACE: "",
+          OMP_LAB_RESET_WORKSPACE: "1",
+        });
+        assert.fail(`${scriptName} should reject an empty reset workspace`);
+      } catch (caught) {
+        error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+      }
+
+      assert.equal(error.code, 2);
+      assert.doesNotMatch(error.stdout ?? "", /docker run/);
+      assert.match(error.stderr ?? "", /Refusing to remove unsafe workspace path .*<empty>/);
+    }
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
   }
 });
 

@@ -10,10 +10,10 @@ require_omp_model
 GEMINI_KEY="$(resolve_gemini_api_key)"
 export GEMINI_API_KEY="${GEMINI_KEY}"
 export_default_db_env
-WORKSPACE="${OMP_LAB_WORKSPACE:-${HOME}/.oh-my-pi-lab/control-workspace}"
-ensure_workspace "${WORKSPACE}"
+WORKSPACE="$(resolve_lab_workspace_path OMP_LAB_WORKSPACE "${HOME}/.oh-my-pi-lab/control-workspace")"
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
-  rm -rf "${WORKSPACE}"
+  reset_lab_workspace OMP_LAB_WORKSPACE "${WORKSPACE}"
+else
   ensure_workspace "${WORKSPACE}"
 fi
 

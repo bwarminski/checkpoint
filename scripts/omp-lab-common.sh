@@ -7,6 +7,8 @@ set -euo pipefail
 OMP_LAB_IMAGE="${OMP_LAB_IMAGE:-checkpoint-omp-lab:local}"
 OMP_LAB_CONTAINER_USER="${OMP_LAB_CONTAINER_USER:-codespace}"
 OMP_LAB_CONTAINER_HOME="/home/${OMP_LAB_CONTAINER_USER}"
+OMP_LAB_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+OMP_LAB_REPO_ROOT="$(cd "${OMP_LAB_COMMON_DIR}/.." && pwd -P)"
 
 resolve_gemini_api_key() {
   if [[ -n "${GEMINI_API_KEY:-}" ]]; then
@@ -33,6 +35,73 @@ require_omp_model() {
 ensure_workspace() {
   local workspace="$1"
   mkdir -p "${workspace}"
+}
+
+resolve_lab_workspace_path() {
+  local env_name="$1"
+  local default_path="$2"
+
+  if [[ -v "${env_name}" ]]; then
+    printf '%s\n' "${!env_name}"
+    return
+  fi
+
+  printf '%s\n' "${default_path}"
+}
+
+refuse_unsafe_lab_workspace_path() {
+  local env_name="$1"
+  local workspace="$2"
+
+  if [[ -z "${workspace}" ]]; then
+    workspace="<empty>"
+  fi
+
+  printf 'Refusing to remove unsafe workspace path for %s: %s\n' "${env_name}" "${workspace}" >&2
+  exit 2
+}
+
+validate_lab_workspace_removal_path() {
+  local env_name="$1"
+  local workspace="$2"
+  local lab_root
+  local normalized_home
+  local normalized_repo
+  local normalized_workspace
+
+  if [[ -z "${workspace}" ]]; then
+    refuse_unsafe_lab_workspace_path "${env_name}" "${workspace}"
+  fi
+
+  lab_root="$(realpath -m -- "${HOME}/.oh-my-pi-lab")"
+  normalized_home="$(realpath -m -- "${HOME}")"
+  normalized_repo="$(realpath -m -- "${OMP_LAB_REPO_ROOT}")"
+  normalized_workspace="$(realpath -m -- "${workspace}")"
+
+  if [[ "${normalized_workspace}" == "/" ]]; then
+    refuse_unsafe_lab_workspace_path "${env_name}" "${workspace}"
+  fi
+
+  if [[ "${normalized_workspace}" == "${normalized_home}" ]]; then
+    refuse_unsafe_lab_workspace_path "${env_name}" "${workspace}"
+  fi
+
+  if [[ "${normalized_workspace}" == "${normalized_repo}" ]]; then
+    refuse_unsafe_lab_workspace_path "${env_name}" "${workspace}"
+  fi
+
+  if [[ "${normalized_workspace}" == "${lab_root}" || "${normalized_workspace}" != "${lab_root}/"* ]]; then
+    refuse_unsafe_lab_workspace_path "${env_name}" "${workspace}"
+  fi
+}
+
+reset_lab_workspace() {
+  local env_name="$1"
+  local workspace="$2"
+
+  validate_lab_workspace_removal_path "${env_name}" "${workspace}"
+  rm -rf "${workspace}"
+  ensure_workspace "${workspace}"
 }
 
 export_default_db_env() {
