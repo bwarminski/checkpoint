@@ -137,7 +137,9 @@ test("model integration runner skips before bun when OMP_MODEL is unset", async 
     );
     await chmod(fakeBun, 0o755);
 
-    for (const env of [{}, { OMP_MODEL: "" }]) {
+    const modelCases: Array<Record<string, string>> = [{}, { OMP_MODEL: "" }];
+
+    for (const env of modelCases) {
       const result = await execFileAsync("bash", [join(repoRoot, "scripts", "run-model-integration.sh")], {
         cwd: repoRoot,
         env: cleanLabEnv({
