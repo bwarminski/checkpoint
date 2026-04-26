@@ -503,6 +503,29 @@ test("control mode refuses checkpoint repo ancestor workspaces before docker run
   }
 });
 
+test("control mode refuses filesystem root workspace before docker args", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+
+  try {
+    let error: Error & { code?: number; stdout?: string; stderr?: string };
+    try {
+      await runScript("run-omp-control-container.sh", {
+        HOME: fakeHome,
+        OMP_LAB_WORKSPACE: "/",
+      });
+      assert.fail("control mode should reject filesystem root workspace");
+    } catch (caught) {
+      error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+    }
+
+    assert.equal(error.code, 2);
+    assert.doesNotMatch(error.stdout ?? "", /docker run/);
+    assert.match(error.stderr ?? "", /Refusing source-visible control workspace/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test("control script reads Gemini key from home key file without leaking it", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
