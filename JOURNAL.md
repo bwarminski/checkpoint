@@ -1,5 +1,6 @@
 # JOURNAL
 
+- 2026-04-26: Task 5 review fix tightened `scripts/clean-omp-lab.sh` so cleanup validates both workspace paths before deletion and refuses empty, root, home, repo-root, lab-root, or outside-lab paths. Real Docker cleanup now skips cleanly when Docker is unavailable, and `--image` checks image presence before removal.
 - 2026-04-26: Task 5 for OMP container isolation added `scripts/clean-omp-lab.sh`, which removes the disposable control/skilled lab workspaces and labeled lab containers/volumes in routine cleanup. The shared `checkpoint-omp-lab:local` image is removed only with `--image`, and dry-run output prints commands without exposing secret values.
 - 2026-04-26: Task 4 final blocker fix cleared stale `.omp/skills` in skilled lab workspaces along with generated tools/extensions. This prevents prior file or symlink state at `/workspace/.omp/skills` from interfering with the container bind mount target.
 - 2026-04-26: Task 4 second review found two more OMP lab issues. DB connection env values were still exposed in Docker argv/dry-run output, so runners now export default DB env locally and Docker args pass only env names. Skilled runner also now removes generated `.omp/tools` and `.omp/extensions` before recreating the db specialist extension entrypoint so stale workspace state cannot affect skilled runs.

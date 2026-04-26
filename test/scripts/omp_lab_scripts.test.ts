@@ -2,7 +2,7 @@
 // ABOUTME: Verifies source isolation, optional credential mounts, and shared image contracts.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -116,14 +116,20 @@ async function parseDryRunArgs(output: string) {
   return result.stdout.toString("utf8").split("\0").slice(0, -1);
 }
 
-async function runCleanScript(args: string[], env: Record<string, string>) {
-  const result = await execFileAsync("bash", [join(repoRoot, "scripts", "clean-omp-lab.sh"), ...args], {
+async function runCleanScript(args: string[], env: Record<string, string>, options: { dryRun?: boolean } = {}) {
+  const scriptEnv = {
+    ...process.env,
+    ...env,
+  };
+  if (options.dryRun ?? true) {
+    scriptEnv.OMP_LAB_DRY_RUN = "1";
+  } else {
+    delete scriptEnv.OMP_LAB_DRY_RUN;
+  }
+
+  const result = await execFileAsync("/bin/bash", [join(repoRoot, "scripts", "clean-omp-lab.sh"), ...args], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
-      ...env,
-      OMP_LAB_DRY_RUN: "1",
-    },
+    env: scriptEnv,
   });
   return result.stdout;
 }
@@ -152,6 +158,117 @@ test("cleanup image flag includes shared image removal", async () => {
     assert.match(output, /docker image rm checkpoint-omp-lab:local/);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("cleanup refuses dangerous workspace override paths before printing removals", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const outsideWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-outside-"));
+  const dangerousCases: Array<Record<string, string>> = [
+    { OMP_LAB_CONTROL_WORKSPACE: "" },
+    { OMP_LAB_CONTROL_WORKSPACE: "/" },
+    { OMP_LAB_CONTROL_WORKSPACE: fakeHome },
+    { OMP_LAB_CONTROL_WORKSPACE: repoRoot },
+    { OMP_LAB_CONTROL_WORKSPACE: outsideWorkspace },
+    { OMP_LAB_SKILLED_WORKSPACE: "" },
+    { OMP_LAB_SKILLED_WORKSPACE: "/" },
+    { OMP_LAB_SKILLED_WORKSPACE: fakeHome },
+    { OMP_LAB_SKILLED_WORKSPACE: repoRoot },
+    { OMP_LAB_SKILLED_WORKSPACE: outsideWorkspace },
+  ];
+
+  try {
+    for (const env of dangerousCases) {
+      let error: Error & { code?: number; stdout?: string; stderr?: string };
+      try {
+        await runCleanScript([], { HOME: fakeHome, ...env });
+        assert.fail("cleanup should reject dangerous workspace paths");
+      } catch (caught) {
+        error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+      }
+
+      assert.equal(error.code, 2);
+      assert.doesNotMatch(error.stdout ?? "", /rm -rf/);
+      assert.match(error.stderr ?? "", /Refusing to remove unsafe workspace path/);
+    }
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(outsideWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("cleanup skips docker artifacts when docker is unavailable after workspace cleanup", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "checkpoint-omp-bin-"));
+  const controlWorkspace = join(fakeHome, ".oh-my-pi-lab", "control-workspace");
+  const skilledWorkspace = join(fakeHome, ".oh-my-pi-lab", "skilled-workspace");
+
+  try {
+    await symlink("/usr/bin/dirname", join(fakeBin, "dirname"));
+    await symlink("/usr/bin/realpath", join(fakeBin, "realpath"));
+    await symlink("/usr/bin/rm", join(fakeBin, "rm"));
+    await mkdir(controlWorkspace, { recursive: true });
+    await mkdir(skilledWorkspace, { recursive: true });
+    await writeFile(join(controlWorkspace, "marker"), "control\n");
+    await writeFile(join(skilledWorkspace, "marker"), "skilled\n");
+
+    const result = await execFileAsync("/bin/bash", [join(repoRoot, "scripts", "clean-omp-lab.sh")], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        PATH: fakeBin,
+      },
+    });
+
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /docker not found; skipping Docker artifact cleanup/);
+    await assert.rejects(readFile(join(controlWorkspace, "marker"), "utf8"), { code: "ENOENT" });
+    await assert.rejects(readFile(join(skilledWorkspace, "marker"), "utf8"), { code: "ENOENT" });
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeBin, { recursive: true, force: true });
+  }
+});
+
+test("cleanup image flag skips absent shared image", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "checkpoint-omp-bin-"));
+  const dockerLog = join(fakeHome, "docker.log");
+  const fakeDocker = join(fakeBin, "docker");
+
+  try {
+    await writeFile(
+      fakeDocker,
+      [
+        "#!/usr/bin/env bash",
+        'printf "%s\\n" "$*" >> "${DOCKER_LOG}"',
+        'if [[ "$1" == "image" && "$2" == "inspect" ]]; then',
+        "  exit 1",
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    await chmod(fakeDocker, 0o755);
+
+    const result = await execFileAsync("/bin/bash", [join(repoRoot, "scripts", "clean-omp-lab.sh"), "--image"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        DOCKER_LOG: dockerLog,
+      },
+    });
+
+    const dockerCalls = await readFile(dockerLog, "utf8");
+    assert.match(dockerCalls, /image inspect checkpoint-omp-lab:local/);
+    assert.doesNotMatch(dockerCalls, /image rm checkpoint-omp-lab:local/);
+    assert.match(result.stderr, /Docker image checkpoint-omp-lab:local not found; skipping image removal/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeBin, { recursive: true, force: true });
   }
 });
 
