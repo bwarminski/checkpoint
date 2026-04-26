@@ -133,8 +133,38 @@ test("control dry run mounts only the neutral workspace and shared service env",
     assert.ok(args.includes("CLICKHOUSE_URL=http://host.docker.internal:8123"));
     assert.ok(args.includes("checkpoint.omp-lab=true"));
     assert.ok(args.includes("checkpoint.omp-lab.mode=control"));
+    assert.ok(!args.some((arg) => arg.startsWith("GITHUB_TOKEN=")));
     assert.doesNotMatch(output, new RegExp(repoRoot));
     assert.doesNotMatch(output, /\.ssh/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("control SSH mode mounts only id_rsa read-only and forwards GitHub token when present", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+  const fakeSshDir = join(fakeHome, ".ssh");
+  const fakeKey = join(fakeSshDir, "id_rsa");
+
+  try {
+    await mkdir(fakeSshDir, { recursive: true });
+    await writeFile(fakeKey, "fake-key\n", { mode: 0o600 });
+
+    const output = await runScript("run-omp-control-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+      OMP_LAB_ENABLE_SSH: "1",
+      GITHUB_TOKEN: "test-gh-token",
+    });
+    const args = await parseDryRunArgs(output);
+
+    assert.ok(args.includes(`type=bind,source=${fakeKey},target=/home/codespace/.ssh/id_rsa,readonly`));
+    assert.ok(args.includes("GITHUB_TOKEN=test-gh-token"));
+    assert.ok(args.includes("OMP_LAB_ENABLE_SSH=1"));
+    assert.ok(!args.includes(`type=bind,source=${fakeSshDir},target=/home/codespace/.ssh,readonly`));
+    assert.doesNotMatch(output, /\.gitconfig/);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
     await rm(fakeWorkspace, { recursive: true, force: true });
