@@ -91,7 +91,7 @@ run_or_print_docker_args() {
   local -n args_ref="$1"
 
   if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
-    printf '%s ' "${args_ref[@]}"
+    printf '%q ' "${args_ref[@]}"
     printf '\n'
     return
   fi

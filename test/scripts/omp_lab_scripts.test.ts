@@ -86,13 +86,29 @@ async function runScript(scriptName: string, env: Record<string, string>) {
     cwd: repoRoot,
     env: {
       ...process.env,
-      ...env,
       OMP_LAB_DRY_RUN: "1",
       OMP_MODEL: "google/gemini-2.5-pro",
       GEMINI_API_KEY: "test-gemini-key",
+      ...env,
     },
   });
   return result.stdout;
+}
+
+async function parseDryRunArgs(output: string) {
+  const result = await execFileAsync(
+    "bash",
+    ["-lc", 'eval "set -- ${OMP_LAB_DRY_RUN_OUTPUT}"; printf "%s\\0" "$@"'],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        OMP_LAB_DRY_RUN_OUTPUT: output,
+      },
+      encoding: "buffer",
+    },
+  );
+  return result.stdout.toString("utf8").split("\0").slice(0, -1);
 }
 
 test("control dry run mounts only the neutral workspace and shared service env", async () => {
@@ -104,20 +120,47 @@ test("control dry run mounts only the neutral workspace and shared service env",
       HOME: fakeHome,
       OMP_LAB_WORKSPACE: fakeWorkspace,
     });
+    const args = await parseDryRunArgs(output);
 
     assert.match(output, /docker run --rm -it/);
-    assert.match(output, /--add-host host\.docker\.internal:host-gateway/);
-    assert.match(output, new RegExp(`--mount type=bind,source=${fakeWorkspace},target=/workspace`));
-    assert.match(output, /--env GEMINI_API_KEY=test-gemini-key/);
-    assert.match(output, /--env OMP_MODEL=google\/gemini-2\.5-pro/);
-    assert.match(output, /--env PGHOST=host\.docker\.internal/);
-    assert.match(output, /--env CLICKHOUSE_URL=http:\/\/host\.docker\.internal:8123/);
-    assert.match(output, /--label checkpoint\.omp-lab=true/);
-    assert.match(output, /--label checkpoint\.omp-lab\.mode=control/);
+    assert.deepEqual(args.slice(0, 4), ["docker", "run", "--rm", "-it"]);
+    assert.ok(args.includes("--add-host"));
+    assert.ok(args.includes("host.docker.internal:host-gateway"));
+    assert.ok(args.includes(`type=bind,source=${fakeWorkspace},target=/workspace`));
+    assert.ok(args.includes("GEMINI_API_KEY=test-gemini-key"));
+    assert.ok(args.includes("OMP_MODEL=google/gemini-2.5-pro"));
+    assert.ok(args.includes("PGHOST=host.docker.internal"));
+    assert.ok(args.includes("CLICKHOUSE_URL=http://host.docker.internal:8123"));
+    assert.ok(args.includes("checkpoint.omp-lab=true"));
+    assert.ok(args.includes("checkpoint.omp-lab.mode=control"));
     assert.doesNotMatch(output, new RegExp(repoRoot));
     assert.doesNotMatch(output, /\.ssh/);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
     await rm(fakeWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("control dry run shell-escapes arguments containing spaces", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeParent = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+  const fakeWorkspace = join(fakeParent, "workspace with spaces");
+
+  try {
+    await mkdir(fakeWorkspace);
+    const output = await runScript("run-omp-control-container.sh", {
+      HOME: fakeHome,
+      OMP_LAB_WORKSPACE: fakeWorkspace,
+      GEMINI_API_KEY: "test gemini key",
+    });
+    const args = await parseDryRunArgs(output);
+
+    assert.match(output, /workspace\\ with\\ spaces/);
+    assert.match(output, /GEMINI_API_KEY=test\\ gemini\\ key/);
+    assert.ok(args.includes(`type=bind,source=${fakeWorkspace},target=/workspace`));
+    assert.ok(args.includes("GEMINI_API_KEY=test gemini key"));
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeParent, { recursive: true, force: true });
   }
 });
