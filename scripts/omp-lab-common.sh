@@ -38,7 +38,6 @@ ensure_workspace() {
 append_base_docker_args() {
   local -n args_ref="$1"
   local workspace="$2"
-  local gemini_api_key="$3"
 
   args_ref+=(
     docker run --rm -it
@@ -46,7 +45,7 @@ append_base_docker_args() {
     --label checkpoint.omp-lab=true
     --add-host host.docker.internal:host-gateway
     --mount "type=bind,source=${workspace},target=/workspace"
-    --env "GEMINI_API_KEY=${gemini_api_key}"
+    --env GEMINI_API_KEY
     --env "OMP_MODEL=${OMP_MODEL}"
     --env "PGHOST=${PGHOST:-host.docker.internal}"
     --env "PGPORT=${PGPORT:-5432}"

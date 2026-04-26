@@ -132,7 +132,9 @@ test("control dry run mounts only the neutral workspace and shared service env",
     assert.ok(args.includes("--add-host"));
     assert.ok(args.includes("host.docker.internal:host-gateway"));
     assert.ok(args.includes(`type=bind,source=${fakeWorkspace},target=/workspace`));
-    assert.ok(args.includes("GEMINI_API_KEY=test-gemini-key"));
+    assert.ok(args.includes("GEMINI_API_KEY"));
+    assert.ok(!args.includes("GEMINI_API_KEY=test-gemini-key"));
+    assert.doesNotMatch(output, /test-gemini-key/);
     assert.ok(args.includes("OMP_MODEL=google/gemini-2.5-pro"));
     assert.ok(args.includes("PGHOST=host.docker.internal"));
     assert.ok(args.includes("CLICKHOUSE_URL=http://host.docker.internal:8123"));
@@ -238,9 +240,10 @@ test("control dry run shell-escapes arguments containing spaces", async () => {
     const args = await parseDryRunArgs(output);
 
     assert.match(output, /workspace\\ with\\ spaces/);
-    assert.match(output, /GEMINI_API_KEY=test\\ gemini\\ key/);
     assert.ok(args.includes(`type=bind,source=${fakeWorkspace},target=/workspace`));
-    assert.ok(args.includes("GEMINI_API_KEY=test gemini key"));
+    assert.ok(args.includes("GEMINI_API_KEY"));
+    assert.ok(!args.includes("GEMINI_API_KEY=test gemini key"));
+    assert.doesNotMatch(output, /test gemini key/);
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
     await rm(fakeParent, { recursive: true, force: true });
@@ -267,6 +270,9 @@ test("skills dry run mounts generated workspace plus checkpoint skill and extens
     assert.ok(args.includes("checkpoint-omp-lab:local"));
     assert.ok(args.includes("--model"));
     assert.ok(args.includes("google/gemini-2.5-pro"));
+    assert.ok(args.includes("GEMINI_API_KEY"));
+    assert.ok(!args.includes("GEMINI_API_KEY=test-gemini-key"));
+    assert.doesNotMatch(output, /test-gemini-key/);
 
     const extensionEntry = join(fakeWorkspace, ".omp", "extensions", "db-specialist.ts");
     assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
