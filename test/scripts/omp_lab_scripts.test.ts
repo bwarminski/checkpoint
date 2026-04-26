@@ -316,11 +316,14 @@ test("skills dry run mounts generated workspace plus checkpoint skill and extens
 test("skills dry run replaces stale generated OMP state", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-skilled-"));
+  const staleSkills = join(fakeWorkspace, ".omp", "skills");
   const staleTool = join(fakeWorkspace, ".omp", "tools", "stale-tool", "index.ts");
   const staleExtension = join(fakeWorkspace, ".omp", "extensions", "extra.ts");
   const extensionEntry = join(fakeWorkspace, ".omp", "extensions", "db-specialist.ts");
 
   try {
+    await mkdir(join(fakeWorkspace, ".omp"), { recursive: true });
+    await writeFile(staleSkills, "stale skills\n");
     await mkdir(join(fakeWorkspace, ".omp", "tools", "stale-tool"), { recursive: true });
     await mkdir(join(fakeWorkspace, ".omp", "extensions"), { recursive: true });
     await writeFile(staleTool, "export default {};\n");
@@ -331,6 +334,7 @@ test("skills dry run replaces stale generated OMP state", async () => {
       OMP_LAB_WORKSPACE: fakeWorkspace,
     });
 
+    await assert.rejects(readFile(staleSkills, "utf8"), { code: "ENOENT" });
     await assert.rejects(readFile(staleTool, "utf8"), { code: "ENOENT" });
     await assert.rejects(readFile(staleExtension, "utf8"), { code: "ENOENT" });
     assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');

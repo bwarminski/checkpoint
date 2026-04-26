@@ -17,7 +17,7 @@ if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
   rm -rf "${WORKSPACE}"
   ensure_workspace "${WORKSPACE}"
 fi
-rm -rf "${WORKSPACE}/.omp/tools" "${WORKSPACE}/.omp/extensions"
+rm -rf "${WORKSPACE}/.omp/skills" "${WORKSPACE}/.omp/tools" "${WORKSPACE}/.omp/extensions"
 mkdir -p "${WORKSPACE}/.omp/extensions"
 
 cat > "${WORKSPACE}/.omp/extensions/db-specialist.ts" <<'ENTRYPOINT'
