@@ -425,6 +425,57 @@ test("SSH mode fails before docker run when id_rsa is missing", async () => {
   }
 });
 
+test("SSH missing-key failure does not invoke docker outside dry run", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "checkpoint-omp-bin-"));
+  const dockerLog = join(fakeHome, "docker.log");
+  const fakeDocker = join(fakeBin, "docker");
+
+  try {
+    await writeFile(
+      fakeDocker,
+      [
+        "#!/usr/bin/env bash",
+        'printf "docker invoked\\n" >> "${DOCKER_LOG}"',
+        "exit 99",
+        "",
+      ].join("\n"),
+    );
+    await chmod(fakeDocker, 0o755);
+
+    const scriptEnv = { ...process.env };
+    delete scriptEnv.OMP_LAB_DRY_RUN;
+    delete scriptEnv.OMP_LAB_SSH_KEY;
+
+    await assert.rejects(
+      () =>
+        execFileAsync("bash", [join(repoRoot, "scripts", "run-omp-control-container.sh")], {
+          cwd: repoRoot,
+          env: {
+            ...scriptEnv,
+            HOME: fakeHome,
+            PATH: `${fakeBin}:${process.env.PATH}`,
+            DOCKER_LOG: dockerLog,
+            OMP_MODEL: "google/gemini-2.5-pro",
+            GEMINI_API_KEY: "test-gemini-key",
+            OMP_LAB_WORKSPACE: fakeWorkspace,
+            OMP_LAB_ENABLE_SSH: "1",
+          },
+        }),
+      (error: Error & { stderr?: string }) => {
+        assert.match(error.stderr ?? "", /SSH key .* does not exist/);
+        return true;
+      },
+    );
+    await assert.rejects(readFile(dockerLog, "utf8"), { code: "ENOENT" });
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeWorkspace, { recursive: true, force: true });
+    await rm(fakeBin, { recursive: true, force: true });
+  }
+});
+
 test("control dry run ignores scoped host env by default", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
