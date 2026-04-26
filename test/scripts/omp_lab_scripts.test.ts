@@ -12,6 +12,7 @@ const repoRoot = process.cwd();
 const execFileAsync = promisify(execFile);
 const labEnvNames = [
   "GITHUB_TOKEN",
+  "OMP_MODEL",
   "OMP_LAB_IMAGE",
   "OMP_LAB_CONTROL_WORKSPACE",
   "OMP_LAB_SKILLED_WORKSPACE",
@@ -117,6 +118,44 @@ async function runScript(scriptName: string, env: Record<string, string>) {
   });
   return result.stdout;
 }
+
+test("model integration runner skips before bun when OMP_MODEL is unset", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "checkpoint-omp-bin-"));
+  const fakeBun = join(fakeBin, "bun");
+  const bunLog = join(fakeHome, "bun.log");
+
+  try {
+    await writeFile(
+      fakeBun,
+      [
+        "#!/usr/bin/env bash",
+        'printf "bun invoked\\n" >> "${BUN_LOG}"',
+        "exit 99",
+        "",
+      ].join("\n"),
+    );
+    await chmod(fakeBun, 0o755);
+
+    for (const env of [{}, { OMP_MODEL: "" }]) {
+      const result = await execFileAsync("bash", [join(repoRoot, "scripts", "run-model-integration.sh")], {
+        cwd: repoRoot,
+        env: cleanLabEnv({
+          HOME: fakeHome,
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          BUN_LOG: bunLog,
+          ...env,
+        }),
+      });
+
+      assert.match(result.stdout, /Skipping model integration test because OMP_MODEL is not set/);
+      await assert.rejects(readFile(bunLog, "utf8"), { code: "ENOENT" });
+    }
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fakeBin, { recursive: true, force: true });
+  }
+});
 
 async function parseDryRunArgs(output: string) {
   const result = await execFileAsync(
