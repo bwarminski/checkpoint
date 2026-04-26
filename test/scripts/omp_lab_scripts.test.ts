@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
@@ -469,6 +469,33 @@ test("control mode refuses checkpoint repo workspaces before docker run", async 
       assert.match(error.stderr ?? "", /Refusing source-visible control workspace/);
     }
 
+    await assert.rejects(stat(repoChild), { code: "ENOENT" });
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(repoChild, { recursive: true, force: true });
+  }
+});
+
+test("control mode refuses checkpoint repo ancestor workspaces before docker run", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const repoAncestor = dirname(repoRoot);
+  const repoChild = join(repoRoot, ".tmp-control-ancestor-workspace");
+
+  try {
+    let error: Error & { code?: number; stdout?: string; stderr?: string };
+    try {
+      await runScript("run-omp-control-container.sh", {
+        HOME: fakeHome,
+        OMP_LAB_WORKSPACE: repoAncestor,
+      });
+      assert.fail("control mode should reject checkpoint repo ancestor workspaces");
+    } catch (caught) {
+      error = caught as Error & { code?: number; stdout?: string; stderr?: string };
+    }
+
+    assert.equal(error.code, 2);
+    assert.doesNotMatch(error.stdout ?? "", /docker run/);
+    assert.match(error.stderr ?? "", /Refusing source-visible control workspace/);
     await assert.rejects(stat(repoChild), { code: "ENOENT" });
   } finally {
     await rm(fakeHome, { recursive: true, force: true });

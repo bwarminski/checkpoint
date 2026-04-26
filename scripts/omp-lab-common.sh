@@ -102,7 +102,15 @@ validate_control_workspace_path() {
   normalized_repo="$(realpath -m -- "${OMP_LAB_REPO_ROOT}")"
   normalized_workspace="$(realpath -m -- "${workspace}")"
 
+  if [[ "${normalized_workspace}" == "/" ]]; then
+    refuse_source_visible_control_workspace_path "${env_name}" "${workspace}"
+  fi
+
   if [[ "${normalized_workspace}" == "${normalized_repo}" || "${normalized_workspace}" == "${normalized_repo}/"* ]]; then
+    refuse_source_visible_control_workspace_path "${env_name}" "${workspace}"
+  fi
+
+  if [[ "${normalized_repo}" == "${normalized_workspace}/"* ]]; then
     refuse_source_visible_control_workspace_path "${env_name}" "${workspace}"
   fi
 }
