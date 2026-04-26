@@ -116,6 +116,45 @@ async function parseDryRunArgs(output: string) {
   return result.stdout.toString("utf8").split("\0").slice(0, -1);
 }
 
+async function runCleanScript(args: string[], env: Record<string, string>) {
+  const result = await execFileAsync("bash", [join(repoRoot, "scripts", "clean-omp-lab.sh"), ...args], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      ...env,
+      OMP_LAB_DRY_RUN: "1",
+    },
+  });
+  return result.stdout;
+}
+
+test("cleanup dry run removes disposable workspaces and labeled docker artifacts", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+
+  try {
+    const output = await runCleanScript([], { HOME: fakeHome });
+
+    assert.match(output, new RegExp(`rm -rf ${fakeHome}/\\.oh-my-pi-lab/control-workspace`));
+    assert.match(output, new RegExp(`rm -rf ${fakeHome}/\\.oh-my-pi-lab/skilled-workspace`));
+    assert.match(output, /docker ps -aq --filter label=checkpoint\.omp-lab=true/);
+    assert.match(output, /docker volume ls -q --filter label=checkpoint\.omp-lab=true/);
+    assert.doesNotMatch(output, /docker image rm checkpoint-omp-lab:local/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("cleanup image flag includes shared image removal", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+
+  try {
+    const output = await runCleanScript(["--image"], { HOME: fakeHome });
+    assert.match(output, /docker image rm checkpoint-omp-lab:local/);
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test("control dry run mounts only the neutral workspace and shared service env", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
