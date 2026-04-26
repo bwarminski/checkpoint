@@ -12,7 +12,7 @@ The first implementation should produce two equivalent runtime paths:
 ## Non-Goals
 
 - Do not build a hostile minimal image in the first slice.
-- Do not mount Brett's home directory, SSH keys, git config, or ambient dotfiles into either container.
+- Do not mount Brett's home directory, full `.ssh` directory, git config, or ambient dotfiles into either container.
 - Do not copy `/home/bjw/checkpoint` into the control container.
 - Do not create backward-compatible support for the existing root Dockerfile behavior that copies this repo into `/app`.
 
@@ -42,7 +42,8 @@ It should:
 - Pass `GEMINI_API_KEY` from `~/.gemini-key` by default.
 - Pass the selected model through `OMP_MODEL` or an explicit script argument.
 - Configure Postgres and ClickHouse connection environment variables that resolve to the host compose stack from inside Docker.
-- Avoid mounting this repo, `.omp` skills, `.omp` extensions, home directories, SSH keys, or API credential files.
+- Avoid mounting this repo, `.omp` skills, `.omp` extensions, home directories, or API credential files.
+- Mount Git SSH and GitHub CLI credentials only when Brett explicitly enables that run option.
 
 `scripts/run-omp-skilled-container.sh` runs the checkpoint skills experiment.
 
@@ -52,6 +53,7 @@ It should:
 - Create a container-visible generated workspace with `.omp/skills` and `.omp/extensions/db-specialist.ts` matching the current local setup semantics.
 - Mount only the repo paths needed to load those skills and extension modules.
 - Use the same model, API key, and database connection environment contract as the control script.
+- Use the same optional Git SSH and GitHub CLI credential contract as the control script.
 - Keep the working directory and task workspace separate from the checkpoint source mount so agent edits land in the intended test workspace.
 
 ## Database And Network Access
@@ -72,12 +74,27 @@ The scripts should read `GEMINI_API_KEY` from the existing environment when pres
 
 The key should be passed as an environment variable only. The scripts must not mount the key file into the container.
 
+Git and GitHub access should be opt-in per run.
+
+The first implementation can support mounting Brett's `~/.ssh/id_rsa` because that matches the current lab need. The mount should be:
+
+- Explicitly requested by an environment variable or script flag.
+- Read-only.
+- Mounted as the container user's private key, not by mounting the whole host `.ssh` directory.
+- Paired with a container-owned `.ssh/config` entry that points GitHub SSH traffic at that key.
+- Paired with `known_hosts` setup for `github.com`, preferably generated inside the container image or startup path rather than copied from Brett's home directory.
+
+The scripts should not mount `~/.gitconfig` by default. If commits from inside the lab need a name and email, the script should set neutral lab-local git config values inside the container or document the explicit override.
+
+`gh` API access should use `GITHUB_TOKEN` when the environment provides it. If Brett wants to reuse `gh auth login` state later, that should be a separate explicit mount of the minimum needed GitHub CLI config, not part of the default SSH-key option.
+
 ## Error Handling
 
 The run scripts should fail before starting the container when required inputs are unavailable:
 
 - Docker is missing.
 - `~/.gemini-key` is missing and `GEMINI_API_KEY` is unset.
+- Git SSH access is requested but `~/.ssh/id_rsa` is missing.
 - The neutral or skilled workspace cannot be created.
 
 They should warn, but not fail, when the host database ports do not appear reachable, because Brett may intentionally start the agent before the collector stack.
@@ -88,6 +105,7 @@ Add focused tests for the script contracts rather than trying to automate the in
 
 - The control script's generated `docker run` arguments do not mount the checkpoint repo and do include the neutral workspace, `GEMINI_API_KEY`, model env, database env, and host gateway mapping.
 - The skills script's generated `docker run` arguments use the same image and DB/model/secret contract, and mount the checkpoint paths needed for `.omp` skills and extension loading.
+- The optional SSH mode mounts only `~/.ssh/id_rsa` read-only, does not mount the host `.ssh` directory, and passes `GITHUB_TOKEN` only when present.
 - The shared Dockerfile starts from Dev Containers Universal and does not copy the repo into the image.
 
 Manual verification remains an interactive smoke loop:
@@ -105,3 +123,4 @@ Update `README.md` or a dedicated script output so Brett can run both modes with
 - Run the control container.
 - Run the skills-enabled container.
 - Pass `GEMINI_API_KEY=$(cat ~/.gemini-key)` explicitly or rely on the default key-file lookup.
+- Enable Git SSH access explicitly when the lab agent needs to pull private repos.
