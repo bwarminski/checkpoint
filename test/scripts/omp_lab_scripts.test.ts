@@ -19,7 +19,8 @@ test("lab Dockerfile uses the universal dev container base and does not copy the
   assert.match(dockerfile, /postgresql-client/);
   assert.match(dockerfile, /\/checkpoint-src/);
   assert.match(dockerfile, /ssh-keyscan github\.com > \/etc\/ssh\/ssh_known_hosts/);
-  assert.match(dockerfile, /ln -s \/root\/\.bun\/bin\/omp \/usr\/local\/bin\/omp/);
+  assert.match(dockerfile, /^ENV BUN_INSTALL="\/usr\/local"$/m);
+  assert.match(dockerfile, /^ENV PATH="\/usr\/local\/bin:\$\{PATH\}"$/m);
   assert.match(dockerfile, /\/home\/codespace\/\.ssh/);
   assert.match(dockerfile, /chown -R codespace:codespace \/home\/codespace\/\.ssh/);
   assert.match(dockerfile, /IdentityFile ~\/\.ssh\/id_rsa/);
@@ -31,4 +32,6 @@ test("lab Dockerfile uses the universal dev container base and does not copy the
   assert.doesNotMatch(dockerfile, /\/home\/vscode/);
   assert.doesNotMatch(dockerfile, /^USER vscode$/m);
   assert.doesNotMatch(dockerfile, /chown -R vscode:vscode/);
+  assert.doesNotMatch(dockerfile, /\/root\/\.bun\/bin/);
+  assert.doesNotMatch(dockerfile, /ln -s .*omp/);
 });

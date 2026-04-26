@@ -6,6 +6,9 @@ USER root
 
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 
+ENV BUN_INSTALL="/usr/local"
+ENV PATH="/usr/local/bin:${PATH}"
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     bash \
@@ -35,8 +38,7 @@ RUN apt-get update \
     wget \
   && rm -rf /var/lib/apt/lists/*
 
-RUN bun install -g @oh-my-pi/pi-coding-agent \
-  && ln -s /root/.bun/bin/omp /usr/local/bin/omp
+RUN bun install -g @oh-my-pi/pi-coding-agent
 
 RUN mkdir -p /checkpoint-src \
   && cd /checkpoint-src \
@@ -55,7 +57,6 @@ RUN mkdir -p /home/codespace/.ssh \
   && chmod 700 /home/codespace/.ssh \
   && chmod 600 /home/codespace/.ssh/config
 
-ENV PATH="/root/.bun/bin:${PATH}"
 WORKDIR /workspace
 
 USER codespace
