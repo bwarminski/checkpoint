@@ -684,51 +684,51 @@ rg -n "Gemini key helper|lab Dockerfile|control dry run|source-visible|SSH|skill
 ```output
 23:  "OMP_LAB_ENABLE_SSH",
 24:  "OMP_LAB_SSH_KEY",
-28:test("lab Dockerfile uses the universal dev container base and does not copy the repo", async () => {
-174:test("Gemini key helper does not write key material to stdout", async () => {
-233:test("cleanup dry run removes disposable workspaces and labeled docker artifacts", async () => {
-249:test("cleanup image flag includes shared image removal", async () => {
-290:test("cleanup refuses dangerous workspace override paths before printing removals", async () => {
-311:        assert.fail("cleanup should reject dangerous workspace paths");
-326:test("cleanup skips docker artifacts when docker is unavailable after workspace cleanup", async () => {
-350:    assert.match(result.stderr, /docker not found; skipping Docker artifact cleanup/);
-359:test("cleanup image flag skips absent shared image", async () => {
-399:test("cleanup skips docker artifacts when docker daemon is unavailable after workspace cleanup", async () => {
-430:    assert.match(result.stderr, /Docker daemon unavailable; skipping Docker artifact cleanup/);
-439:test("control dry run mounts only the neutral workspace and shared service env", async () => {
-498:      assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
-527:    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
-552:    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
-580:test("control SSH mode mounts only id_rsa read-only and forwards GitHub token when present", async () => {
-593:      OMP_LAB_ENABLE_SSH: "1",
-602:    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
-611:test("SSH mode fails before docker run when id_rsa is missing", async () => {
-621:          OMP_LAB_ENABLE_SSH: "1",
-623:      /SSH key .* does not exist/,
-631:test("SSH missing-key failure does not invoke docker outside dry run", async () => {
-661:            OMP_LAB_ENABLE_SSH: "1",
-665:        assert.match(error.stderr ?? "", /SSH key .* does not exist/);
-677:test("control dry run ignores scoped host env by default", async () => {
-685:    OMP_LAB_ENABLE_SSH: process.env.OMP_LAB_ENABLE_SSH,
-686:    OMP_LAB_SSH_KEY: process.env.OMP_LAB_SSH_KEY,
-694:    process.env.OMP_LAB_ENABLE_SSH = "1";
-695:    process.env.OMP_LAB_SSH_KEY = fakeKey;
-705:    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
-722:test("control reset mode clears existing workspace contents before dry run", async () => {
-742:test("reset mode refuses unsafe workspaces before deleting markers", async () => {
-795:test("reset mode refuses an explicit empty workspace before docker run", async () => {
-821:test("control dry run shell-escapes arguments containing spaces", async () => {
-846:test("control dry run does not expose database connection values", async () => {
-871:test("skills dry run mounts generated workspace plus checkpoint skill and extension sources", async () => {
-902:test("skills mode refuses source-visible workspaces before replacing OMP state", async () => {
-907:    { workspace: "", expected: /Refusing source-visible workspace .*<empty>/ },
-908:    { workspace: "/", expected: /Refusing source-visible workspace/ },
-909:    { workspace: repoRoot, expected: /Refusing source-visible workspace/ },
-910:    { workspace: repoChild, expected: /Refusing source-visible workspace/ },
-911:    { workspace: repoAncestor, expected: /Refusing source-visible workspace/ },
-922:        assert.fail("skills mode should reject source-visible workspaces");
-939:test("skills mode allows neutral outside workspaces", async () => {
-959:test("skills dry run replaces stale generated OMP state", async () => {
+29:test("lab Dockerfile uses the universal dev container base and does not copy the repo", async () => {
+176:test("Gemini key helper does not write key material to stdout", async () => {
+270:test("cleanup dry run removes disposable workspaces and labeled docker artifacts", async () => {
+286:test("cleanup image flag includes shared image removal", async () => {
+327:test("cleanup refuses dangerous workspace override paths before printing removals", async () => {
+348:        assert.fail("cleanup should reject dangerous workspace paths");
+363:test("cleanup skips docker artifacts when docker is unavailable after workspace cleanup", async () => {
+387:    assert.match(result.stderr, /docker not found; skipping Docker artifact cleanup/);
+396:test("cleanup image flag skips absent shared image", async () => {
+436:test("cleanup skips docker artifacts when docker daemon is unavailable after workspace cleanup", async () => {
+467:    assert.match(result.stderr, /Docker daemon unavailable; skipping Docker artifact cleanup/);
+476:test("control dry run mounts only the neutral workspace and shared service env", async () => {
+535:      assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
+564:    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
+589:    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
+617:test("control SSH mode mounts only id_rsa read-only and forwards GitHub token when present", async () => {
+630:      OMP_LAB_ENABLE_SSH: "1",
+639:    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
+648:test("SSH mode fails before docker run when id_rsa is missing", async () => {
+658:          OMP_LAB_ENABLE_SSH: "1",
+660:      /SSH key .* does not exist/,
+668:test("SSH missing-key failure does not invoke docker outside dry run", async () => {
+698:            OMP_LAB_ENABLE_SSH: "1",
+702:        assert.match(error.stderr ?? "", /SSH key .* does not exist/);
+714:test("control dry run ignores scoped host env by default", async () => {
+722:    OMP_LAB_ENABLE_SSH: process.env.OMP_LAB_ENABLE_SSH,
+723:    OMP_LAB_SSH_KEY: process.env.OMP_LAB_SSH_KEY,
+731:    process.env.OMP_LAB_ENABLE_SSH = "1";
+732:    process.env.OMP_LAB_SSH_KEY = fakeKey;
+742:    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
+759:test("control reset mode clears existing workspace contents before dry run", async () => {
+779:test("reset mode refuses unsafe workspaces before deleting markers", async () => {
+832:test("reset mode refuses an explicit empty workspace before docker run", async () => {
+858:test("control dry run shell-escapes arguments containing spaces", async () => {
+883:test("control dry run does not expose database connection values", async () => {
+908:test("skills dry run mounts generated workspace plus checkpoint skill and extension sources", async () => {
+939:test("skills mode refuses source-visible workspaces before replacing OMP state", async () => {
+944:    { workspace: "", expected: /Refusing source-visible workspace .*<empty>/ },
+945:    { workspace: "/", expected: /Refusing source-visible workspace/ },
+946:    { workspace: repoRoot, expected: /Refusing source-visible workspace/ },
+947:    { workspace: repoChild, expected: /Refusing source-visible workspace/ },
+948:    { workspace: repoAncestor, expected: /Refusing source-visible workspace/ },
+959:        assert.fail("skills mode should reject source-visible workspaces");
+976:test("skills mode allows neutral outside workspaces", async () => {
+996:test("skills dry run replaces stale generated OMP state", async () => {
 ```
 
 The focused script suite runs without requiring interactive OMP. The Docker image smoke is gated behind `OMP_LAB_DOCKER_SMOKE=1`, so the ordinary run skips only that real image/container check.
@@ -738,9 +738,9 @@ node --import tsx --test test/scripts/omp_lab_scripts.test.ts | grep -E '^# (tes
 ```
 
 ```output
-# tests 30
+# tests 31
 # suites 0
-# pass 29
+# pass 30
 # fail 0
 # cancelled 0
 # skipped 1

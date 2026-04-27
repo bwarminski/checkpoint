@@ -23,6 +23,7 @@ const labEnvNames = [
   "OMP_LAB_ENABLE_SSH",
   "OMP_LAB_SSH_KEY",
   "OMP_LAB_CONTAINER_USER",
+  "DOCKER_LOG",
 ];
 
 test("lab Dockerfile uses the universal dev container base and does not copy the repo", async () => {
@@ -80,6 +81,7 @@ test(
           [
             "command -v omp >/dev/null",
             "omp --help >/dev/null",
+            'cd /checkpoint-src && bun -e "await import(\\"@oh-my-pi/pi-ai\\")"',
             'test "$(whoami)" = codespace',
             "test -w /workspace",
             "test -r /checkpoint-src/node_modules/@oh-my-pi/pi-ai/package.json",
@@ -196,6 +198,41 @@ test("Gemini key helper does not write key material to stdout", async () => {
     assert.equal(result.stderr, "");
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("image diagnostic runs checkpoint source dependency import in the lab image", async () => {
+  const fakeBin = await mkdtemp(join(tmpdir(), "checkpoint-omp-bin-"));
+  const dockerLog = join(fakeBin, "docker.log");
+  const fakeDocker = join(fakeBin, "docker");
+
+  try {
+    await writeFile(fakeDocker, [
+      "#!/usr/bin/env bash",
+      "for arg in \"$@\"; do",
+      "  printf '%s\\n' \"$arg\"",
+      "done > \"${DOCKER_LOG}\"",
+      "",
+    ].join("\n"));
+    await chmod(fakeDocker, 0o755);
+
+    await execFileAsync("/bin/bash", [join(repoRoot, "scripts", "check-omp-lab-image.sh")], {
+      cwd: repoRoot,
+      env: cleanLabEnv({
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        DOCKER_LOG: dockerLog,
+      }),
+    });
+
+    const log = await readFile(dockerLog, "utf8");
+    const args = log.trimEnd().split("\n");
+    assert.deepEqual(args.slice(0, 5), ["run", "--rm", "--entrypoint", "bash", "checkpoint-omp-lab:local"]);
+    assert.equal(args[5], "-c");
+    assert.match(log, /cd \/checkpoint-src/);
+    assert.match(log, /@oh-my-pi\/pi-ai/);
+    assert.match(log, /checkpoint_pi_ai_import=ok/);
+  } finally {
+    await rm(fakeBin, { recursive: true, force: true });
   }
 });
 
