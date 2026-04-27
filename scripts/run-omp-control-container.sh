@@ -16,7 +16,7 @@ docker_args=()
 append_base_docker_args docker_args "${WORKSPACE}"
 docker_args+=(--label checkpoint.omp-lab.mode=control)
 append_git_ssh_args docker_args
-finish_docker_args docker_args
+finish_docker_args docker_args "${OMP_LAB_CONTROL_IMAGE}"
 
 require_docker_for_container_run
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then

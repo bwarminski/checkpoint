@@ -4,7 +4,7 @@
 
 **Goal:** Build two Docker-based OMP lab run modes that share the same workstation image and service wiring while keeping the control run source-blind.
 
-**Architecture:** Replace the repo-copying standalone Dockerfile with a Dev Containers Universal lab image. Add one shared shell library that resolves secrets, disposable workspaces, database env, optional SSH mounts, and Docker arguments; then add separate control and skills scripts that call the shared library with different workspace/source mounts. Tests use a dry-run mode that prints the computed Docker command without starting the interactive TUI, plus cleanup dry runs that prove only lab-owned artifacts are targeted.
+**Architecture:** Replace the repo-copying standalone Dockerfile with a Dev Containers Universal lab image. Add one shared shell library that resolves secrets, disposable workspaces, database env, optional SSH mounts, and Docker arguments; then add separate control and skills scripts that call the shared library with different image targets. The control target remains source-blind; the skilled target bakes in checkpoint `src/` and `skills/` and prepares `.omp` from image-owned files at container startup. Tests use a dry-run mode that prints the computed Docker command without starting the interactive TUI, plus cleanup dry runs that prove only lab-owned artifacts are targeted.
 
 **Tech Stack:** Bash, Docker, Dev Containers Universal, Bun, npm, oh-my-pi, Node test runner, TypeScript.
 
@@ -15,7 +15,7 @@
 - `Dockerfile`: replace the current repo-copying image with the shared OMP lab workstation image. The image installs `omp`, the extension runtime npm dependencies, `gh`, DB clients, shell diagnostics, Bun, and container-local GitHub SSH host trust.
 - `scripts/omp-lab-common.sh`: create a focused shell library for image names, workspace paths, model/key resolution, database env, optional SSH/GitHub auth arguments, and Docker command assembly.
 - `scripts/run-omp-control-container.sh`: run the source-blind control container by mounting only a neutral workspace.
-- `scripts/run-omp-skilled-container.sh`: run the skills-enabled container by preparing a generated `.omp` workspace and mounting only the repo paths required for skills and extension loading.
+- `scripts/run-omp-skilled-container.sh`: run the skills-enabled container with the baked skilled image target that prepares generated `.omp` state at container startup.
 - `scripts/clean-omp-lab.sh`: remove lab-owned disposable workspaces, labeled containers, labeled volumes, and optionally the shared image.
 - `test/scripts/omp_lab_scripts.test.ts`: exercise the dry-run command contracts for both runtime modes and the Dockerfile contract.
 - `README.md`: document build/run commands, DB connectivity, Gemini key behavior, and opt-in Git SSH access.

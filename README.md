@@ -55,9 +55,10 @@ ClickHouse DDLs, the demo Postgres image, and the load harness.
 
 ## Docker Lab Containers
 
-Build the shared lab image from this repo:
+Build the source-blind control image and the skills-enabled image from this repo:
 
 ```bash
+docker build --target control -t checkpoint-omp-lab-control:local .
 docker build -t checkpoint-omp-lab:local .
 ```
 
@@ -78,9 +79,10 @@ bash scripts/run-omp-skilled-container.sh
 ```
 
 The control runner mounts only the neutral workspace and does not mount this
-checkpoint checkout, repo skills, or repo source. The skilled runner mounts the
-repo `skills/` and `src/` directories read-only so the container can load the DB
-specialist skill and extension source while keeping the lab workspace separate.
+checkpoint checkout, repo skills, or repo source. The skilled image bakes a
+replica of the checkpoint `skills/` and `src/` directories into the image and
+prepares the generated `.omp` files inside the mounted lab workspace when the
+container starts.
 
 Both runners connect from the container to the host compose stack through
 `host.docker.internal`. The default Postgres and ClickHouse env values point at

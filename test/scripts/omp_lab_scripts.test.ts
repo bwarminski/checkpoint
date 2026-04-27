@@ -13,7 +13,8 @@ const execFileAsync = promisify(execFile);
 const labEnvNames = [
   "GITHUB_TOKEN",
   "OMP_MODEL",
-  "OMP_LAB_IMAGE",
+  "OMP_LAB_CONTROL_IMAGE",
+  "OMP_LAB_SKILLED_IMAGE",
   "OMP_LAB_CONTROL_WORKSPACE",
   "OMP_LAB_SKILLED_WORKSPACE",
   "OMP_LAB_WORKSPACE",
@@ -30,6 +31,8 @@ test("lab Dockerfile uses the universal dev container base and does not copy the
   const dockerfile = await readFile(join(repoRoot, "Dockerfile"), "utf8");
 
   assert.match(dockerfile, /^FROM mcr\.microsoft\.com\/devcontainers\/universal:3-linux/m);
+  assert.match(dockerfile, /^FROM base AS control$/m);
+  assert.match(dockerfile, /^FROM base AS skilled$/m);
   assert.match(dockerfile, /@oh-my-pi\/pi-coding-agent/);
   assert.match(dockerfile, /@sinclair\/typebox/);
   assert.match(dockerfile, /@oh-my-pi\/pi-ai/);
@@ -37,6 +40,9 @@ test("lab Dockerfile uses the universal dev container base and does not copy the
   assert.match(dockerfile, /\bgh\b/);
   assert.match(dockerfile, /postgresql-client/);
   assert.match(dockerfile, /\/checkpoint-src/);
+  assert.match(dockerfile, /^COPY src \/checkpoint-src\/src$/m);
+  assert.match(dockerfile, /^COPY skills \/checkpoint-skills$/m);
+  assert.match(dockerfile, /^COPY docker\/omp-skilled-entrypoint\.sh \/usr\/local\/bin\/checkpoint-skilled-entrypoint$/m);
   assert.match(dockerfile, /rm -f \/etc\/apt\/sources\.list\.d\/yarn\.list\s+\\\n\s+&& apt-get update/);
   assert.match(dockerfile, /ssh-keyscan github\.com > \/etc\/ssh\/ssh_known_hosts/);
   assert.match(dockerfile, /^ENV BUN_INSTALL="\/usr\/local"$/m);
@@ -48,6 +54,7 @@ test("lab Dockerfile uses the universal dev container base and does not copy the
   assert.match(dockerfile, /^WORKDIR \/workspace$/m);
   assert.match(dockerfile, /^USER codespace$/m);
   assert.match(dockerfile, /^ENTRYPOINT \["omp"\]$/m);
+  assert.match(dockerfile, /^ENTRYPOINT \["checkpoint-skilled-entrypoint"\]$/m);
   assert.doesNotMatch(dockerfile, /^COPY \. \./m);
   assert.doesNotMatch(dockerfile, /^WORKDIR \/app$/m);
   assert.doesNotMatch(dockerfile, /\/home\/vscode/);
@@ -82,6 +89,9 @@ test(
             "command -v omp >/dev/null",
             "omp --help >/dev/null",
             'cd /checkpoint-src && bun -e "await import(\\"@oh-my-pi/pi-ai\\")"',
+            "test -r /checkpoint-src/src/omp_extension/db_specialist_extension.ts",
+            "test -r /checkpoint-skills/db-investigation/SKILL.md",
+            "command -v checkpoint-skilled-entrypoint >/dev/null",
             'test "$(whoami)" = codespace',
             "test -w /workspace",
             "test -r /checkpoint-src/node_modules/@oh-my-pi/pi-ai/package.json",
@@ -297,27 +307,37 @@ test("cleanup image flag includes shared image removal", async () => {
 test("script helpers ignore host lab image overrides by default", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = await mkdtemp(join(tmpdir(), "checkpoint-omp-control-"));
-  const originalLabImage = process.env.OMP_LAB_IMAGE;
+  const originalControlImage = process.env.OMP_LAB_CONTROL_IMAGE;
+  const originalSkilledImage = process.env.OMP_LAB_SKILLED_IMAGE;
 
   try {
-    process.env.OMP_LAB_IMAGE = "custom-lab-image:review";
+    process.env.OMP_LAB_CONTROL_IMAGE = "custom-control-image:review";
+    process.env.OMP_LAB_SKILLED_IMAGE = "custom-skilled-image:review";
 
     const runOutput = await runScript("run-omp-control-container.sh", {
       HOME: fakeHome,
       OMP_LAB_WORKSPACE: fakeWorkspace,
     });
     const args = await parseDryRunArgs(runOutput);
-    assert.ok(args.includes("checkpoint-omp-lab:local"));
-    assert.ok(!args.includes("custom-lab-image:review"));
+    assert.ok(args.includes("checkpoint-omp-lab-control:local"));
+    assert.ok(!args.includes("custom-control-image:review"));
+    assert.ok(!args.includes("custom-skilled-image:review"));
 
     const cleanOutput = await runCleanScript(["--image"], { HOME: fakeHome });
+    assert.match(cleanOutput, /docker image rm checkpoint-omp-lab-control:local/);
     assert.match(cleanOutput, /docker image rm checkpoint-omp-lab:local/);
-    assert.doesNotMatch(cleanOutput, /custom-lab-image:review/);
+    assert.doesNotMatch(cleanOutput, /custom-control-image:review/);
+    assert.doesNotMatch(cleanOutput, /custom-skilled-image:review/);
   } finally {
-    if (originalLabImage === undefined) {
-      delete process.env.OMP_LAB_IMAGE;
+    if (originalControlImage === undefined) {
+      delete process.env.OMP_LAB_CONTROL_IMAGE;
     } else {
-      process.env.OMP_LAB_IMAGE = originalLabImage;
+      process.env.OMP_LAB_CONTROL_IMAGE = originalControlImage;
+    }
+    if (originalSkilledImage === undefined) {
+      delete process.env.OMP_LAB_SKILLED_IMAGE;
+    } else {
+      process.env.OMP_LAB_SKILLED_IMAGE = originalSkilledImage;
     }
     await rm(fakeHome, { recursive: true, force: true });
     await rm(fakeWorkspace, { recursive: true, force: true });
@@ -905,7 +925,7 @@ test("control dry run does not expose database connection values", async () => {
   }
 });
 
-test("skills dry run mounts generated workspace plus checkpoint skill and extension sources", async () => {
+test("skills dry run uses baked checkpoint sources without host source mounts", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = join(fakeHome, ".oh-my-pi-lab", "skilled-workspace");
 
@@ -917,8 +937,8 @@ test("skills dry run mounts generated workspace plus checkpoint skill and extens
     const args = await parseDryRunArgs(output);
 
     assert.ok(args.includes(`type=bind,source=${fakeWorkspace},target=/workspace`));
-    assert.ok(args.includes(`type=bind,source=${repoRoot}/skills,target=/workspace/.omp/skills,readonly`));
-    assert.ok(args.includes(`type=bind,source=${repoRoot}/src,target=/checkpoint-src/src,readonly`));
+    assert.ok(!args.includes(`type=bind,source=${repoRoot}/skills,target=/workspace/.omp/skills,readonly`));
+    assert.ok(!args.includes(`type=bind,source=${repoRoot}/src,target=/checkpoint-src/src,readonly`));
     assert.ok(args.includes("CHECKPOINT_EXTENSION_SOURCE=/checkpoint-src/src/omp_extension/db_specialist_extension.ts"));
     assert.ok(args.includes("PGHOST"));
     assert.ok(args.includes("checkpoint.omp-lab.mode=skilled"));
@@ -929,8 +949,7 @@ test("skills dry run mounts generated workspace plus checkpoint skill and extens
     assert.ok(!args.includes("GEMINI_API_KEY=test-gemini-key"));
     assert.doesNotMatch(output, /test-gemini-key/);
 
-    const extensionEntry = join(fakeWorkspace, ".omp", "extensions", "db-specialist.ts");
-    assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
+    await assert.rejects(stat(join(fakeWorkspace, ".omp")), { code: "ENOENT" });
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }
@@ -983,23 +1002,21 @@ test("skills mode allows neutral outside workspaces", async () => {
       OMP_LAB_WORKSPACE: outsideWorkspace,
     });
     const args = await parseDryRunArgs(output);
-    const extensionEntry = join(outsideWorkspace, ".omp", "extensions", "db-specialist.ts");
 
     assert.ok(args.includes(`type=bind,source=${outsideWorkspace},target=/workspace`));
-    assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
+    await assert.rejects(stat(join(outsideWorkspace, ".omp")), { code: "ENOENT" });
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
     await rm(outsideWorkspace, { recursive: true, force: true });
   }
 });
 
-test("skills dry run replaces stale generated OMP state", async () => {
+test("skills dry run leaves generated OMP state for the image entrypoint", async () => {
   const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
   const fakeWorkspace = join(fakeHome, ".oh-my-pi-lab", "skilled-workspace");
   const staleSkills = join(fakeWorkspace, ".omp", "skills");
   const staleTool = join(fakeWorkspace, ".omp", "tools", "stale-tool", "index.ts");
   const staleExtension = join(fakeWorkspace, ".omp", "extensions", "extra.ts");
-  const extensionEntry = join(fakeWorkspace, ".omp", "extensions", "db-specialist.ts");
 
   try {
     await mkdir(join(fakeWorkspace, ".omp"), { recursive: true });
@@ -1014,10 +1031,9 @@ test("skills dry run replaces stale generated OMP state", async () => {
       OMP_LAB_WORKSPACE: fakeWorkspace,
     });
 
-    await assert.rejects(readFile(staleSkills, "utf8"), { code: "ENOENT" });
-    await assert.rejects(readFile(staleTool, "utf8"), { code: "ENOENT" });
-    await assert.rejects(readFile(staleExtension, "utf8"), { code: "ENOENT" });
-    assert.equal(await readFile(extensionEntry, "utf8"), 'export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";\n');
+    assert.equal(await readFile(staleSkills, "utf8"), "stale skills\n");
+    assert.equal(await readFile(staleTool, "utf8"), "export default {};\n");
+    assert.equal(await readFile(staleExtension, "utf8"), "export default {};\n");
   } finally {
     await rm(fakeHome, { recursive: true, force: true });
   }

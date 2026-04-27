@@ -44,7 +44,7 @@ The first implementation should produce two equivalent runtime paths:
 
 ## Architecture
 
-Use one Docker image and two run scripts.
+Use one shared Docker base with separate control and skilled image targets, plus two run scripts.
 
 The image should start from `mcr.microsoft.com/devcontainers/universal:3-linux` and install the shared agent-test workstation tools:
 
@@ -54,7 +54,7 @@ The image should start from `mcr.microsoft.com/devcontainers/universal:3-linux` 
 - `pgcli`, `mycli`, `sqlite3`, `jq`, `ripgrep`, `fd`, `tmux`, `tree`, and related shell diagnostics
 - Node, npm, Python, build tooling, git, curl, and CA certificates
 
-The image should not copy the checkpoint repo. Runtime scripts provide all task-specific inputs through bind mounts and environment variables.
+The control image should not copy the checkpoint repo. The skilled image should copy only the checkpoint `src/` and `skills/` trees into image-owned paths so the skilled runtime no longer depends on host source bind mounts.
 
 Lab workspaces are disposable state owned by these scripts. The default control
 and skills workspaces should live under `~/.oh-my-pi-lab/`, and deleting them
@@ -81,13 +81,13 @@ It should:
 
 It should:
 
-- Use the same image as the control script.
-- Create a container-visible generated workspace with `.omp/skills` and `.omp/extensions/db-specialist.ts` matching the current local setup semantics.
+- Use the same base image as the control script through a skilled image target.
+- Let the skilled image entrypoint create a container-visible generated workspace with `.omp/skills` and `.omp/extensions/db-specialist.ts` matching the current local setup semantics.
 - Reset the generated workspace before starting when `OMP_LAB_RESET_WORKSPACE=1`.
-- Mount only the repo paths needed to load those skills and extension modules.
+- Avoid host source and skills bind mounts by using the checkpoint paths baked into the skilled image.
 - Use the same model, API key, and database connection environment contract as the control script.
 - Use the same optional Git SSH and GitHub CLI credential contract as the control script.
-- Keep the working directory and task workspace separate from the checkpoint source mount so agent edits land in the intended test workspace.
+- Keep the working directory and task workspace separate from the checkpoint source baked into the image so agent edits land in the intended test workspace.
 
 ## Database And Network Access
 
@@ -98,7 +98,7 @@ From the container, Postgres and ClickHouse should be reachable through Docker's
 
 ## 2. Shared Workstation Image
 
-The Dockerfile is the common runtime substrate. It starts from Dev Containers Universal, installs the command-line tools a generic development workstation would usually have, installs OMP globally through Bun, prepares extension dependencies under `/checkpoint-src`, and then switches to the image's non-root `codespace` user. There is no `COPY . .`, so the image itself does not contain this checkout.
+The Dockerfile has a shared `base` stage for the generic workstation, a source-blind `control` stage, and a `skilled` stage that bakes a replica of checkpoint `src/` and `skills/` into image-owned paths. There is still no `COPY . .`; control remains source-blind, while skilled gets only the intended checkpoint runtime surface.
 
 ```bash
 sed -n '1,95p' Dockerfile
@@ -107,7 +107,7 @@ sed -n '1,95p' Dockerfile
 ```output
 # ABOUTME: Builds the shared workstation image for isolated oh-my-pi lab containers.
 # ABOUTME: Installs OMP, database clients, GitHub tooling, and common diagnostics without copying this repo.
-FROM mcr.microsoft.com/devcontainers/universal:3-linux
+FROM mcr.microsoft.com/devcontainers/universal:3-linux AS base
 
 USER root
 
@@ -173,6 +173,23 @@ WORKDIR /workspace
 USER codespace
 
 ENTRYPOINT ["omp"]
+
+FROM base AS control
+
+FROM base AS skilled
+
+USER root
+
+COPY src /checkpoint-src/src
+COPY skills /checkpoint-skills
+COPY docker/omp-skilled-entrypoint.sh /usr/local/bin/checkpoint-skilled-entrypoint
+
+RUN chown -R codespace:codespace /checkpoint-src/src /checkpoint-skills \
+  && chmod 755 /usr/local/bin/checkpoint-skilled-entrypoint
+
+USER codespace
+
+ENTRYPOINT ["checkpoint-skilled-entrypoint"]
 ```
 
 ## 3. Shared Shell Library: Constants And Required Inputs
@@ -190,7 +207,8 @@ sed -n '1,65p' scripts/omp-lab-common.sh
 
 set -euo pipefail
 
-OMP_LAB_IMAGE="${OMP_LAB_IMAGE:-checkpoint-omp-lab:local}"
+OMP_LAB_CONTROL_IMAGE="${OMP_LAB_CONTROL_IMAGE:-checkpoint-omp-lab-control:local}"
+OMP_LAB_SKILLED_IMAGE="${OMP_LAB_SKILLED_IMAGE:-checkpoint-omp-lab:local}"
 OMP_LAB_CONTAINER_USER="${OMP_LAB_CONTAINER_USER:-codespace}"
 OMP_LAB_CONTAINER_HOME="/home/${OMP_LAB_CONTAINER_USER}"
 OMP_LAB_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -248,7 +266,6 @@ resolve_lab_workspace_path() {
     printf '%s\n' "${!env_name}"
     return
   fi
-
 ```
 
 ## 4. Workspace Validation: Source-Hidden For Runs, Lab-Owned For Deletion
@@ -264,6 +281,7 @@ sed -n '66,155p' scripts/omp-lab-common.sh
 ```
 
 ```output
+
   printf '%s\n' "${default_path}"
 }
 
@@ -353,7 +371,6 @@ validate_lab_workspace_removal_path() {
 
 reset_lab_workspace() {
   local env_name="$1"
-  local workspace="$2"
 ```
 
 ## 5. Docker Arguments: Same Model, Same DB, Same Secrets Contract
@@ -367,6 +384,7 @@ sed -n '156,235p' scripts/omp-lab-common.sh
 ```
 
 ```output
+  local workspace="$2"
 
   validate_lab_workspace_removal_path "${env_name}" "${workspace}"
   rm -rf "${workspace}"
@@ -431,20 +449,21 @@ append_git_ssh_args() {
 
 finish_docker_args() {
   local -n args_ref="$1"
-  args_ref+=("${OMP_LAB_IMAGE}" --model "${OMP_MODEL}")
+  local image="$2"
+  args_ref+=("${image}" --model "${OMP_MODEL}")
 }
 
 run_or_print_docker_args() {
   local -n args_ref="$1"
 
   if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
-    printf '%q ' "${args_ref[@]}"
+    printf '%q' "${args_ref[0]}"
+    printf ' %q' "${args_ref[@]:1}"
     printf '\n'
     return
   fi
 
   exec "${args_ref[@]}"
-}
 ```
 
 ## 6. Control Runner: The Source-Blind Path
@@ -476,7 +495,7 @@ docker_args=()
 append_base_docker_args docker_args "${WORKSPACE}"
 docker_args+=(--label checkpoint.omp-lab.mode=control)
 append_git_ssh_args docker_args
-finish_docker_args docker_args
+finish_docker_args docker_args "${OMP_LAB_CONTROL_IMAGE}"
 
 require_docker_for_container_run
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
@@ -495,14 +514,14 @@ tmp_home=/tmp/checkpoint-showboat-home-control; tmp_ws=/tmp/checkpoint-showboat-
 ```
 
 ```output
-docker run --rm -it --name oh-my-pi-lab --label checkpoint.omp-lab=true --add-host host.docker.internal:host-gateway --mount type=bind\,source=/tmp/checkpoint-showboat-workspace-control\,target=/workspace --env GEMINI_API_KEY --env OMP_MODEL=google/gemini-2.5-pro --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER --env PGPASSWORD --env CLICKHOUSE_URL --env CLICKHOUSE_HOST --env CLICKHOUSE_PORT --label checkpoint.omp-lab.mode=control checkpoint-omp-lab:local --model google/gemini-2.5-pro 
+docker run --rm -it --name oh-my-pi-lab --label checkpoint.omp-lab=true --add-host host.docker.internal:host-gateway --mount type=bind\,source=/tmp/checkpoint-showboat-workspace-control\,target=/workspace --env GEMINI_API_KEY --env OMP_MODEL=google/gemini-2.5-pro --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER --env PGPASSWORD --env CLICKHOUSE_URL --env CLICKHOUSE_HOST --env CLICKHOUSE_PORT --label checkpoint.omp-lab.mode=control checkpoint-omp-lab-control:local --model google/gemini-2.5-pro
 ```
 
-## 7. Skilled Runner: Same Base, Deliberate Checkpoint Mounts
+## 7. Skilled Runner: Same Base, Baked Checkpoint Runtime
 
-The skilled script uses the same shared setup and validation as control. Its extra work is to prepare an OMP project workspace and mount only the checkpoint paths required for the specialist runtime.
+The skilled script uses the same shared setup and validation as control. Its extra Docker behavior is limited to selecting the skilled image and forwarding the extension source path. The checkpoint `src/` and `skills/` trees are baked into the skilled image, and the image entrypoint prepares `.omp` inside the mounted workspace when the container starts.
 
-It clears generated `.omp` state in the selected workspace, writes `.omp/extensions/db-specialist.ts`, mounts repo `skills/` read-only at `/workspace/.omp/skills`, and mounts repo `src/` read-only at `/checkpoint-src/src`. The task workspace remains `/workspace`; the checkpoint source is separate and read-only.
+This keeps the host checkout out of Docker argv and avoids host source bind mounts. The task workspace remains `/workspace`; the checkpoint runtime is image-owned under `/checkpoint-src/src` and `/checkpoint-skills`.
 
 ```bash
 sed -n '1,120p' scripts/run-omp-skilled-container.sh
@@ -515,7 +534,6 @@ sed -n '1,120p' scripts/run-omp-skilled-container.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/omp-lab-common.sh"
 
 require_omp_model
@@ -528,12 +546,10 @@ docker_args=()
 append_base_docker_args docker_args "${WORKSPACE}"
 docker_args+=(
   --label checkpoint.omp-lab.mode=skilled
-  --mount "type=bind,source=${REPO_ROOT}/skills,target=/workspace/.omp/skills,readonly"
-  --mount "type=bind,source=${REPO_ROOT}/src,target=/checkpoint-src/src,readonly"
   --env "CHECKPOINT_EXTENSION_SOURCE=/checkpoint-src/src/omp_extension/db_specialist_extension.ts"
 )
 append_git_ssh_args docker_args
-finish_docker_args docker_args
+finish_docker_args docker_args "${OMP_LAB_SKILLED_IMAGE}"
 
 require_docker_for_container_run
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
@@ -541,27 +557,18 @@ if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
 else
   ensure_workspace "${WORKSPACE}"
 fi
-rm -rf "${WORKSPACE}/.omp/skills" "${WORKSPACE}/.omp/tools" "${WORKSPACE}/.omp/extensions"
-mkdir -p "${WORKSPACE}/.omp/extensions"
-
-cat > "${WORKSPACE}/.omp/extensions/db-specialist.ts" <<'ENTRYPOINT'
-export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";
-ENTRYPOINT
 
 run_or_print_docker_args docker_args
 ```
 
-The skilled dry-run has the same model, key, DB, and image contract as control, plus the deliberate read-only `skills/` and `src/` mounts. The generated extension entrypoint is materialized in the selected workspace before Docker starts.
+The skilled dry-run has the same model, key, DB, and workspace contract as control, but no host source or skills mounts. The generated extension entrypoint is materialized by the skilled image entrypoint when Docker starts.
 
 ```bash
-tmp_home=/tmp/checkpoint-showboat-home-skilled; tmp_ws=/tmp/checkpoint-showboat-workspace-skilled; rm -rf "$tmp_home" "$tmp_ws"; mkdir -p "$tmp_home" "$tmp_ws"; OMP_LAB_DRY_RUN=1 HOME="$tmp_home" OMP_MODEL=google/gemini-2.5-pro GEMINI_API_KEY=demo-secret OMP_LAB_WORKSPACE="$tmp_ws" bash scripts/run-omp-skilled-container.sh; printf "\n--- generated extension ---\n"; sed -n "1,5p" "$tmp_ws/.omp/extensions/db-specialist.ts"; rm -rf "$tmp_home" "$tmp_ws"
+tmp_home=/tmp/checkpoint-showboat-home-skilled; tmp_ws=/tmp/checkpoint-showboat-workspace-skilled; rm -rf "$tmp_home" "$tmp_ws"; mkdir -p "$tmp_home" "$tmp_ws"; OMP_LAB_DRY_RUN=1 HOME="$tmp_home" OMP_MODEL=google/gemini-2.5-pro GEMINI_API_KEY=demo-secret OMP_LAB_WORKSPACE="$tmp_ws" bash scripts/run-omp-skilled-container.sh; rm -rf "$tmp_home" "$tmp_ws"
 ```
 
 ```output
-docker run --rm -it --name oh-my-pi-lab --label checkpoint.omp-lab=true --add-host host.docker.internal:host-gateway --mount type=bind\,source=/tmp/checkpoint-showboat-workspace-skilled\,target=/workspace --env GEMINI_API_KEY --env OMP_MODEL=google/gemini-2.5-pro --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER --env PGPASSWORD --env CLICKHOUSE_URL --env CLICKHOUSE_HOST --env CLICKHOUSE_PORT --label checkpoint.omp-lab.mode=skilled --mount type=bind\,source=/home/bjw/checkpoint/skills\,target=/workspace/.omp/skills\,readonly --mount type=bind\,source=/home/bjw/checkpoint/src\,target=/checkpoint-src/src\,readonly --env CHECKPOINT_EXTENSION_SOURCE=/checkpoint-src/src/omp_extension/db_specialist_extension.ts checkpoint-omp-lab:local --model google/gemini-2.5-pro 
-
---- generated extension ---
-export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extension.ts";
+docker run --rm -it --name oh-my-pi-lab --label checkpoint.omp-lab=true --add-host host.docker.internal:host-gateway --mount type=bind\,source=/tmp/checkpoint-showboat-workspace-skilled\,target=/workspace --env GEMINI_API_KEY --env OMP_MODEL=google/gemini-2.5-pro --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER --env PGPASSWORD --env CLICKHOUSE_URL --env CLICKHOUSE_HOST --env CLICKHOUSE_PORT --label checkpoint.omp-lab.mode=skilled --env CHECKPOINT_EXTENSION_SOURCE=/checkpoint-src/src/omp_extension/db_specialist_extension.ts checkpoint-omp-lab:local --model google/gemini-2.5-pro
 ```
 
 ## 8. Optional Git SSH And GitHub CLI Access
@@ -573,7 +580,7 @@ tmp_home=/tmp/checkpoint-showboat-home-ssh; tmp_ws=/tmp/checkpoint-showboat-work
 ```
 
 ```output
-docker run --rm -it --name oh-my-pi-lab --label checkpoint.omp-lab=true --add-host host.docker.internal:host-gateway --mount type=bind\,source=/tmp/checkpoint-showboat-workspace-ssh\,target=/workspace --env GEMINI_API_KEY --env OMP_MODEL=google/gemini-2.5-pro --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER --env PGPASSWORD --env CLICKHOUSE_URL --env CLICKHOUSE_HOST --env CLICKHOUSE_PORT --env GITHUB_TOKEN --label checkpoint.omp-lab.mode=control --mount type=bind\,source=/tmp/checkpoint-showboat-home-ssh/.ssh/id_rsa\,target=/home/codespace/.ssh/id_rsa\,readonly checkpoint-omp-lab:local --model google/gemini-2.5-pro 
+docker run --rm -it --name oh-my-pi-lab --label checkpoint.omp-lab=true --add-host host.docker.internal:host-gateway --mount type=bind\,source=/tmp/checkpoint-showboat-workspace-ssh\,target=/workspace --env GEMINI_API_KEY --env OMP_MODEL=google/gemini-2.5-pro --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER --env PGPASSWORD --env CLICKHOUSE_URL --env CLICKHOUSE_HOST --env CLICKHOUSE_PORT --env GITHUB_TOKEN --label checkpoint.omp-lab.mode=control --mount type=bind\,source=/tmp/checkpoint-showboat-home-ssh/.ssh/id_rsa\,target=/home/codespace/.ssh/id_rsa\,readonly checkpoint-omp-lab-control:local --model google/gemini-2.5-pro
 ```
 
 ## 9. Cleanup: Fresh Runs Without Unsafe Deletes
@@ -614,7 +621,9 @@ validate_lab_workspace_removal_path OMP_LAB_SKILLED_WORKSPACE "${SKILLED_WORKSPA
 
 run_cleanup_command() {
   if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
-    printf '%q ' "$@"
+    printf '%q' "$1"
+    shift
+    printf ' %q' "$@"
     printf '\n'
     return
   fi
@@ -648,13 +657,16 @@ fi
 
 if [[ "${REMOVE_IMAGE}" == "1" ]]; then
   if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
-    run_cleanup_command docker image rm "${OMP_LAB_IMAGE}"
+    run_cleanup_command docker image rm "${OMP_LAB_CONTROL_IMAGE}"
+    run_cleanup_command docker image rm "${OMP_LAB_SKILLED_IMAGE}"
   elif [[ "${DOCKER_AVAILABLE}" == "1" ]]; then
-    if docker image inspect "${OMP_LAB_IMAGE}" >/dev/null 2>&1; then
-      run_cleanup_command docker image rm "${OMP_LAB_IMAGE}"
-    else
-      printf 'Docker image %s not found; skipping image removal\n' "${OMP_LAB_IMAGE}" >&2
-    fi
+    for image in "${OMP_LAB_CONTROL_IMAGE}" "${OMP_LAB_SKILLED_IMAGE}"; do
+      if docker image inspect "${image}" >/dev/null 2>&1; then
+        run_cleanup_command docker image rm "${image}"
+      else
+        printf 'Docker image %s not found; skipping image removal\n' "${image}" >&2
+      fi
+    done
   fi
 fi
 ```
@@ -666,11 +678,12 @@ tmp_home=/tmp/checkpoint-showboat-home-clean; rm -rf "$tmp_home"; mkdir -p "$tmp
 ```
 
 ```output
-rm -rf /tmp/checkpoint-showboat-home-clean/.oh-my-pi-lab/control-workspace 
-rm -rf /tmp/checkpoint-showboat-home-clean/.oh-my-pi-lab/skilled-workspace 
+rm -rf /tmp/checkpoint-showboat-home-clean/.oh-my-pi-lab/control-workspace
+rm -rf /tmp/checkpoint-showboat-home-clean/.oh-my-pi-lab/skilled-workspace
 docker ps -aq --filter label=checkpoint.omp-lab=true | xargs -r docker rm -f
 docker volume ls -q --filter label=checkpoint.omp-lab=true | xargs -r docker volume rm
-docker image rm checkpoint-omp-lab:local 
+docker image rm checkpoint-omp-lab-control:local
+docker image rm checkpoint-omp-lab:local
 ```
 
 ## 10. Tests That Prove The Contract
@@ -682,53 +695,53 @@ rg -n "Gemini key helper|lab Dockerfile|control dry run|source-visible|SSH|skill
 ```
 
 ```output
-23:  "OMP_LAB_ENABLE_SSH",
-24:  "OMP_LAB_SSH_KEY",
-29:test("lab Dockerfile uses the universal dev container base and does not copy the repo", async () => {
-176:test("Gemini key helper does not write key material to stdout", async () => {
-270:test("cleanup dry run removes disposable workspaces and labeled docker artifacts", async () => {
-286:test("cleanup image flag includes shared image removal", async () => {
-327:test("cleanup refuses dangerous workspace override paths before printing removals", async () => {
-348:        assert.fail("cleanup should reject dangerous workspace paths");
-363:test("cleanup skips docker artifacts when docker is unavailable after workspace cleanup", async () => {
-387:    assert.match(result.stderr, /docker not found; skipping Docker artifact cleanup/);
-396:test("cleanup image flag skips absent shared image", async () => {
-436:test("cleanup skips docker artifacts when docker daemon is unavailable after workspace cleanup", async () => {
-467:    assert.match(result.stderr, /Docker daemon unavailable; skipping Docker artifact cleanup/);
-476:test("control dry run mounts only the neutral workspace and shared service env", async () => {
-535:      assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
-564:    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
-589:    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
-617:test("control SSH mode mounts only id_rsa read-only and forwards GitHub token when present", async () => {
-630:      OMP_LAB_ENABLE_SSH: "1",
-639:    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
-648:test("SSH mode fails before docker run when id_rsa is missing", async () => {
-658:          OMP_LAB_ENABLE_SSH: "1",
-660:      /SSH key .* does not exist/,
-668:test("SSH missing-key failure does not invoke docker outside dry run", async () => {
-698:            OMP_LAB_ENABLE_SSH: "1",
-702:        assert.match(error.stderr ?? "", /SSH key .* does not exist/);
-714:test("control dry run ignores scoped host env by default", async () => {
-722:    OMP_LAB_ENABLE_SSH: process.env.OMP_LAB_ENABLE_SSH,
-723:    OMP_LAB_SSH_KEY: process.env.OMP_LAB_SSH_KEY,
-731:    process.env.OMP_LAB_ENABLE_SSH = "1";
-732:    process.env.OMP_LAB_SSH_KEY = fakeKey;
-742:    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
-759:test("control reset mode clears existing workspace contents before dry run", async () => {
-779:test("reset mode refuses unsafe workspaces before deleting markers", async () => {
-832:test("reset mode refuses an explicit empty workspace before docker run", async () => {
-858:test("control dry run shell-escapes arguments containing spaces", async () => {
-883:test("control dry run does not expose database connection values", async () => {
-908:test("skills dry run mounts generated workspace plus checkpoint skill and extension sources", async () => {
-939:test("skills mode refuses source-visible workspaces before replacing OMP state", async () => {
-944:    { workspace: "", expected: /Refusing source-visible workspace .*<empty>/ },
-945:    { workspace: "/", expected: /Refusing source-visible workspace/ },
-946:    { workspace: repoRoot, expected: /Refusing source-visible workspace/ },
-947:    { workspace: repoChild, expected: /Refusing source-visible workspace/ },
-948:    { workspace: repoAncestor, expected: /Refusing source-visible workspace/ },
-959:        assert.fail("skills mode should reject source-visible workspaces");
-976:test("skills mode allows neutral outside workspaces", async () => {
-996:test("skills dry run replaces stale generated OMP state", async () => {
+24:  "OMP_LAB_ENABLE_SSH",
+25:  "OMP_LAB_SSH_KEY",
+30:test("lab Dockerfile uses the universal dev container base and does not copy the repo", async () => {
+186:test("Gemini key helper does not write key material to stdout", async () => {
+280:test("cleanup dry run removes disposable workspaces and labeled docker artifacts", async () => {
+296:test("cleanup image flag includes shared image removal", async () => {
+347:test("cleanup refuses dangerous workspace override paths before printing removals", async () => {
+368:        assert.fail("cleanup should reject dangerous workspace paths");
+383:test("cleanup skips docker artifacts when docker is unavailable after workspace cleanup", async () => {
+407:    assert.match(result.stderr, /docker not found; skipping Docker artifact cleanup/);
+416:test("cleanup image flag skips absent shared image", async () => {
+456:test("cleanup skips docker artifacts when docker daemon is unavailable after workspace cleanup", async () => {
+487:    assert.match(result.stderr, /Docker daemon unavailable; skipping Docker artifact cleanup/);
+496:test("control dry run mounts only the neutral workspace and shared service env", async () => {
+555:      assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
+584:    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
+609:    assert.match(error.stderr ?? "", /Refusing source-visible workspace/);
+637:test("control SSH mode mounts only id_rsa read-only and forwards GitHub token when present", async () => {
+650:      OMP_LAB_ENABLE_SSH: "1",
+659:    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
+668:test("SSH mode fails before docker run when id_rsa is missing", async () => {
+678:          OMP_LAB_ENABLE_SSH: "1",
+680:      /SSH key .* does not exist/,
+688:test("SSH missing-key failure does not invoke docker outside dry run", async () => {
+718:            OMP_LAB_ENABLE_SSH: "1",
+722:        assert.match(error.stderr ?? "", /SSH key .* does not exist/);
+734:test("control dry run ignores scoped host env by default", async () => {
+742:    OMP_LAB_ENABLE_SSH: process.env.OMP_LAB_ENABLE_SSH,
+743:    OMP_LAB_SSH_KEY: process.env.OMP_LAB_SSH_KEY,
+751:    process.env.OMP_LAB_ENABLE_SSH = "1";
+752:    process.env.OMP_LAB_SSH_KEY = fakeKey;
+762:    assert.ok(!args.includes("OMP_LAB_ENABLE_SSH=1"));
+779:test("control reset mode clears existing workspace contents before dry run", async () => {
+799:test("reset mode refuses unsafe workspaces before deleting markers", async () => {
+852:test("reset mode refuses an explicit empty workspace before docker run", async () => {
+878:test("control dry run shell-escapes arguments containing spaces", async () => {
+903:test("control dry run does not expose database connection values", async () => {
+928:test("skills dry run uses baked checkpoint sources without host source mounts", async () => {
+958:test("skills mode refuses source-visible workspaces before replacing OMP state", async () => {
+963:    { workspace: "", expected: /Refusing source-visible workspace .*<empty>/ },
+964:    { workspace: "/", expected: /Refusing source-visible workspace/ },
+965:    { workspace: repoRoot, expected: /Refusing source-visible workspace/ },
+966:    { workspace: repoChild, expected: /Refusing source-visible workspace/ },
+967:    { workspace: repoAncestor, expected: /Refusing source-visible workspace/ },
+978:        assert.fail("skills mode should reject source-visible workspaces");
+995:test("skills mode allows neutral outside workspaces", async () => {
+1014:test("skills dry run leaves generated OMP state for the image entrypoint", async () => {
 ```
 
 The focused script suite runs without requiring interactive OMP. The Docker image smoke is gated behind `OMP_LAB_DOCKER_SMOKE=1`, so the ordinary run skips only that real image/container check.
@@ -751,7 +764,8 @@ node --import tsx --test test/scripts/omp_lab_scripts.test.ts | grep -E '^# (tes
 
 To run the lab manually:
 
-- Build the shared image with `docker build -t checkpoint-omp-lab:local .`.
+- Build the control image with `docker build --target control -t checkpoint-omp-lab-control:local .`.
+- Build the skilled image with `docker build -t checkpoint-omp-lab:local .`.
 - Start the host compose stack separately, as usual for checkpoint.
 - Run the control script with `OMP_MODEL` and either exported `GEMINI_API_KEY` or `~/.gemini-key`.
 - Run the skilled script with the same model and key to isolate the effect of checkpoint skills/source.

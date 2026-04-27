@@ -18,7 +18,7 @@ The first implementation should produce two equivalent runtime paths:
 
 ## Architecture
 
-Use one Docker image and two run scripts.
+Use one shared Docker base with separate control and skilled image targets, plus two run scripts.
 
 The image should start from `mcr.microsoft.com/devcontainers/universal:3-linux` and install the shared agent-test workstation tools:
 
@@ -28,7 +28,7 @@ The image should start from `mcr.microsoft.com/devcontainers/universal:3-linux` 
 - `pgcli`, `mycli`, `sqlite3`, `jq`, `ripgrep`, `fd`, `tmux`, `tree`, and related shell diagnostics
 - Node, npm, Python, build tooling, git, curl, and CA certificates
 
-The image should not copy the checkpoint repo. Runtime scripts provide all task-specific inputs through bind mounts and environment variables.
+The control image should not copy the checkpoint repo. The skilled image should copy only the checkpoint `src/` and `skills/` trees into image-owned paths so the skilled runtime no longer depends on host source bind mounts.
 
 Lab workspaces are disposable state owned by these scripts. The default control
 and skills workspaces should live under `~/.oh-my-pi-lab/`, and deleting them
@@ -55,13 +55,13 @@ It should:
 
 It should:
 
-- Use the same image as the control script.
-- Create a container-visible generated workspace with `.omp/skills` and `.omp/extensions/db-specialist.ts` matching the current local setup semantics.
+- Use the same base image as the control script through a skilled image target.
+- Let the skilled image entrypoint create a container-visible generated workspace with `.omp/skills` and `.omp/extensions/db-specialist.ts` matching the current local setup semantics.
 - Reset the generated workspace before starting when `OMP_LAB_RESET_WORKSPACE=1`.
-- Mount only the repo paths needed to load those skills and extension modules.
+- Avoid host source and skills bind mounts by using the checkpoint paths baked into the skilled image.
 - Use the same model, API key, and database connection environment contract as the control script.
 - Use the same optional Git SSH and GitHub CLI credential contract as the control script.
-- Keep the working directory and task workspace separate from the checkpoint source mount so agent edits land in the intended test workspace.
+- Keep the working directory and task workspace separate from the checkpoint source baked into the image so agent edits land in the intended test workspace.
 
 ## Database And Network Access
 
@@ -87,7 +87,7 @@ By default it should remove:
 - The default skills workspace under `~/.oh-my-pi-lab/skilled-workspace`.
 - Any named Docker volumes labeled with `checkpoint.omp-lab=true` if future work adds them.
 
-It should remove the shared `checkpoint-omp-lab:local` image only when Brett
+It should remove the control and skilled lab images only when Brett
 passes an explicit image cleanup option such as `--image`, because image rebuilds
 are slower than workspace cleanup.
 

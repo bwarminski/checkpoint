@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-OMP_LAB_IMAGE="${OMP_LAB_IMAGE:-checkpoint-omp-lab:local}"
+OMP_LAB_CONTROL_IMAGE="${OMP_LAB_CONTROL_IMAGE:-checkpoint-omp-lab-control:local}"
+OMP_LAB_SKILLED_IMAGE="${OMP_LAB_SKILLED_IMAGE:-checkpoint-omp-lab:local}"
 OMP_LAB_CONTAINER_USER="${OMP_LAB_CONTAINER_USER:-codespace}"
 OMP_LAB_CONTAINER_HOME="/home/${OMP_LAB_CONTAINER_USER}"
 OMP_LAB_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -217,14 +218,16 @@ append_git_ssh_args() {
 
 finish_docker_args() {
   local -n args_ref="$1"
-  args_ref+=("${OMP_LAB_IMAGE}" --model "${OMP_MODEL}")
+  local image="$2"
+  args_ref+=("${image}" --model "${OMP_MODEL}")
 }
 
 run_or_print_docker_args() {
   local -n args_ref="$1"
 
   if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
-    printf '%q ' "${args_ref[@]}"
+    printf '%q' "${args_ref[0]}"
+    printf ' %q' "${args_ref[@]:1}"
     printf '\n'
     return
   fi

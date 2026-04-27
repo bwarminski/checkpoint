@@ -27,7 +27,9 @@ validate_lab_workspace_removal_path OMP_LAB_SKILLED_WORKSPACE "${SKILLED_WORKSPA
 
 run_cleanup_command() {
   if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
-    printf '%q ' "$@"
+    printf '%q' "$1"
+    shift
+    printf ' %q' "$@"
     printf '\n'
     return
   fi
@@ -61,12 +63,15 @@ fi
 
 if [[ "${REMOVE_IMAGE}" == "1" ]]; then
   if [[ "${OMP_LAB_DRY_RUN:-0}" == "1" ]]; then
-    run_cleanup_command docker image rm "${OMP_LAB_IMAGE}"
+    run_cleanup_command docker image rm "${OMP_LAB_CONTROL_IMAGE}"
+    run_cleanup_command docker image rm "${OMP_LAB_SKILLED_IMAGE}"
   elif [[ "${DOCKER_AVAILABLE}" == "1" ]]; then
-    if docker image inspect "${OMP_LAB_IMAGE}" >/dev/null 2>&1; then
-      run_cleanup_command docker image rm "${OMP_LAB_IMAGE}"
-    else
-      printf 'Docker image %s not found; skipping image removal\n' "${OMP_LAB_IMAGE}" >&2
-    fi
+    for image in "${OMP_LAB_CONTROL_IMAGE}" "${OMP_LAB_SKILLED_IMAGE}"; do
+      if docker image inspect "${image}" >/dev/null 2>&1; then
+        run_cleanup_command docker image rm "${image}"
+      else
+        printf 'Docker image %s not found; skipping image removal\n' "${image}" >&2
+      fi
+    done
   fi
 fi

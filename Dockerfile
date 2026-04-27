@@ -1,6 +1,6 @@
 # ABOUTME: Builds the shared workstation image for isolated oh-my-pi lab containers.
 # ABOUTME: Installs OMP, database clients, GitHub tooling, and common diagnostics without copying this repo.
-FROM mcr.microsoft.com/devcontainers/universal:3-linux
+FROM mcr.microsoft.com/devcontainers/universal:3-linux AS base
 
 USER root
 
@@ -66,3 +66,20 @@ WORKDIR /workspace
 USER codespace
 
 ENTRYPOINT ["omp"]
+
+FROM base AS control
+
+FROM base AS skilled
+
+USER root
+
+COPY src /checkpoint-src/src
+COPY skills /checkpoint-skills
+COPY docker/omp-skilled-entrypoint.sh /usr/local/bin/checkpoint-skilled-entrypoint
+
+RUN chown -R codespace:codespace /checkpoint-src/src /checkpoint-skills \
+  && chmod 755 /usr/local/bin/checkpoint-skilled-entrypoint
+
+USER codespace
+
+ENTRYPOINT ["checkpoint-skilled-entrypoint"]
