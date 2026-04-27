@@ -170,6 +170,34 @@ test("model integration runner skips before bun when OMP_MODEL is unset", async 
   }
 });
 
+test("Gemini key helper does not write key material to stdout", async () => {
+  const fakeHome = await mkdtemp(join(tmpdir(), "checkpoint-omp-home-"));
+  const secretValue = "stdout leak sentinel";
+  const script = [
+    "set -euo pipefail",
+    "source scripts/omp-lab-common.sh",
+    "export_gemini_api_key",
+    'printf "loaded:%s\\n" "${#GEMINI_API_KEY}"',
+    "",
+  ].join("\n");
+
+  try {
+    const result = await execFileAsync("bash", ["-c", script], {
+      cwd: repoRoot,
+      env: cleanLabEnv({
+        HOME: fakeHome,
+        GEMINI_API_KEY: secretValue,
+      }),
+    });
+
+    assert.equal(result.stdout, `loaded:${secretValue.length}\n`);
+    assert.doesNotMatch(result.stdout, new RegExp(secretValue));
+    assert.equal(result.stderr, "");
+  } finally {
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
 async function parseDryRunArgs(output: string) {
   const result = await execFileAsync(
     "bash",

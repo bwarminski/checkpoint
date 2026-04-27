@@ -8,8 +8,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/omp-lab-common.sh"
 
 require_omp_model
-GEMINI_KEY="$(resolve_gemini_api_key)"
-export GEMINI_API_KEY="${GEMINI_KEY}"
+export_gemini_api_key
 export_default_db_env
 WORKSPACE="$(resolve_lab_workspace_path OMP_LAB_WORKSPACE "${HOME}/.oh-my-pi-lab/skilled-workspace")"
 validate_source_hidden_workspace_path OMP_LAB_WORKSPACE "${WORKSPACE}"

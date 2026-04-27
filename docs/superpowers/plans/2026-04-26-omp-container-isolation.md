@@ -240,9 +240,9 @@ OMP_LAB_IMAGE="${OMP_LAB_IMAGE:-checkpoint-omp-lab:local}"
 OMP_LAB_CONTAINER_USER="${OMP_LAB_CONTAINER_USER:-codespace}"
 OMP_LAB_CONTAINER_HOME="/home/${OMP_LAB_CONTAINER_USER}"
 
-resolve_gemini_api_key() {
+export_gemini_api_key() {
   if [[ -n "${GEMINI_API_KEY:-}" ]]; then
-    printf '%s\n' "${GEMINI_API_KEY}"
+    export GEMINI_API_KEY
     return
   fi
 
@@ -252,7 +252,8 @@ resolve_gemini_api_key() {
     return 1
   fi
 
-  tr -d '\n' < "${key_path}"
+  GEMINI_API_KEY="$(tr -d '\n' < "${key_path}")"
+  export GEMINI_API_KEY
 }
 
 require_omp_model() {
@@ -343,7 +344,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/omp-lab-common.sh"
 
 require_omp_model
-GEMINI_KEY="$(resolve_gemini_api_key)"
+export_gemini_api_key
 WORKSPACE="${OMP_LAB_WORKSPACE:-${HOME}/.oh-my-pi-lab/control-workspace}"
 ensure_workspace "${WORKSPACE}"
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
@@ -352,7 +353,7 @@ if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
 fi
 
 docker_args=()
-append_base_docker_args docker_args "${WORKSPACE}" "${GEMINI_KEY}"
+append_base_docker_args docker_args "${WORKSPACE}"
 docker_args+=(--label checkpoint.omp-lab.mode=control)
 append_git_ssh_args docker_args
 finish_docker_args docker_args
@@ -518,7 +519,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/omp-lab-common.sh"
 
 require_omp_model
-GEMINI_KEY="$(resolve_gemini_api_key)"
+export_gemini_api_key
 WORKSPACE="${OMP_LAB_WORKSPACE:-${HOME}/.oh-my-pi-lab/skilled-workspace}"
 ensure_workspace "${WORKSPACE}"
 if [[ "${OMP_LAB_RESET_WORKSPACE:-0}" == "1" ]]; then
@@ -532,7 +533,7 @@ export { default } from "/checkpoint-src/src/omp_extension/db_specialist_extensi
 ENTRYPOINT
 
 docker_args=()
-append_base_docker_args docker_args "${WORKSPACE}" "${GEMINI_KEY}"
+append_base_docker_args docker_args "${WORKSPACE}"
 docker_args+=(
   --label checkpoint.omp-lab.mode=skilled
   --mount "type=bind,source=${REPO_ROOT}/skills,target=/workspace/.omp/skills,readonly"

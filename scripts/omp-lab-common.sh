@@ -10,9 +10,9 @@ OMP_LAB_CONTAINER_HOME="/home/${OMP_LAB_CONTAINER_USER}"
 OMP_LAB_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 OMP_LAB_REPO_ROOT="$(cd "${OMP_LAB_COMMON_DIR}/.." && pwd -P)"
 
-resolve_gemini_api_key() {
+export_gemini_api_key() {
   if [[ -n "${GEMINI_API_KEY:-}" ]]; then
-    printf '%s\n' "${GEMINI_API_KEY}"
+    export GEMINI_API_KEY
     return
   fi
 
@@ -22,7 +22,8 @@ resolve_gemini_api_key() {
     return 1
   fi
 
-  tr -d '\n' < "${key_path}"
+  GEMINI_API_KEY="$(tr -d '\n' < "${key_path}")"
+  export GEMINI_API_KEY
 }
 
 require_omp_model() {

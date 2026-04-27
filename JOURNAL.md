@@ -1,5 +1,6 @@
 # JOURNAL
 
+- 2026-04-26: Hardened OMP lab Gemini key loading so the shared helper exports `GEMINI_API_KEY` directly and never returns key material on stdout. The control and skilled runners now call `export_gemini_api_key` instead of capturing command-substitution output.
 - 2026-04-26: Eng review cleanups for OMP lab container isolation relaxed skilled workspaces to the same source-hidden rule as control workspaces, removed the duplicate SSH key precheck, stopped forwarding `OMP_LAB_ENABLE_SSH` into containers, and aligned the implementation plan doc with the shipped `codespace` user plus env-name passthrough for secrets/DB env.
 - 2026-04-26: Control-mode OMP lab workspace validation must reject ancestors of the checkpoint repo, not just the repo root and descendants. Mounting `/home/bjw` would expose `/home/bjw/checkpoint` inside `/workspace/checkpoint` and can also expose user dotfiles, so source-blind control runs now reject any workspace whose resolved tree contains the repo.
 - 2026-04-26: OMP lab run scripts now preflight Docker before any non-dry-run workspace mutation. Control mode refuses the checkpoint repo root or paths beneath it so source-blind runs cannot mount this repo, and skilled mode only prepares workspaces under `${HOME}/.oh-my-pi-lab` before clearing generated `.omp` state.
