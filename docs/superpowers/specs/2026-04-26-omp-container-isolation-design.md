@@ -20,7 +20,7 @@ The first implementation should produce two equivalent runtime paths:
 
 Use one Docker image and two run scripts.
 
-The image should start from `mcr.microsoft.com/devcontainers/universal:2-linux` and install the shared agent-test workstation tools:
+The image should start from `mcr.microsoft.com/devcontainers/universal:3-linux` and install the shared agent-test workstation tools:
 
 - `omp` from `@oh-my-pi/pi-coding-agent`
 - Bun, when needed for the npm-distributed oh-my-pi runtime

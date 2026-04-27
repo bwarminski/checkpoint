@@ -1,6 +1,6 @@
 # ABOUTME: Builds the shared workstation image for isolated oh-my-pi lab containers.
 # ABOUTME: Installs OMP, database clients, GitHub tooling, and common diagnostics without copying this repo.
-FROM mcr.microsoft.com/devcontainers/universal:2-linux
+FROM mcr.microsoft.com/devcontainers/universal:3-linux
 
 USER root
 

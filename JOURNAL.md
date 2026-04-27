@@ -1,5 +1,6 @@
 # JOURNAL
 
+- 2026-04-27: Debugged OMP lab container startup failure: `@oh-my-pi/pi-natives@14.1.2` requires GLIBC_2.33, but `mcr.microsoft.com/devcontainers/universal:2-linux` is Ubuntu 20.04 with glibc 2.31. The lab image should use `mcr.microsoft.com/devcontainers/universal:3-linux`, whose manifest config identifies Ubuntu 24.04, so OMP's native addon can load.
 - 2026-04-26: Hardened OMP lab Gemini key loading so the shared helper exports `GEMINI_API_KEY` directly and never returns key material on stdout. The control and skilled runners now call `export_gemini_api_key` instead of capturing command-substitution output.
 - 2026-04-26: Eng review cleanups for OMP lab container isolation relaxed skilled workspaces to the same source-hidden rule as control workspaces, removed the duplicate SSH key precheck, stopped forwarding `OMP_LAB_ENABLE_SSH` into containers, and aligned the implementation plan doc with the shipped `codespace` user plus env-name passthrough for secrets/DB env.
 - 2026-04-26: Control-mode OMP lab workspace validation must reject ancestors of the checkpoint repo, not just the repo root and descendants. Mounting `/home/bjw` would expose `/home/bjw/checkpoint` inside `/workspace/checkpoint` and can also expose user dotfiles, so source-blind control runs now reject any workspace whose resolved tree contains the repo.

@@ -44,7 +44,7 @@ const repoRoot = process.cwd();
 test("lab Dockerfile uses the universal dev container base and does not copy the repo", async () => {
   const dockerfile = await readFile(join(repoRoot, "Dockerfile"), "utf8");
 
-  assert.match(dockerfile, /^FROM mcr\.microsoft\.com\/devcontainers\/universal:2-linux/m);
+  assert.match(dockerfile, /^FROM mcr\.microsoft\.com\/devcontainers\/universal:3-linux/m);
   assert.match(dockerfile, /@oh-my-pi\/pi-coding-agent/);
   assert.match(dockerfile, /@sinclair\/typebox/);
   assert.match(dockerfile, /@oh-my-pi\/pi-ai/);
@@ -73,7 +73,7 @@ Replace `Dockerfile` with:
 ```dockerfile
 # ABOUTME: Builds the shared workstation image for isolated oh-my-pi lab containers.
 # ABOUTME: Installs OMP, database clients, GitHub tooling, and common diagnostics without copying this repo.
-FROM mcr.microsoft.com/devcontainers/universal:2-linux
+FROM mcr.microsoft.com/devcontainers/universal:3-linux
 
 USER root
 
