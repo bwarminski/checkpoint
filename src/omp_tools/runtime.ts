@@ -101,6 +101,7 @@ export type TypeFactory = {
   String(options?: Record<string, unknown>): unknown;
   Array(items: unknown): unknown;
   Literal(value: string): unknown;
+  Union(items: Array<unknown>): unknown;
   Optional(schema: unknown): unknown;
   Number(options?: Record<string, unknown>): unknown;
 };

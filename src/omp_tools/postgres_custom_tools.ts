@@ -67,13 +67,13 @@ function createPostgresCheckerDefinition(type: TypeFactory, runCompletion: Query
     label: "Postgres Checker",
     description: "Validate a PostgreSQL query and return a structured verdict.",
     parameters: type.Object({
-      dialect: type.Literal("postgres"),
+      dialect: type.Union([type.Literal("postgres"), type.Literal("postgresql")]),
       question: type.String(),
       query: type.String(),
     }),
     async execute(
       _toolCallId: string,
-      params: { dialect: "postgres"; question: string; query: string },
+      params: { dialect: "postgres" | "postgresql"; question: string; query: string },
       _signal: AbortSignal | undefined,
       _onUpdate: unknown,
       ctx,
@@ -84,7 +84,7 @@ function createPostgresCheckerDefinition(type: TypeFactory, runCompletion: Query
           requireToolContext("sql_db_checker", ctx),
         ),
       );
-      return toTextResult(JSON.stringify(await postgresCheckerTool.execute(params), null, 2));
+      return toTextResult(JSON.stringify(await postgresCheckerTool.execute({ ...params, dialect: "postgres" }), null, 2));
     },
   };
 }

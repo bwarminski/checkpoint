@@ -53,6 +53,73 @@ ClickHouse DDLs, the demo Postgres image, and the load harness.
 6. Inspect the resulting diff or local commit in
    `~/.oh-my-pi-workspaces/checkpoint/workdir`.
 
+## Docker Lab Containers
+
+Build the source-blind control image and the skills-enabled image from this repo:
+
+```bash
+docker build --target control -t checkpoint-omp-lab-control:local .
+docker build -t checkpoint-omp-lab:local .
+```
+
+Start the source-blind control container with a model and Gemini key:
+
+```bash
+OMP_MODEL=google/gemini-2.5-pro \
+GEMINI_API_KEY="$(cat ~/.gemini-key)" \
+bash scripts/run-omp-control-container.sh
+```
+
+Start the skills-enabled container with the same model and Gemini key:
+
+```bash
+OMP_MODEL=google/gemini-2.5-pro \
+GEMINI_API_KEY="$(cat ~/.gemini-key)" \
+bash scripts/run-omp-skilled-container.sh
+```
+
+The control runner mounts only the neutral workspace and does not mount this
+checkpoint checkout, repo skills, or repo source. The skilled image bakes a
+replica of the checkpoint `skills/` and `src/` directories into the image and
+prepares the generated `.omp` files inside the mounted lab workspace when the
+container starts.
+
+Both runners connect from the container to the host compose stack through
+`host.docker.internal`. The default Postgres and ClickHouse env values point at
+that host name, and the Docker args add the host-gateway mapping for Linux.
+
+The lab workspaces under `~/.oh-my-pi-lab/` are disposable. Set
+`OMP_LAB_RESET_WORKSPACE=1` to remove the selected workspace before starting the
+container:
+
+```bash
+OMP_MODEL=google/gemini-2.5-pro \
+GEMINI_API_KEY="$(cat ~/.gemini-key)" \
+OMP_LAB_RESET_WORKSPACE=1 \
+bash scripts/run-omp-skilled-container.sh
+```
+
+Clean disposable lab workspaces and labeled lab containers/volumes with:
+
+```bash
+bash scripts/clean-omp-lab.sh
+```
+
+Remove the shared lab image too with:
+
+```bash
+bash scripts/clean-omp-lab.sh --image
+```
+
+SSH is off by default. When `OMP_LAB_ENABLE_SSH=1` is set, the runners mount
+only `~/.ssh/id_rsa` read-only into the container. They do not mount the host
+`.ssh` directory or git config. Set `GITHUB_TOKEN` when you want `gh` API
+access inside the container.
+
+Dry-run mode does not print forwarded Gemini, GitHub, or database secret values
+because Docker receives env names such as `GEMINI_API_KEY`, `GITHUB_TOKEN`, and
+database password vars instead of `KEY=value` arguments.
+
 ## Session Configuration
 
 Build the local images in the sibling collector repo before starting the
